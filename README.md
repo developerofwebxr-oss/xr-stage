@@ -1,0 +1,149 @@
+# XR Stage — WebXR spatial stage (foundation)
+
+One link, four modes. A rendered room you can enter on **phone, desktop, VR, and
+AR (passthrough)**, with **live voice** (one speaker → many listeners) carried over
+[LiveKit](https://livekit.io).
+
+This repo is the **foundation only**: the four-mode room + voice + a presence
+heartbeat. Identity (Nostr), avatars (Keyface), payments / zaps, slot booking, AI,
+and sponsor logos all come in later prompts — the seams for them are already in
+place (see the bottom of this file).
+
+> A standalone project. Code conventions are inspired by Sats Arena (frontend never
+> holds secrets, backend holds the keys, small modules), but this repo shares no
+> code, deployment, or infrastructure with it.
+
+## Layout
+
+```
+web/      Vite + Three.js client — the WebXR room + LiveKit client (static; GitHub Pages)
+  src/
+    xr/        session lifecycle (VR/AR enter) + locomotion (4 input styles)
+    room/      scene (floor/stage/backdrop/lights) + avatar capsules
+    voice/     LiveKit client: join, publish/subscribe audio, data channel
+    state/     stageState (shared-state seam) + presence heartbeat
+    ui/        DOM HUD overlay
+server/   Node/Express token server (Railway). Mints LiveKit tokens; holds the secrets.
+```
+
+Shared room state (presence now; stage state / zaps later) rides **LiveKit's data
+channel** — there is no separate realtime server.
+
+## Prerequisites
+
+- Node 18+ (developed on Node 24).
+- A LiveKit instance — either [LiveKit Cloud](https://cloud.livekit.io) (free tier
+  is plenty) or a self-host. You need three values: **URL, API key, API secret**.
+  The URL is public; the key + secret are server-only.
+
+## Run locally
+
+**1. Backend** (`server/`) — mints LiveKit tokens, holds the secret:
+
+```bash
+cd server
+npm install
+cp .env.example .env          # fill in LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET
+npm start                     # → http://localhost:8080
+```
+
+Smoke-test the token endpoint:
+
+```bash
+curl -X POST http://localhost:8080/token \
+  -H 'content-type: application/json' \
+  -d '{"room":"main-stage","identity":"alice","role":"speaker"}'
+# → {"token":"eyJ...","identity":"alice","role":"speaker","room":"main-stage"}
+```
+
+Paste that JWT into <https://jwt.io> — the `video` grant shows `canPublish:true`
+for `speaker` and is absent/false for `listener`.
+
+**2. Client** (`web/`):
+
+```bash
+cd web
+npm install
+cp .env.example .env.local    # set VITE_LIVEKIT_URL + VITE_TOKEN_URL (https://localhost:8080)
+npm run dev                   # → https://localhost:5173 (self-signed cert — "proceed anyway")
+```
+
+> The dev server is **HTTPS** (via `@vitejs/plugin-basic-ssl`) because browsers
+> refuse WebXR on plain HTTP, and it binds to `host: true` so a Quest / phone on the
+> same WiFi can open the LAN URL (accept the cert warning there too).
+
+### Trying the four modes
+
+| Mode | How |
+|------|-----|
+| **Desktop** | Open the URL. Click to lock the pointer, mouse to look, **WASD** to move. |
+| **Mobile** | Open on a phone. Drag to look; tap **Use gyro** to look by tilting. In AR you also walk. |
+| **VR** | Open in the **Quest browser**, tap **Enter VR**. Right stick = move, left stick = snap-turn, **X/A** to exit. |
+| **AR** | Open on a WebXR phone (Chrome `immersive-ar`), tap **Enter AR**. The room anchors to your floor; walk around. |
+
+### Trying voice + presence
+
+Open the URL in two browsers/devices:
+
+- one as **speaker**: `…/?role=speaker`
+- one as **listener**: `…/` (default)
+
+Click **Join voice** in both. The listener hears the speaker live; the speaker gets
+a **Mute** toggle. Each shows a live participant count, and you'll see the other
+person's capsule move in near-real-time as they look / walk around (presence).
+
+## Deploy
+
+### Client → GitHub Pages
+
+`.github/workflows/deploy.yml` builds `web/` and publishes `web/dist` on every push
+to `main`. `base` is relative (`./`), so it works from a project subpath like
+`/xr-stage/`. Set two repo **Variables** (Settings → Secrets and variables →
+Actions → **Variables**) — neither is a secret:
+
+- `VITE_LIVEKIT_URL` = `wss://your-project.livekit.cloud`
+- `VITE_TOKEN_URL` = `https://your-backend.up.railway.app`
+
+Then enable Pages (Settings → Pages → Source: GitHub Actions).
+
+### Backend → Railway
+
+Deploy `server/` as its own Railway service (start command `npm start`; Railway
+injects `PORT`). Set in the Railway **Variables** tab — never in the repo:
+
+- `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`
+- `ALLOWED_ORIGIN` = your Pages origin (comma-separate to add others, e.g. your
+  dev `https://localhost:5173`)
+
+Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` (and
+`VITE_LIVEKIT_URL` on the client) — no code change.
+
+## Guardrails honored here
+
+- **Secrets stay server-side.** The browser only ever receives a short-lived JWT;
+  the LiveKit key/secret live in `server/` only.
+- **Role gates publish.** `speaker` tokens carry `canPublish`; listeners don't —
+  enforced when the token is minted, not trusted from the client.
+- Scene is all primitives (no heavy assets) to hold 60fps+ on Quest and mobile.
+
+---
+
+## Seams for Prompt 2 (identity + avatars) — don't build yet
+
+Prompt 2 adds Nostr sign-in (NIP-07 on desktop; generate/import on mobile + VR) and
+the deterministic **Keyface** avatar from the npub. Where each piece plugs in:
+
+- **Identity** → `web/src/config.js`: `identity` is currently a throwaway random
+  per-tab id, and `role` is a `?role=` URL param. Replace `identity` with the npub
+  and derive `role` from real gating (Lightning slot booking). The token request in
+  `web/src/voice/livekit.js` (`_fetchToken`) and the server grant logic in
+  `server/token.js` (`tokenHandler`) are where real role decisions belong.
+- **Keyface avatars** → `web/src/room/avatars.js`: `makeCapsule()` is the only thing
+  that builds an avatar's mesh. Swap it for the npub-derived Keyface; `AvatarPool`
+  and `seedPlaceholders()` keep the same API, so presence / voice wiring is untouched.
+- **Real presence identity** → `web/src/state/presence.js` already keys remote
+  avatars by the LiveKit participant identity. Once that identity *is* the npub,
+  presence is automatically tied to real people — no change beyond config.
+- **Shared stage state** → `web/src/state/stageState.js` is the object later prompts
+  extend (who holds the stage, stage skin, zap totals, sponsor slots) and sync over
+  the same LiveKit data channel that `presence.js` already proves out.
