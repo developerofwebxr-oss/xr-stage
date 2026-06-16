@@ -88,9 +88,13 @@ Open the URL in two browsers/devices:
 - one as **speaker**: `…/?role=speaker`
 - one as **listener**: `…/` (default)
 
-Click **Join voice** in both. The listener hears the speaker live; the speaker gets
-a **Mute** toggle. Each shows a live participant count, and you'll see the other
-person's capsule move in near-real-time as they look / walk around (presence).
+Each side has a role-aware toggle: the listener taps **Listen: off → on** to start
+hearing the room (that first tap also satisfies the browser's autoplay gesture);
+the speaker taps **Speak: off → on** to publish their mic. The `🎙 N speaking`
+indicator and the `voice:` status badge update live, and you'll see the other
+person's flat-faced body turn and move in near-real-time as they look / walk around
+(presence). Listeners also see a disabled **Request to speak** placeholder (the
+raise-hand → zap → pedestal flow is a later phase).
 
 ## Deploy
 
@@ -129,6 +133,19 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 - Scene is all primitives (no heavy assets) to hold 60fps+ on Quest and mobile.
 
 ## Changelog
+
+**Phase 1 lock polish** — no new scope:
+- **Role-aware voice toggles.** Listener gets a **Listen** on/off toggle (audio
+  playback; first "on" also satisfies the autoplay gesture); speaker gets a
+  **Speak** on/off toggle (mic publish) — replacing the old Join/Mute controls. The
+  `N speaking` indicator and `voice:` status badge are unchanged.
+- **"Request to speak"** placeholder, listeners only — visibly disabled with a
+  tooltip + a small toast on tap. No real behavior (future phase).
+- **Flat-faced heads.** Every body's head is now flattened on its forward side into
+  a face panel, so facing is readable at a glance. That panel is a named mesh
+  (`faceMount`) with its own material — the single mount point for the Nostr
+  profile image in Prompt 2 (`faceMount.material.map = …`). The local first-person
+  body stays headless so it never blocks the camera; remote viewers see the head.
 
 **Bodies + token path (post-Prompt 1.1)** — no new scope:
 - **Real bodies.** Your camera now has a body: a capsule (room avatar style)

@@ -15,9 +15,44 @@ import * as THREE from 'three';
 // deterministic "Keyface" avatar from a Nostr npub — same transforms, same pool
 // API, so nothing downstream changes.
 
+// makeHead — a head flattened on its front into a flat "face", so you can read at
+// a glance which way a body is pointing. The flat face is on the body's FORWARD
+// side (-Z), so it turns with the body's yaw.
+//
+// PROMPT 2 MOUNT POINT: the flat face is its own mesh, named 'faceMount', carrying
+// a dedicated material. To show a user's Nostr profile image, set
+//   faceMount.material.map = <texture>; faceMount.material.needsUpdate = true;
+// nothing else needs to change. For now it's a plain placeholder panel.
+function makeHead() {
+  const head = new THREE.Group();
+
+  // Cranium: a sphere squashed front-to-back so the face side reads as flat.
+  const skull = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 16, 12),
+    new THREE.MeshStandardMaterial({ color: 0xe8e8ef, roughness: 0.6 }),
+  );
+  skull.scale.z = 0.72;
+  head.add(skull);
+
+  // The flat face on the forward (-Z) side — the image slot. A CircleGeometry
+  // faces +Z by default, so rotate it to face -Z (the body's forward).
+  const faceMount = new THREE.Mesh(
+    new THREE.CircleGeometry(0.18, 24),
+    new THREE.MeshStandardMaterial({ color: 0x222a3a, roughness: 0.85, metalness: 0 }),
+  );
+  faceMount.name = 'faceMount';
+  faceMount.rotation.y = Math.PI;
+  faceMount.position.z = -0.162; // flush on the front of the squashed skull
+  head.add(faceMount);
+
+  head.position.y = 1.5;
+  return head;
+}
+
 // Build one capsule avatar at a given colour. Height ~1.7m, base at y=0.
-// withHead:false omits the head sphere — used for the LOCAL body, where the camera
-// sits where the head would be (a head mesh there would render over the view).
+// withHead:false omits the head — used for the LOCAL body, where the camera sits
+// where the head would be (a head mesh there would render over the view); remote
+// viewers still see our full flat-faced head via their own AvatarPool.
 function makeCapsule(color, { withHead = true } = {}) {
   const group = new THREE.Group();
 
@@ -28,14 +63,7 @@ function makeCapsule(color, { withHead = true } = {}) {
   body.position.y = 0.73; // capsule centre so its feet sit on y=0
   group.add(body);
 
-  if (withHead) {
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.22, 16, 12),
-      new THREE.MeshStandardMaterial({ color: 0xe8e8ef, roughness: 0.6 }),
-    );
-    head.position.y = 1.5;
-    group.add(head);
-  }
+  if (withHead) group.add(makeHead());
 
   return group;
 }

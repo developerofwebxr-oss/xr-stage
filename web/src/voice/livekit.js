@@ -29,7 +29,14 @@ export class Voice {
     this._dataHandlers = new Set();
     this._decoder = new TextDecoder();
     this._encoder = new TextEncoder();
+    // Attached <audio> elements for remote speakers + whether playback is on. The
+    // listener's "Listen" toggle flips _audioEnabled; speakers leave it on so they
+    // hear the room. Mic publish is separate (setMicEnabled).
+    this._audioEls = new Set();
+    this._audioEnabled = true;
   }
+
+  get isConnected() { return !!this.room; }
 
   // Ask the backend for a token, then join + publish/subscribe. Resolves once
   // connected. Each step is wrapped so a failure throws a SHORT, human reason
@@ -51,14 +58,20 @@ export class Voice {
 
       room
         .on(RoomEvent.TrackSubscribed, (track) => {
-          // Attach audio so it actually plays; ignore any (future) video tracks.
+          // Attach audio so it plays; ignore any (future) video tracks. Respect the
+          // current playback state so a listener with Listen:off doesn't hear it.
           if (track.kind === 'audio') {
             const el = track.attach();
             el.setAttribute('data-livekit', 'audio');
+            el.muted = !this._audioEnabled;
+            this._audioEls.add(el);
             document.body.appendChild(el);
           }
         })
-        .on(RoomEvent.TrackUnsubscribed, (track) => track.detach().forEach((el) => el.remove()))
+        .on(RoomEvent.TrackUnsubscribed, (track) => track.detach().forEach((el) => {
+          this._audioEls.delete(el);
+          el.remove();
+        }))
         .on(RoomEvent.DataReceived, (payload, participant) => {
           const id = participant ? participant.identity : 'unknown';
           let msg;
@@ -76,16 +89,8 @@ export class Voice {
         throw short('connect failed', err);
       }
 
-      // Speakers publish their mic on join; listeners never do (and the token's
-      // grants forbid it server-side regardless, so this is belt-and-suspenders).
-      if (config.role === 'speaker') {
-        try {
-          await room.localParticipant.setMicrophoneEnabled(true);
-        } catch (err) {
-          throw short('mic denied', err);
-        }
-      }
-
+      // No publishing here: the mic is controlled by the speaker's "Speak" toggle
+      // (setMicEnabled), and audio playback by the listener's "Listen" toggle.
       this.onState('connected');
       this._emitCounts();
     } catch (err) {
@@ -97,10 +102,27 @@ export class Voice {
     }
   }
 
-  // Speaker mic toggle. No-op for listeners (and the grant blocks publish anyway).
-  async setMuted(muted) {
+  // Speaker "Speak" toggle: publish or unpublish the mic. No-op for listeners (the
+  // token grant blocks publish anyway). Throws 'mic denied' if the user blocks the
+  // mic permission, so the HUD can surface it.
+  async setMicEnabled(on) {
     if (!this.room || config.role !== 'speaker') return;
-    await this.room.localParticipant.setMicrophoneEnabled(!muted);
+    try {
+      await this.room.localParticipant.setMicrophoneEnabled(on);
+    } catch (err) {
+      throw short('mic denied', err);
+    }
+  }
+
+  // Listener "Listen" toggle: start/stop hearing the room. Mutes/unmutes the
+  // attached audio elements; turning it on also resumes the audio context (the
+  // browser autoplay gesture is satisfied by the click that calls this).
+  async setListening(on) {
+    this._audioEnabled = on;
+    for (const el of this._audioEls) el.muted = !on;
+    if (on && this.room) {
+      try { await this.room.startAudio(); } catch { /* gesture already covers it */ }
+    }
   }
 
   // Broadcast a small JS object to everyone over the lossy data channel.

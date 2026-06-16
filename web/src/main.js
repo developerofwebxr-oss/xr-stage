@@ -115,7 +115,6 @@ const voice = new Voice({
   onState: (state) => hud.setVoiceState(state),
 });
 let presence = null;
-let muted = false;
 
 // Reflect shared state into the HUD whenever it changes.
 onStateChange((s) => {
@@ -123,27 +122,41 @@ onStateChange((s) => {
   hud.setSpeakerCount(s.speakerCount);
 });
 
+// ── Role-aware voice toggle (Listen / Speak) + request-to-speak placeholder ──────
+// Listener: "Listen" on/off controls hearing the room. Speaker: "Speak" on/off
+// controls mic publish (the speaker always hears the room). Either way the FIRST
+// "on" tap both joins the room and satisfies the browser's autoplay gesture.
+const isSpeaker = config.role === 'speaker';
+const verb = isSpeaker ? 'Speak' : 'Listen';
+let active = false; // listener: hearing; speaker: mic publishing
+
+hud.setVoiceToggle(`${verb}: off`);
+hud.showRequest(!isSpeaker); // disabled placeholder, listeners only (Fix 2)
+hud.onRequest(() => hud.toast('Request to speak — available in a later phase'));
+
 hud.onVoice(async () => {
-  hud.el.btnVoice.disabled = true; // prevent double-clicks mid-connect
+  const next = !active;
+  hud.el.btnVoice.disabled = true; // guard against double-taps mid-connect
   try {
-    await voice.connect();         // drives onState connecting → connected
-    hud.setVoiceJoined();
-    // Presence rides the same connection: broadcast our rig pose (position + yaw),
-    // render peers as moving bodies.
-    presence = createPresence(voice, scene, () => ({
-      x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y,
-    }));
+    if (!voice.isConnected) {
+      await voice.connect();        // drives onState connecting → connected
+      await voice.setListening(true); // resume audio playback within the gesture
+      // Presence rides the same connection: broadcast our pose, render peers.
+      presence = createPresence(voice, scene, () => ({
+        x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y,
+      }));
+    }
+    if (isSpeaker) await voice.setMicEnabled(next);
+    else await voice.setListening(next);
+    active = next;
+    hud.setVoiceToggle(`${verb}: ${active ? 'on' : 'off'}`);
   } catch (err) {
     // voice.connect already set state 'failed' + logged the cause; show the reason
-    // and re-enable the button for a retry.
+    // and leave the toggle off so the next tap retries.
     hud.setVoiceError(err.message || 'unknown error');
+  } finally {
+    hud.el.btnVoice.disabled = false;
   }
-});
-
-hud.onMute(async () => {
-  muted = !muted;
-  await voice.setMuted(muted);
-  hud.setMuted(muted);
 });
 
 // ── Resize ────────────────────────────────────────────────────────────────────

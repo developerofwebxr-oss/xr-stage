@@ -67,6 +67,19 @@
       button.btn:disabled { opacity: 0.4; cursor: default; }
       button.btn.primary { border-color: var(--bitcoin); }
       button.btn[hidden] { display: none; }
+      /* "Coming soon" placeholder: greyed, but still clickable so it can toast. */
+      button.btn.soon { opacity: 0.45; cursor: not-allowed; }
+      button.btn.soon:hover { border-color: rgba(255, 255, 255, 0.16); }
+
+      /* Small transient toast, centred above the bottom row. */
+      #toast {
+        position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%);
+        background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 8px; padding: 8px 12px; font-size: 13px; color: var(--ink);
+        backdrop-filter: blur(6px); white-space: nowrap;
+        opacity: 0; transition: opacity .2s; pointer-events: none;
+      }
+      #toast.show { opacity: 1; }
 
       /* Click-to-start hint for desktop pointer lock. */
       #lock-hint {
@@ -111,12 +124,14 @@
       </div>
 
       <div class="row bottom">
-        <button class="btn primary" id="btn-voice">Join voice</button>
-        <button class="btn" id="btn-mute" hidden>Mute</button>
+        <button class="btn primary" id="btn-voice">Listen: off</button>
+        <button class="btn soon" id="btn-request" aria-disabled="true"
+                title="Available in a later phase" hidden>Request to speak</button>
         <div class="badge" id="voice-count" hidden>🎙 <b id="speaker-count">0</b> speaking</div>
       </div>
 
       <div class="badge err" id="voice-error" hidden></div>
+      <div id="toast"></div>
     </div>
 
     <!-- Mobile-only virtual joystick; shown by main.js after feature detection. -->
