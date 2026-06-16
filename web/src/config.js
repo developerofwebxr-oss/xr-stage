@@ -24,6 +24,10 @@ export const config = {
   // booking — arrives in a later prompt; this is the seam it plugs into.
   role: params.get('role') === 'speaker' ? 'speaker' : 'listener',
 
+  // Designated "next up" — may enter the under-stage green room. PLACEHOLDER: set
+  // via ?slot=next for now; Phase 3's zap/request queue becomes the real source.
+  isNextUp: params.get('slot') === 'next',
+
   // A throwaway per-tab identity until Nostr login lands (Prompt 2). Stable for
   // the life of the page so presence/voice agree on who we are.
   identity: `${params.get('role') === 'speaker' ? 'spk' : 'lis'}-${Math.random().toString(36).slice(2, 8)}`,

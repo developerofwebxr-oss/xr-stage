@@ -25,7 +25,10 @@ const SNAP_TURN = Math.PI / 6; // 30° per left-stick flick
 const LOOK_SENSITIVITY = 0.0022;
 const PITCH_LIMIT = Math.PI / 2 - 0.05;
 
-export function createLocomotion(camera, domElement, { spawn } = {}) {
+// `constrain(x, z) -> { x, z, y, hit }` (from room/zones.js, bound to the player's
+// role) keeps the rig inside its allowed zone every frame; `onBoundary()` fires the
+// frame a limit is hit so the caller can glow the boundary. Both optional.
+export function createLocomotion(camera, domElement, { spawn, constrain, onBoundary } = {}) {
   const start = spawn || { position: [0, 0, 4], yaw: 0 };
 
   // Rig holds the camera. Camera keeps only pitch; the rig owns yaw + position,
@@ -159,6 +162,18 @@ export function createLocomotion(camera, domElement, { spawn } = {}) {
         rig.position.addScaledVector(_right, ix * step);
       }
     }
+
+    // Keep the rig inside the player's zone (and at that zone's floor height) every
+    // frame — flat/joystick clamp is the hard stop; in VR/AR it's a soft edge stop
+    // (no snap-back) and onBoundary() glows the limit. One path for all modes.
+    applyConstraint();
+  }
+
+  function applyConstraint() {
+    if (!constrain) return;
+    const c = constrain(rig.position.x, rig.position.z);
+    rig.position.set(c.x, c.y, c.z);
+    if (c.hit && onBoundary) onBoundary();
   }
 
   // Read Quest thumbsticks: right stick = move (relative to head yaw), left stick

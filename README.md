@@ -134,6 +134,30 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Stage & spatial + control bar** — no new scope:
+- **Bigger raised stage + framed screen.** Stage is wider/deeper and raised to
+  walk underneath; size/height are tunable constants in
+  [zones.js](web/src/room/zones.js) (`STAGE_RADIUS`, `STAGE_TOP_Y`, …). The backdrop
+  screen is larger with a visible orange-bordered frame, above/behind the stage.
+- **Zones + role movement clamps.** A single source of truth ([zones.js](web/src/room/zones.js))
+  defines the stage / audience / under-stage zones and a `constrainPosition()` the
+  one locomotion path applies every frame: speakers can't leave the stage top,
+  audience can't mount the stage or enter the green room, and a boundary ring glows
+  when you hit the limit (soft edge stop, no snap-back). Phase 3's zap queue reuses
+  these zones.
+- **Under-stage green room + pedestal.** An enclosed walkable space beneath the
+  stage, gated to the designated next-up — entered for now via `?slot=next`
+  (placeholder for Phase 3's queue). A pedestal/mic spot marks the call-up point
+  beside the stage front (call-up logic is Phase 3).
+- **Control bar + mode cluster + top status.** One cohesive bottom bar: a
+  Screen/VR/AR mode cluster (always visible; unsupported modes greyed with a
+  tooltip; replaces the old Enter-VR/AR buttons), the role-aware Listen/Speak
+  toggle, the listener-only Request-to-speak placeholder, a reserved ⚡ Zap slot
+  (Phase 3), and the `🎙 N speaking` indicator. A minimal top bar shows room,
+  voice state, a "now speaking" placeholder, and the participant count. Dark +
+  Bitcoin-orange, consistent states. The mobile joystick + gyro toggle coexist
+  with the bar (no overlap).
+
 **Phase 1 lock polish** — no new scope:
 - **Role-aware voice toggles.** Listener gets a **Listen** on/off toggle (audio
   playback; first "on" also satisfies the autoplay gesture); speaker gets a

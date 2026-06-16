@@ -1,95 +1,153 @@
 import * as THREE from 'three';
+import {
+  STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y, STAGE_THICK,
+  SCREEN, PEDESTAL_POS,
+} from './zones.js';
 
-// room/scene.js — builds the static spatial stage: floor, stage platform, backdrop
-// screen, lights, and a simple sky. Returns the pieces other modules need to touch
-// (the backdrop is a seam for future slides; setARMode toggles passthrough).
+// room/scene.js — builds the static venue from the zone constants in zones.js:
+// a raised stage platform with an enclosed green room underneath, a framed backdrop
+// screen above/behind it, a pedestal/mic spot beside the front, plus floor, grid,
+// lights and sky. All primitives, no loaded assets, to hold 60fps+ on Quest/mobile.
 //
-// Keep this LIGHT — no loaded assets, all primitives — so it holds 60fps+ on a
-// Quest and on mobile. Units are metres; the floor is centred on the origin and
-// the stage sits a few metres in front of -Z (the default "look" direction).
+// setARMode toggles the passthrough look (hide sky/floor/screen, keep the venue).
 
 const BITCOIN = 0xf7931a;
 
 export function buildScene() {
   const scene = new THREE.Scene();
 
-  // Background + matching fog so the floor grid fades out instead of ending in a
-  // hard line. We stash the colour so AR mode can swap to transparent and back.
   const skyColor = new THREE.Color(0x0a0c14);
   scene.background = skyColor;
-  scene.fog = new THREE.Fog(skyColor, 18, 55);
+  scene.fog = new THREE.Fog(skyColor, 22, 60);
 
   // ── Lights ──────────────────────────────────────────────────────────────────
-  // Ambient fills shadows; one directional key gives capsules a sense of form.
   scene.add(new THREE.HemisphereLight(0x9fb4ff, 0x10121a, 0.9));
   const key = new THREE.DirectionalLight(0xffffff, 1.1);
-  key.position.set(4, 10, 6);
+  key.position.set(4, 12, 8);
   scene.add(key);
 
   // ── Floor ───────────────────────────────────────────────────────────────────
-  // A dark disc + a grid overlay reads as a venue floor and gives motion cues.
   const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(30, 64),
+    new THREE.CircleGeometry(34, 64),
     new THREE.MeshStandardMaterial({ color: 0x0e1018, roughness: 1, metalness: 0 }),
   );
   floor.rotation.x = -Math.PI / 2;
   scene.add(floor);
 
-  const grid = new THREE.GridHelper(60, 60, 0x2a2f45, 0x171b2a);
-  grid.position.y = 0.01; // avoid z-fighting with the floor disc
+  const grid = new THREE.GridHelper(68, 68, 0x2a2f45, 0x171b2a);
+  grid.position.y = 0.01;
   scene.add(grid);
 
-  // ── Stage platform ───────────────────────────────────────────────────────────
-  // A low cylinder a few metres in front of the spawn point (-Z). STAGE_POS is
-  // exported so the voice layer can spatialise the speaker here later.
-  const stage = new THREE.Mesh(
-    new THREE.CylinderGeometry(3, 3.2, 0.4, 48),
-    new THREE.MeshStandardMaterial({ color: 0x161a28, roughness: 0.8, metalness: 0.1 }),
+  // ── Stage platform (raised) ──────────────────────────────────────────────────
+  // Slab top sits at STAGE_TOP_Y; the space beneath is the green room.
+  const stageMat = new THREE.MeshStandardMaterial({ color: 0x161a28, roughness: 0.8, metalness: 0.1 });
+  const slab = new THREE.Mesh(
+    new THREE.CylinderGeometry(STAGE_RADIUS, STAGE_RADIUS, STAGE_THICK, 48),
+    stageMat,
   );
-  stage.position.copy(STAGE_POS).setY(0.2);
-  scene.add(stage);
+  slab.position.set(STAGE_POS.x, STAGE_TOP_Y - STAGE_THICK / 2, STAGE_POS.z);
+  scene.add(slab);
 
-  // A subtle bitcoin-orange rim glow ring around the stage edge.
+  // Bitcoin-orange rim glow around the stage-top edge.
   const rim = new THREE.Mesh(
-    new THREE.TorusGeometry(3.1, 0.04, 12, 64),
+    new THREE.TorusGeometry(STAGE_RADIUS, 0.05, 12, 80),
     new THREE.MeshBasicMaterial({ color: BITCOIN }),
   );
   rim.rotation.x = -Math.PI / 2;
-  rim.position.set(STAGE_POS.x, 0.41, STAGE_POS.z);
+  rim.position.set(STAGE_POS.x, STAGE_TOP_Y + 0.01, STAGE_POS.z);
   scene.add(rim);
 
-  // ── Backdrop screen ───────────────────────────────────────────────────────────
-  // A big plane behind the stage. SEAM: future prompts render slides / generated
-  // stage skins onto this material's map. For now it's a flat dark panel + frame.
-  const backdrop = new THREE.Mesh(
-    new THREE.PlaneGeometry(10, 5.6),
-    new THREE.MeshStandardMaterial({ color: 0x0c0e16, roughness: 1, emissive: 0x05060a }),
+  // ── Green room (under-stage waiting area) ──────────────────────────────────────
+  // A cylindrical wall shell enclosing the back + sides, OPEN at the front (+Z) as
+  // the entrance. Double-sided so it reads from inside. The slab above is its
+  // ceiling; access is gated by the movement clamp (only the next-up may enter).
+  const wall = new THREE.Mesh(
+    new THREE.CylinderGeometry(
+      STAGE_RADIUS, STAGE_RADIUS, STAGE_TOP_Y, 48, 1,
+      true, Math.PI / 3, Math.PI * 4 / 3, // open ~120° toward the front (+Z)
+    ),
+    new THREE.MeshStandardMaterial({ color: 0x10131e, roughness: 0.95, side: THREE.DoubleSide }),
   );
-  backdrop.position.set(STAGE_POS.x, 3.2, STAGE_POS.z - 3.4);
+  wall.position.set(STAGE_POS.x, STAGE_TOP_Y / 2, STAGE_POS.z);
+  scene.add(wall);
+
+  // Green-room floor tint + a dim warm light so the interior isn't pitch black.
+  const greenFloor = new THREE.Mesh(
+    new THREE.CircleGeometry(STAGE_RADIUS - 0.15, 48),
+    new THREE.MeshStandardMaterial({ color: 0x14110c, roughness: 1, emissive: 0x140d02 }),
+  );
+  greenFloor.rotation.x = -Math.PI / 2;
+  greenFloor.position.set(STAGE_POS.x, 0.03, STAGE_POS.z);
+  scene.add(greenFloor);
+
+  const greenLight = new THREE.PointLight(0xffcaa0, 0.5, STAGE_RADIUS * 2.4, 2);
+  greenLight.position.set(STAGE_POS.x, STAGE_TOP_Y - 0.5, STAGE_POS.z);
+  scene.add(greenLight);
+
+  // ── Pedestal / mic spot (call-up target; logic is Phase 3) ─────────────────────
+  const pedestal = new THREE.Group();
+  pedestal.position.copy(PEDESTAL_POS);
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.45, 0.5, 0.35, 24),
+    new THREE.MeshStandardMaterial({ color: 0x1a1f30, roughness: 0.7, metalness: 0.2 }),
+  );
+  base.position.y = 0.175;
+  pedestal.add(base);
+  const stand = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.04, 1.2, 12),
+    new THREE.MeshStandardMaterial({ color: 0x2a3047, roughness: 0.5, metalness: 0.4 }),
+  );
+  stand.position.y = 0.35 + 0.6;
+  pedestal.add(stand);
+  const micHead = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 16, 12),
+    new THREE.MeshStandardMaterial({ color: 0x0c0e16, roughness: 0.6 }),
+  );
+  micHead.position.y = 0.35 + 1.2;
+  pedestal.add(micHead);
+  const marker = new THREE.Mesh(
+    new THREE.TorusGeometry(0.62, 0.03, 10, 40),
+    new THREE.MeshBasicMaterial({ color: BITCOIN }),
+  );
+  marker.rotation.x = -Math.PI / 2;
+  marker.position.y = 0.02;
+  pedestal.add(marker);
+  scene.add(pedestal);
+
+  // ── Backdrop screen (larger, framed, above + behind the stage) ─────────────────
+  const backdrop = new THREE.Mesh(
+    new THREE.PlaneGeometry(SCREEN.w, SCREEN.h),
+    new THREE.MeshStandardMaterial({ color: 0x0c0e16, roughness: 1, emissive: 0x06070d }),
+  );
+  backdrop.position.set(STAGE_POS.x, SCREEN.y, SCREEN.z);
   scene.add(backdrop);
 
-  // Cheap frame: an EdgesGeometry outline around the backdrop plane.
-  const frameLines = new THREE.LineSegments(
-    new THREE.EdgesGeometry(backdrop.geometry),
-    new THREE.LineBasicMaterial({ color: 0x2a2f45 }),
+  // Frame: a slightly larger panel behind the screen + a bright orange edge border.
+  const frame = new THREE.Mesh(
+    new THREE.PlaneGeometry(SCREEN.w + 0.6, SCREEN.h + 0.6),
+    new THREE.MeshStandardMaterial({ color: 0x20283c, roughness: 0.6, metalness: 0.3 }),
   );
-  frameLines.position.copy(backdrop.position);
-  scene.add(frameLines);
+  frame.position.set(STAGE_POS.x, SCREEN.y, SCREEN.z - 0.05);
+  scene.add(frame);
+  const border = new THREE.LineSegments(
+    new THREE.EdgesGeometry(backdrop.geometry),
+    new THREE.LineBasicMaterial({ color: BITCOIN, transparent: true, opacity: 0.5 }),
+  );
+  border.position.copy(backdrop.position).setZ(SCREEN.z + 0.01);
+  scene.add(border);
 
   // ── AR passthrough toggle ──────────────────────────────────────────────────────
-  // In AR we want the real world visible, so hide the sky/floor disc and drop fog.
-  // Returns the scene to its lit-room look when AR ends.
+  // Hide the sky/floor/screen for passthrough; keep the venue (stage + green room +
+  // pedestal + avatars) so it stays anchored in the real room.
   function setARMode(on) {
     scene.background = on ? null : skyColor;
-    scene.fog = on ? null : new THREE.Fog(skyColor, 18, 55);
-    floor.visible = !on;       // the real floor shows through instead
+    scene.fog = on ? null : new THREE.Fog(skyColor, 22, 60);
+    floor.visible = !on;
     grid.visible = !on;
-    backdrop.visible = !on;    // keep AR uncluttered; stage + avatars remain
-    frameLines.visible = !on;
+    backdrop.visible = !on;
+    frame.visible = !on;
+    border.visible = !on;
   }
 
-  return { scene, backdrop, stagePos: STAGE_POS.clone(), setARMode };
+  return { scene, backdrop, setARMode };
 }
-
-// Stage centre, in world space. Exported so voice/presence can reference it.
-export const STAGE_POS = new THREE.Vector3(0, 0, -7);

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { config } from './config.js';
-import { buildScene, STAGE_POS } from './room/scene.js';
+import { buildScene } from './room/scene.js';
+import { STAGE_POS, STAGE_TOP_Y, constrainPosition, boundaryFor } from './room/zones.js';
 import { seedPlaceholders, createPlayerBody } from './room/avatars.js';
 import { createLocomotion } from './xr/locomotion.js';
 import { setupXR } from './xr/session.js';
@@ -11,52 +12,61 @@ import { createPresence } from './state/presence.js';
 import { stageState, setState, onStateChange } from './state/stageState.js';
 
 // main.js — boots the four-mode WebXR spatial stage and runs the frame loop.
-//
-// This is the wiring layer only: each concern (scene, locomotion, xr session,
-// voice, presence, hud) lives in its own module. The job here is to create them,
-// connect their seams, and drive update() every frame.
+// Wiring only: each concern lives in its own module; here we connect their seams.
 
 // ── Renderer ────────────────────────────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); // cap DPR for mobile/Quest fps
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
 document.getElementById('app').appendChild(renderer.domElement);
 
-// ── Scene + camera + people ───────────────────────────────────────────────────
+// ── Scene + people ──────────────────────────────────────────────────────────────
 const { scene, setARMode } = buildScene();
 seedPlaceholders(scene); // static ambiance only — no prop where a real person stands
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
 
+// Who am I, spatially? Drives spawn + the movement clamp (A2/A3).
+const who = { role: config.role, isNextUp: config.isNextUp };
+
 // ── Role-based spawn ──────────────────────────────────────────────────────────
-// Listener: stand in the audience a few metres in front of the stage, facing it
-// (yaw 0 → looking -Z, where the stage/backdrop are) so it's centred on load.
-// Speaker: stand on the platform near its front edge, facing the audience (yaw π
-// → looking +Z). y stays 0 so VR/AR floor-relative head height is correct.
-const spawn = config.role === 'speaker'
-  ? { position: [STAGE_POS.x, 0, STAGE_POS.z + 2], yaw: Math.PI }
-  : { position: [STAGE_POS.x, 0, STAGE_POS.z + 11], yaw: 0 };
+// Speaker: on the stage TOP near the front, facing the audience (+Z).
+// Next-up: inside the under-stage green room, facing the front opening (+Z).
+// Audience: in front of the stage, facing it (-Z).
+let spawn;
+if (who.role === 'speaker')   spawn = { position: [STAGE_POS.x, STAGE_TOP_Y, STAGE_POS.z + 1.5], yaw: Math.PI };
+else if (who.isNextUp)        spawn = { position: [STAGE_POS.x, 0, STAGE_POS.z], yaw: Math.PI };
+else                          spawn = { position: [STAGE_POS.x, 0, STAGE_POS.z + 12], yaw: 0 };
+
+// ── Boundary glow (A2): a ring that flares when the player hits their zone edge ──
+const bnd = boundaryFor(who);
+const ringMat = new THREE.MeshBasicMaterial({
+  color: 0xf7931a, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
+});
+const boundaryRing = new THREE.Mesh(new THREE.TorusGeometry(bnd.radius, 0.06, 12, 96), ringMat);
+boundaryRing.rotation.x = -Math.PI / 2;
+boundaryRing.position.set(STAGE_POS.x, bnd.y, STAGE_POS.z);
+scene.add(boundaryRing);
+let boundaryGlow = 0;
 
 const { rig, update: updateLocomotion, enableDeviceOrientation, disableDeviceOrientation, setMoveInput } =
-  createLocomotion(camera, renderer.domElement, { spawn });
+  createLocomotion(camera, renderer.domElement, {
+    spawn,
+    constrain: (x, z) => constrainPosition(who, x, z),
+    onBoundary: () => { boundaryGlow = 1; }, // soft edge stop + glow, no snap-back
+  });
 scene.add(rig);
 
-// ── Local player body ───────────────────────────────────────────────────────────
-// A capsule in the room avatar style, parented to the rig so it follows the
-// player's position + yaw. This replaces the old static on-stage prop: as a
-// speaker, the figure standing on the stage IS you. Speaker = bitcoin orange so
-// the stage figure stands out; listener = a cool blue. Others see us via their own
-// presence-driven AvatarPool (full capsule + head), not this local mesh.
-rig.add(createPlayerBody(config.role === 'speaker' ? 0xf7931a : 0x4cc2ff));
+// Local player body (capsule), parented to the rig so it moves + turns with us.
+rig.add(createPlayerBody(who.role === 'speaker' ? 0xf7931a : 0x4cc2ff));
 
 // ── HUD ─────────────────────────────────────────────────────────────────────────
 const hud = createHud();
-hud.setMode('flat');
+hud.setRoom(config.room);
 stageState.role = config.role;
-hud.setRole(config.role);
 
-// Desktop pointer-lock hint: show it only on fine-pointer (mouse) devices.
+// Desktop pointer-lock hint (fine pointer only).
 if (matchMedia('(pointer: fine)').matches) {
   hud.showLockHint(true);
   document.addEventListener('pointerlockchange', () => {
@@ -64,15 +74,12 @@ if (matchMedia('(pointer: fine)').matches) {
   });
 }
 
-// ── Mobile-only controls: gyro look toggle + movement joystick ──────────────────
-// Feature-detect a touch device with no fine pointer — this excludes desktops and
-// touchscreen laptops, rather than guessing from a narrow viewport width.
+// ── Mobile-only controls: gyro toggle + joystick ────────────────────────────────
 const isMobile = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
 if (isMobile) {
+  document.body.classList.add('mobile'); // lifts the joystick clear of the control bar
   hud.showLockHint(false);
 
-  // Gyro toggle: default off (drag-to-look). Enabling requests device-orientation
-  // permission (iOS prompts on this user gesture); tapping again returns to drag.
   let gyroOn = false;
   hud.showGyro(true);
   hud.setGyro(false);
@@ -88,60 +95,57 @@ if (isMobile) {
     }
   });
 
-  // Virtual joystick → feeds the SAME locomotion path as desktop WASD.
   createJoystick(document.getElementById('joystick'), {
     onMove: (strafe, forward) => setMoveInput(strafe, forward),
   });
 }
 
-// ── WebXR sessions ────────────────────────────────────────────────────────────
-setupXR(renderer, { btnVr: hud.el.btnVr, btnAr: hud.el.btnAr }, {
+// ── WebXR sessions + mode cluster (B2) ──────────────────────────────────────────
+// Screen is active by default; VR/AR enable + wire once feature-detection resolves.
+hud.setActiveMode('screen');
+setupXR(renderer, {
   onModeChange: (mode) => {
-    hud.setMode(mode);
-    // The joystick sits outside #hud, so hide it explicitly during immersive
-    // sessions; restore it (mobile only) back in flat mode.
-    const js = document.getElementById('joystick');
-    js.hidden = mode !== 'flat' ? true : !isMobile;
+    hud.setActiveMode(mode === 'flat' ? 'screen' : mode);
+    hud.showOverlay(mode === 'flat');            // no 2D HUD inside immersive
+    document.getElementById('joystick').hidden = mode !== 'flat' ? true : !isMobile;
   },
   onARMode: (on) => setARMode(on),
+}).then((xr) => {
+  hud.configureModes(xr.supported); // grey out VR/AR the device can't do
+  hud.onMode((m) => xr.enter(m));
 });
 
-// ── Voice + presence (lazy — only after the user clicks "Join voice") ────────────
+// ── Voice + presence (lazy — only after the user toggles Listen/Speak) ───────────
 const voice = new Voice({
-  onCounts: ({ participantCount, speakerCount }) => {
-    setState({ participantCount, speakerCount });
-  },
-  // Reflect idle → connecting → connected → failed in the HUD badge.
+  onCounts: ({ participantCount, speakerCount }) => setState({ participantCount, speakerCount }),
   onState: (state) => hud.setVoiceState(state),
 });
 let presence = null;
 
-// Reflect shared state into the HUD whenever it changes.
 onStateChange((s) => {
   hud.setParticipantCount(s.participantCount);
   hud.setSpeakerCount(s.speakerCount);
+  // Placeholder until Nostr names land (Phase 2): summarise by count.
+  hud.setNowSpeaking(s.speakerCount > 0 ? 'Someone speaking' : '— no one speaking —');
 });
 
-// ── Role-aware voice toggle (Listen / Speak) + request-to-speak placeholder ──────
-// Listener: "Listen" on/off controls hearing the room. Speaker: "Speak" on/off
-// controls mic publish (the speaker always hears the room). Either way the FIRST
-// "on" tap both joins the room and satisfies the browser's autoplay gesture.
+// Role-aware Listen/Speak toggle; first "on" tap joins + satisfies autoplay.
 const isSpeaker = config.role === 'speaker';
 const verb = isSpeaker ? 'Speak' : 'Listen';
-let active = false; // listener: hearing; speaker: mic publishing
+let active = false;
 
-hud.setVoiceToggle(`${verb}: off`);
-hud.showRequest(!isSpeaker); // disabled placeholder, listeners only (Fix 2)
+hud.setVoiceToggle(`${verb}: off`, false);
+hud.showRequest(!isSpeaker);                              // listener-only placeholder
 hud.onRequest(() => hud.toast('Request to speak — available in a later phase'));
+hud.onZap(() => hud.toast('Zaps arrive in a later phase')); // reserved Phase 3 slot
 
 hud.onVoice(async () => {
   const next = !active;
-  hud.el.btnVoice.disabled = true; // guard against double-taps mid-connect
+  hud.el.btnVoice.disabled = true;
   try {
     if (!voice.isConnected) {
-      await voice.connect();        // drives onState connecting → connected
+      await voice.connect();
       await voice.setListening(true); // resume audio playback within the gesture
-      // Presence rides the same connection: broadcast our pose, render peers.
       presence = createPresence(voice, scene, () => ({
         x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y,
       }));
@@ -149,10 +153,8 @@ hud.onVoice(async () => {
     if (isSpeaker) await voice.setMicEnabled(next);
     else await voice.setListening(next);
     active = next;
-    hud.setVoiceToggle(`${verb}: ${active ? 'on' : 'off'}`);
+    hud.setVoiceToggle(`${verb}: ${active ? 'on' : 'off'}`, active);
   } catch (err) {
-    // voice.connect already set state 'failed' + logged the cause; show the reason
-    // and leave the toggle off so the next tap retries.
     hud.setVoiceError(err.message || 'unknown error');
   } finally {
     hud.el.btnVoice.disabled = false;
@@ -167,12 +169,12 @@ addEventListener('resize', () => {
 });
 
 // ── Frame loop ──────────────────────────────────────────────────────────────────
-// setAnimationLoop (not requestAnimationFrame) so the SAME loop drives flat AND
-// immersive frames — Three.js swaps to the XR frame source automatically.
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), 0.1); // clamp huge dt after a tab stall
+  const dt = Math.min(clock.getDelta(), 0.1);
   updateLocomotion(dt, renderer);
   if (presence) presence.update(dt);
+  // Fade the boundary glow (held at full while the player pushes the edge).
+  if (boundaryGlow > 0) { boundaryGlow = Math.max(0, boundaryGlow - dt * 1.6); ringMat.opacity = boundaryGlow * 0.6; }
   renderer.render(scene, camera);
 });
