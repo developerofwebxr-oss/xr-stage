@@ -5,6 +5,7 @@ import { seedPlaceholders } from './room/avatars.js';
 import { createLocomotion } from './xr/locomotion.js';
 import { setupXR } from './xr/session.js';
 import { createHud } from './ui/hud.js';
+import { createJoystick } from './ui/joystick.js';
 import { Voice } from './voice/livekit.js';
 import { createPresence } from './state/presence.js';
 import { stageState, setState, onStateChange } from './state/stageState.js';
@@ -27,7 +28,18 @@ const { scene, setARMode } = buildScene();
 seedPlaceholders(scene, STAGE_POS);
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
-const { rig, update: updateLocomotion, enableDeviceOrientation } = createLocomotion(camera, renderer.domElement);
+
+// ── Role-based spawn ──────────────────────────────────────────────────────────
+// Listener: stand in the audience a few metres in front of the stage, facing it
+// (yaw 0 → looking -Z, where the stage/backdrop are) so it's centred on load.
+// Speaker: stand on the platform near its front edge, facing the audience (yaw π
+// → looking +Z). y stays 0 so VR/AR floor-relative head height is correct.
+const spawn = config.role === 'speaker'
+  ? { position: [STAGE_POS.x, 0, STAGE_POS.z + 2], yaw: Math.PI }
+  : { position: [STAGE_POS.x, 0, STAGE_POS.z + 11], yaw: 0 };
+
+const { rig, update: updateLocomotion, enableDeviceOrientation, disableDeviceOrientation, setMoveInput } =
+  createLocomotion(camera, renderer.domElement, { spawn });
 scene.add(rig);
 
 // ── HUD ─────────────────────────────────────────────────────────────────────────
@@ -44,20 +56,45 @@ if (matchMedia('(pointer: fine)').matches) {
   });
 }
 
-// Mobile gyro opt-in: reuse the Recenter button to request device orientation.
-if (matchMedia('(pointer: coarse)').matches) {
-  hud.showRecenter(true);
-  hud.el.btnRecenter.textContent = 'Use gyro';
-  hud.onRecenter(async () => {
-    const ok = await enableDeviceOrientation();
-    hud.el.btnRecenter.textContent = ok ? 'Gyro on' : 'Gyro denied';
-    hud.el.btnRecenter.disabled = true;
+// ── Mobile-only controls: gyro look toggle + movement joystick ──────────────────
+// Feature-detect a touch device with no fine pointer — this excludes desktops and
+// touchscreen laptops, rather than guessing from a narrow viewport width.
+const isMobile = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
+if (isMobile) {
+  hud.showLockHint(false);
+
+  // Gyro toggle: default off (drag-to-look). Enabling requests device-orientation
+  // permission (iOS prompts on this user gesture); tapping again returns to drag.
+  let gyroOn = false;
+  hud.showGyro(true);
+  hud.setGyro(false);
+  hud.onGyro(async () => {
+    if (!gyroOn) {
+      gyroOn = await enableDeviceOrientation();
+      hud.setGyro(gyroOn);
+      if (!gyroOn) hud.el.btnGyro.textContent = 'Gyro: denied';
+    } else {
+      disableDeviceOrientation();
+      gyroOn = false;
+      hud.setGyro(false);
+    }
+  });
+
+  // Virtual joystick → feeds the SAME locomotion path as desktop WASD.
+  createJoystick(document.getElementById('joystick'), {
+    onMove: (strafe, forward) => setMoveInput(strafe, forward),
   });
 }
 
 // ── WebXR sessions ────────────────────────────────────────────────────────────
 setupXR(renderer, { btnVr: hud.el.btnVr, btnAr: hud.el.btnAr }, {
-  onModeChange: (mode) => hud.setMode(mode),
+  onModeChange: (mode) => {
+    hud.setMode(mode);
+    // The joystick sits outside #hud, so hide it explicitly during immersive
+    // sessions; restore it (mobile only) back in flat mode.
+    const js = document.getElementById('joystick');
+    js.hidden = mode !== 'flat' ? true : !isMobile;
+  },
   onARMode: (on) => setARMode(on),
 });
 
@@ -66,6 +103,8 @@ const voice = new Voice({
   onCounts: ({ participantCount, speakerCount }) => {
     setState({ participantCount, speakerCount });
   },
+  // Reflect idle → connecting → connected → failed in the HUD badge.
+  onState: (state) => hud.setVoiceState(state),
 });
 let presence = null;
 let muted = false;
@@ -77,14 +116,16 @@ onStateChange((s) => {
 });
 
 hud.onVoice(async () => {
+  hud.el.btnVoice.disabled = true; // prevent double-clicks mid-connect
   try {
-    await voice.connect();
+    await voice.connect();         // drives onState connecting → connected
     hud.setVoiceJoined();
     // Presence rides the same connection: broadcast our rig position, render peers.
     presence = createPresence(voice, scene, () => rig.position);
   } catch (err) {
-    console.error('[voice] join failed:', err);
-    hud.el.btnVoice.textContent = 'Voice failed — retry';
+    // voice.connect already set state 'failed' + logged the cause; show the reason
+    // and re-enable the button for a retry.
+    hud.setVoiceError(err.message || 'unknown error');
   }
 });
 

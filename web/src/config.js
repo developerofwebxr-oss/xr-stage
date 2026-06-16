@@ -8,10 +8,13 @@ const params = new URLSearchParams(location.search);
 
 export const config = {
   // LiveKit SFU websocket URL (LiveKit Cloud or a self-host — same code path).
-  livekitUrl: import.meta.env.VITE_LIVEKIT_URL || '',
+  // Used exactly as provided; blank is surfaced as a setup error at join time.
+  livekitUrl: (import.meta.env.VITE_LIVEKIT_URL || '').trim(),
 
-  // Base URL of our token backend (server/). Trailing slash stripped.
-  tokenUrl: (import.meta.env.VITE_TOKEN_URL || 'https://localhost:8080').replace(/\/+$/, ''),
+  // Absolute base URL of our token backend (server/), used exactly as provided
+  // (scheme and all) — only the trailing slash is trimmed. No silent localhost
+  // fallback: if it's blank, the voice layer raises a clear setup error.
+  tokenUrl: (import.meta.env.VITE_TOKEN_URL || '').trim().replace(/\/+$/, ''),
 
   // Which stage room to join. Lets several independent rooms share one deployment.
   room: params.get('room') || 'main-stage',

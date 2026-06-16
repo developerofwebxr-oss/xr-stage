@@ -15,11 +15,13 @@ export function createHud() {
     presenceCount: $('presence-count'),
     btnVr: $('btn-vr'),
     btnAr: $('btn-ar'),
-    btnRecenter: $('btn-recenter'),
+    btnGyro: $('btn-gyro'),
     btnVoice: $('btn-voice'),
     btnMute: $('btn-mute'),
     voiceCount: $('voice-count'),
     speakerCount: $('speaker-count'),
+    voiceStatus: $('voice-status'),
+    voiceError: $('voice-error'),
     lockHint: $('lock-hint'),
   };
 
@@ -46,11 +48,28 @@ export function createHud() {
       el.btnVoice.textContent = 'Voice connected';
     },
     setMuted(muted) { el.btnMute.textContent = muted ? 'Unmute' : 'Mute'; },
+
+    // Voice connection state: 'idle' | 'connecting' | 'connected' | 'failed'.
+    // Drives the HUD badge text + colour and clears the error line unless failed.
+    setVoiceState(state) {
+      el.voiceStatus.textContent = state;
+      el.voiceStatus.setAttribute('data-state', state);
+      if (state !== 'failed') el.voiceError.hidden = true;
+    },
+    // Show a visible failure reason and offer a retry on the Join button.
+    setVoiceError(msg) {
+      el.voiceError.innerHTML = `voice error: <b>${msg}</b>`;
+      el.voiceError.hidden = false;
+      el.btnVoice.disabled = false;
+      el.btnVoice.textContent = 'Join voice — retry';
+    },
+
     showLockHint(show) { el.lockHint.hidden = !show; },
-    showRecenter(show) { el.btnRecenter.hidden = !show; },
+    showGyro(show) { el.btnGyro.hidden = !show; },
+    setGyro(on) { el.btnGyro.textContent = on ? 'Gyro: on' : 'Gyro: off'; },
 
     onVoice(fn) { el.btnVoice.addEventListener('click', fn); },
     onMute(fn) { el.btnMute.addEventListener('click', fn); },
-    onRecenter(fn) { el.btnRecenter.addEventListener('click', fn); },
+    onGyro(fn) { el.btnGyro.addEventListener('click', fn); },
   };
 }

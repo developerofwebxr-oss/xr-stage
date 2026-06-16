@@ -12,28 +12,45 @@ import * as THREE from 'three';
 //   VR      → right thumbstick smooth-locomotion (move) + left thumbstick snap-turn
 //   AR      → nothing; the rig is fixed and the user walks (head pose moves them)
 //
-// createLocomotion() wires desktop+mobile immediately and returns { rig, update }.
+// createLocomotion() wires desktop+mobile immediately and returns
+// { rig, update, enableDeviceOrientation, disableDeviceOrientation, setMoveInput }.
 // update(dt, renderer) is called every frame and reads VR thumbsticks when immersive.
+//
+// `spawn` ({ position:[x,y,z], yaw }) sets where the viewer starts and which way
+// they face — applied to the RIG so it holds in flat, VR, and AR alike. main.js
+// derives it from role (audience facing the stage vs speaker on the stage).
 
-const MOVE_SPEED = 3.0;   // metres/sec for WASD + VR stick
+const MOVE_SPEED = 3.0;   // metres/sec for WASD + VR stick + joystick (analog cap)
 const SNAP_TURN = Math.PI / 6; // 30° per left-stick flick
 const LOOK_SENSITIVITY = 0.0022;
 const PITCH_LIMIT = Math.PI / 2 - 0.05;
 
-export function createLocomotion(camera, domElement) {
+export function createLocomotion(camera, domElement, { spawn } = {}) {
+  const start = spawn || { position: [0, 0, 4], yaw: 0 };
+
   // Rig holds the camera. Camera keeps only pitch; the rig owns yaw + position,
   // so "forward" for WASD is always the rig's facing regardless of head pitch.
   const rig = new THREE.Group();
-  rig.position.set(0, 0, 4); // on the floor, a few metres back from the stage
+  rig.position.set(start.position[0], start.position[1], start.position[2]);
   rig.add(camera);
   // Eye height lives on the CAMERA, not the rig: in flat mode this is the viewer's
   // height; in immersive mode Three overwrites the camera pose from the floor-
   // relative head pose, so the rig staying at y=0 keeps VR/AR height correct.
   camera.position.set(0, 1.6, 0);
 
-  let yaw = Math.PI;   // face -Z (toward the stage) at spawn
+  // Spawn yaw. yaw=0 faces -Z; the scene's stage sits at -Z, so the default
+  // (audience) spawn looks straight at it. The speaker spawn uses yaw=π (face +Z,
+  // toward the audience). Applied to the rig immediately so the very first rendered
+  // frame is already oriented correctly.
+  let yaw = start.yaw || 0;
   let pitch = 0;
+  rig.rotation.y = yaw;
   const keys = new Set();
+
+  // Analog move input from the mobile joystick, normalised to [-1, 1]:
+  //   x = strafe (right positive), z = forward (positive = toward facing).
+  // Fed in via setMoveInput(); merged with WASD in update() so there's one path.
+  const moveInput = { x: 0, z: 0 };
 
   // ── Desktop: pointer lock + mouse-look + WASD ─────────────────────────────────
   const wantsPointerLock = matchMedia('(pointer: fine)').matches;
@@ -82,7 +99,8 @@ export function createLocomotion(camera, domElement) {
     };
   }
   async function enableDeviceOrientation() {
-    // iOS 13+ gates the sensor behind an explicit permission request.
+    // iOS 13+ gates the sensor behind an explicit permission request (must be
+    // called from a user gesture — the Gyro button's click handler).
     const needsPermission = typeof DeviceOrientationEvent !== 'undefined'
       && typeof DeviceOrientationEvent.requestPermission === 'function';
     if (needsPermission) {
@@ -92,6 +110,15 @@ export function createLocomotion(camera, domElement) {
     addEventListener('deviceorientation', onDeviceOrientation);
     return true;
   }
+  // Turn gyro look back off: stop listening and drop to drag-look. yaw/pitch keep
+  // their last gyro values, so the view doesn't jump when control hands back.
+  function disableDeviceOrientation() {
+    removeEventListener('deviceorientation', onDeviceOrientation);
+    gyro = null;
+  }
+
+  // Set the analog move vector from the mobile joystick (forward positive).
+  function setMoveInput(x, z) { moveInput.x = x; moveInput.z = z; }
 
   // Reusable scratch vectors (avoid per-frame allocation).
   const _forward = new THREE.Vector3();
@@ -110,14 +137,27 @@ export function createLocomotion(camera, domElement) {
       rig.rotation.y = yaw;
       camera.rotation.x = pitch;
 
-      // WASD on the ground plane, relative to where the rig faces.
-      _forward.set(0, 0, -1).applyAxisAngle(UP, yaw);
-      _right.set(1, 0, 0).applyAxisAngle(UP, yaw);
-      const step = MOVE_SPEED * dt;
-      if (keys.has('KeyW') || keys.has('ArrowUp'))    rig.position.addScaledVector(_forward, step);
-      if (keys.has('KeyS') || keys.has('ArrowDown'))  rig.position.addScaledVector(_forward, -step);
-      if (keys.has('KeyD') || keys.has('ArrowRight')) rig.position.addScaledVector(_right, step);
-      if (keys.has('KeyA') || keys.has('ArrowLeft'))  rig.position.addScaledVector(_right, -step);
+      // ── One movement path for WASD + joystick ───────────────────────────────
+      // Build an intent vector (ix = strafe, iz = forward) from keys AND the
+      // analog joystick, then clamp its length to 1 so diagonals/full-stick never
+      // exceed MOVE_SPEED. Joystick magnitude < 1 gives proportional (analog) speed.
+      let ix = moveInput.x;
+      let iz = moveInput.z;
+      if (keys.has('KeyW') || keys.has('ArrowUp'))    iz += 1;
+      if (keys.has('KeyS') || keys.has('ArrowDown'))  iz -= 1;
+      if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
+      if (keys.has('KeyA') || keys.has('ArrowLeft'))  ix -= 1;
+
+      const mag = Math.hypot(ix, iz);
+      if (mag > 1) { ix /= mag; iz /= mag; }
+
+      if (ix !== 0 || iz !== 0) {
+        _forward.set(0, 0, -1).applyAxisAngle(UP, yaw); // rig forward on the ground
+        _right.set(1, 0, 0).applyAxisAngle(UP, yaw);
+        const step = MOVE_SPEED * dt;
+        rig.position.addScaledVector(_forward, iz * step);
+        rig.position.addScaledVector(_right, ix * step);
+      }
     }
   }
 
@@ -155,7 +195,7 @@ export function createLocomotion(camera, domElement) {
     }
   }
 
-  return { rig, update, enableDeviceOrientation };
+  return { rig, update, enableDeviceOrientation, disableDeviceOrientation, setMoveInput };
 }
 
 const UP = new THREE.Vector3(0, 1, 0);

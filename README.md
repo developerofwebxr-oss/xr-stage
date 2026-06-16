@@ -77,7 +77,7 @@ npm run dev                   # → https://localhost:5173 (self-signed cert —
 | Mode | How |
 |------|-----|
 | **Desktop** | Open the URL. Click to lock the pointer, mouse to look, **WASD** to move. |
-| **Mobile** | Open on a phone. Drag to look; tap **Use gyro** to look by tilting. In AR you also walk. |
+| **Mobile** | Open on a phone. Drag to look, or toggle **Gyro: on** to look by tilting. Walk with the **bottom-left joystick** (up/down = forward/back, left/right = strafe). In AR you also walk physically. |
 | **VR** | Open in the **Quest browser**, tap **Enter VR**. Right stick = move, left stick = snap-turn, **X/A** to exit. |
 | **AR** | Open on a WebXR phone (Chrome `immersive-ar`), tap **Enter AR**. The room anchors to your floor; walk around. |
 
@@ -125,6 +125,20 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 - **Role gates publish.** `speaker` tokens carry `canPublish`; listeners don't —
   enforced when the token is minted, not trusted from the client.
 - Scene is all primitives (no heavy assets) to hold 60fps+ on Quest and mobile.
+
+## Changelog
+
+**Foundation polish (post-Prompt 1)** — UX/robustness fixes, no new scope:
+- Spawn now faces the stage on load (listener in the audience; **speaker stands on
+  the stage facing the audience**) — applied to the rig in all modes.
+- **Mobile controls**: a Gyro on/off toggle (drag-look ↔ device-orientation) and a
+  bottom-left virtual joystick for walking, both feature-detected (touch + no fine
+  pointer) so they never appear on desktop. The joystick feeds the same locomotion
+  path as desktop WASD.
+- **Voice never fails silently**: `VITE_TOKEN_URL` is used exactly as provided (clear
+  setup error if blank); the join flow surfaces `voice error: <reason>` on the HUD,
+  plus an `idle → connecting → connected → failed` status indicator. The underlying
+  error is logged to the console.
 
 ---
 

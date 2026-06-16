@@ -41,6 +41,20 @@
         backdrop-filter: blur(6px);
       }
       .badge b { color: var(--bitcoin); }
+      .badge[hidden] { display: none; }
+      /* Error variant for the voice failure message. */
+      .badge.err { border-color: #e5484d; color: #ffb4b4; }
+      .badge.err b { color: #ffd0d0; }
+      /* Voice error sits centred just above the bottom button row. */
+      #voice-error {
+        position: absolute; left: 50%; bottom: 68px; transform: translateX(-50%);
+        max-width: 80vw; text-align: center;
+      }
+
+      /* Voice connection-state colour cues. */
+      #voice-status[data-state="connecting"] { color: #ffd479; }
+      #voice-status[data-state="connected"]  { color: #5be37a; }
+      #voice-status[data-state="failed"]     { color: #ff6b6b; }
 
       button.btn {
         pointer-events: auto;
@@ -60,6 +74,23 @@
         pointer-events: none; color: rgba(232,232,239,0.7); font-size: 14px;
       }
       #lock-hint[hidden] { display: none; }
+
+      /* ── Mobile movement joystick (bottom-left). Shown only on touch devices. ── */
+      #joystick {
+        position: fixed; left: 22px; bottom: 22px; width: 120px; height: 120px;
+        border-radius: 50%; z-index: 11; pointer-events: auto; touch-action: none;
+        background: rgba(20, 24, 34, 0.4);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        backdrop-filter: blur(4px);
+      }
+      #joystick-thumb {
+        position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
+        margin: -26px 0 0 -26px; border-radius: 50%;
+        background: rgba(247, 147, 26, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.32);
+        transform: translate(0, 0);
+      }
+      #joystick[hidden] { display: none; }
     </style>
   </head>
   <body>
@@ -70,12 +101,13 @@
         <div class="badge" id="mode-badge">mode: <b id="mode-label">flat</b></div>
         <div class="badge" id="role-badge">role: <b id="role-label">listener</b></div>
         <div class="badge" id="presence-badge">in room: <b id="presence-count">1</b></div>
+        <div class="badge" id="voice-status-badge">voice: <b id="voice-status" data-state="idle">idle</b></div>
       </div>
 
       <div class="row top-right">
         <button class="btn" id="btn-vr" hidden>Enter VR</button>
         <button class="btn" id="btn-ar" hidden>Enter AR</button>
-        <button class="btn" id="btn-recenter" hidden>Recenter</button>
+        <button class="btn" id="btn-gyro" hidden>Gyro: off</button>
       </div>
 
       <div class="row bottom">
@@ -83,7 +115,12 @@
         <button class="btn" id="btn-mute" hidden>Mute</button>
         <div class="badge" id="voice-count" hidden>🎙 <b id="speaker-count">0</b> speaking</div>
       </div>
+
+      <div class="badge err" id="voice-error" hidden></div>
     </div>
+
+    <!-- Mobile-only virtual joystick; shown by main.js after feature detection. -->
+    <div id="joystick" hidden><div id="joystick-thumb"></div></div>
 
     <div id="lock-hint" hidden>click to look · WASD to move · Esc to release</div>
 
