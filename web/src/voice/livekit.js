@@ -16,6 +16,10 @@ import { config } from '../config.js';
 //
 // No secrets here: we only ever hold a short-lived JWT the server minted.
 
+// Log the resolved token endpoint exactly once per page load (debugging aid for
+// path mismatches), no matter how many times the user clicks Join voice.
+let loggedTokenUrl = false;
+
 export class Voice {
   constructor({ onCounts, onState } = {}) {
     this.room = null;
@@ -129,9 +133,13 @@ export class Voice {
   }
 
   async _fetchToken() {
+    // VITE_TOKEN_URL is the FULL endpoint — fetch it as-is, never append "/token".
+    const url = config.tokenUrl;
+    if (!loggedTokenUrl) { console.log('[voice] token endpoint:', url); loggedTokenUrl = true; }
+
     let res;
     try {
-      res = await fetch(`${config.tokenUrl}/token`, {
+      res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ room: config.room, identity: config.identity, role: config.role }),

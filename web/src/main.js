@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { config } from './config.js';
 import { buildScene, STAGE_POS } from './room/scene.js';
-import { seedPlaceholders } from './room/avatars.js';
+import { seedPlaceholders, createPlayerBody } from './room/avatars.js';
 import { createLocomotion } from './xr/locomotion.js';
 import { setupXR } from './xr/session.js';
 import { createHud } from './ui/hud.js';
@@ -25,7 +25,7 @@ document.getElementById('app').appendChild(renderer.domElement);
 
 // ── Scene + camera + people ───────────────────────────────────────────────────
 const { scene, setARMode } = buildScene();
-seedPlaceholders(scene, STAGE_POS);
+seedPlaceholders(scene); // static ambiance only — no prop where a real person stands
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
 
@@ -41,6 +41,14 @@ const spawn = config.role === 'speaker'
 const { rig, update: updateLocomotion, enableDeviceOrientation, disableDeviceOrientation, setMoveInput } =
   createLocomotion(camera, renderer.domElement, { spawn });
 scene.add(rig);
+
+// ── Local player body ───────────────────────────────────────────────────────────
+// A capsule in the room avatar style, parented to the rig so it follows the
+// player's position + yaw. This replaces the old static on-stage prop: as a
+// speaker, the figure standing on the stage IS you. Speaker = bitcoin orange so
+// the stage figure stands out; listener = a cool blue. Others see us via their own
+// presence-driven AvatarPool (full capsule + head), not this local mesh.
+rig.add(createPlayerBody(config.role === 'speaker' ? 0xf7931a : 0x4cc2ff));
 
 // ── HUD ─────────────────────────────────────────────────────────────────────────
 const hud = createHud();
@@ -120,8 +128,11 @@ hud.onVoice(async () => {
   try {
     await voice.connect();         // drives onState connecting → connected
     hud.setVoiceJoined();
-    // Presence rides the same connection: broadcast our rig position, render peers.
-    presence = createPresence(voice, scene, () => rig.position);
+    // Presence rides the same connection: broadcast our rig pose (position + yaw),
+    // render peers as moving bodies.
+    presence = createPresence(voice, scene, () => ({
+      x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y,
+    }));
   } catch (err) {
     // voice.connect already set state 'failed' + logged the cause; show the reason
     // and re-enable the button for a retry.

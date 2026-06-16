@@ -11,10 +11,11 @@ export const config = {
   // Used exactly as provided; blank is surfaced as a setup error at join time.
   livekitUrl: (import.meta.env.VITE_LIVEKIT_URL || '').trim(),
 
-  // Absolute base URL of our token backend (server/), used exactly as provided
-  // (scheme and all) — only the trailing slash is trimmed. No silent localhost
-  // fallback: if it's blank, the voice layer raises a clear setup error.
-  tokenUrl: (import.meta.env.VITE_TOKEN_URL || '').trim().replace(/\/+$/, ''),
+  // The FULL token endpoint URL (scheme and path), e.g.
+  //   https://xr-stage-production.up.railway.app/token
+  // It is fetched exactly as given — the voice layer does NOT append "/token" (that
+  // caused a /token/token 404). No silent localhost fallback: blank → clear error.
+  tokenUrl: (import.meta.env.VITE_TOKEN_URL || '').trim(),
 
   // Which stage room to join. Lets several independent rooms share one deployment.
   room: params.get('room') || 'main-stage',

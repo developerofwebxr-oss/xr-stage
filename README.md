@@ -64,7 +64,7 @@ for `speaker` and is absent/false for `listener`.
 ```bash
 cd web
 npm install
-cp .env.example .env.local    # set VITE_LIVEKIT_URL + VITE_TOKEN_URL (https://localhost:8080)
+cp .env.example .env.local    # VITE_LIVEKIT_URL + VITE_TOKEN_URL (the FULL …/token URL)
 npm run dev                   # → https://localhost:5173 (self-signed cert — "proceed anyway")
 ```
 
@@ -102,7 +102,9 @@ to `main`. `base` is relative (`./`), so it works from a project subpath like
 Actions → **Variables**) — neither is a secret:
 
 - `VITE_LIVEKIT_URL` = `wss://your-project.livekit.cloud`
-- `VITE_TOKEN_URL` = `https://your-backend.up.railway.app`
+- `VITE_TOKEN_URL` = the **full token endpoint, including `/token`**, e.g.
+  `https://xr-stage-production.up.railway.app/token` — the client fetches it
+  verbatim and does **not** append `/token` (appending caused a `/token/token` 404).
 
 Then enable Pages (Settings → Pages → Source: GitHub Actions).
 
@@ -127,6 +129,17 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 - Scene is all primitives (no heavy assets) to hold 60fps+ on Quest and mobile.
 
 ## Changelog
+
+**Bodies + token path (post-Prompt 1.1)** — no new scope:
+- **Real bodies.** Your camera now has a body: a capsule (room avatar style)
+  parented to the rig, so walking moves a visible figure and — as a speaker — the
+  figure on the stage *is* you. Remote participants render as bodies from the
+  existing presence heartbeat, now carrying yaw so they turn as well as move. The
+  static on-stage prop you used to spawn inside is gone; only a few clearly-static
+  audience capsules remain as ambiance, clear of every spawn point.
+- **Token 404 fixed.** `VITE_TOKEN_URL` is now the **full endpoint including
+  `/token`** and is fetched verbatim (no more `/token/token`). The resolved URL is
+  logged once to the console for debugging.
 
 **Foundation polish (post-Prompt 1)** — UX/robustness fixes, no new scope:
 - Spawn now faces the stage on load (listener in the audience; **speaker stands on

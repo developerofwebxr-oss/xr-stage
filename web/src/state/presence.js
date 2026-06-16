@@ -2,11 +2,11 @@ import { AvatarPool } from '../room/avatars.js';
 
 // state/presence.js — lightweight "where is everyone" over the LiveKit data channel.
 //
-// Each client broadcasts { t:'presence', p:[x,y,z] } a few times a second (lossy,
-// unreliable — a dropped frame just means the next one wins). Inbound presence from
-// other clients drives an AvatarPool, so everyone sees everyone move in near-real
-// time. This validates the shared-state pipe that later prompts reuse for "who
-// holds the stage", zaps, sponsor state, etc.
+// Each client broadcasts { t:'presence', p:[x,y,z], yaw } a few times a second
+// (lossy, unreliable — a dropped frame just means the next one wins). Inbound
+// presence from other clients drives an AvatarPool, so everyone sees everyone move
+// and turn in near-real time. This validates the shared-state pipe that later
+// prompts reuse for "who holds the stage", zaps, sponsor state, etc.
 //
 // We don't put our own id in the payload — LiveKit tells the receiver who sent each
 // message (the participant identity), which is authoritative and unspoofable here.
@@ -15,7 +15,8 @@ const SEND_HZ = 6;                 // heartbeats per second (throttled)
 const SEND_INTERVAL = 1000 / SEND_HZ;
 const STALE_MS = 4000;             // drop avatars we haven't heard from in this long
 
-export function createPresence(voice, scene, getPosition) {
+// getPose() returns the local player's pose: { x, y, z, yaw }.
+export function createPresence(voice, scene, getPose) {
   const pool = new AvatarPool(scene);
   const lastSeen = new Map(); // id → timestamp
 
@@ -23,18 +24,22 @@ export function createPresence(voice, scene, getPosition) {
   voice.onData((id, msg) => {
     if (!msg || msg.t !== 'presence' || !Array.isArray(msg.p)) return;
     lastSeen.set(id, performance.now());
-    pool.upsert(id, msg.p);
+    pool.upsert(id, msg.p, typeof msg.yaw === 'number' ? msg.yaw : 0);
   });
 
   let sendAcc = 0;
 
   function update(dt) {
-    // Throttled outbound heartbeat of our current ground position.
+    // Throttled outbound heartbeat of our current ground pose (position + yaw).
     sendAcc += dt * 1000;
     if (sendAcc >= SEND_INTERVAL) {
       sendAcc = 0;
-      const p = getPosition();
-      voice.sendData({ t: 'presence', p: [round(p.x), round(p.y), round(p.z)] });
+      const pose = getPose();
+      voice.sendData({
+        t: 'presence',
+        p: [round(pose.x), round(pose.y), round(pose.z)],
+        yaw: round(pose.yaw),
+      });
     }
 
     // Expire anyone who's gone quiet, then smooth the rest toward their targets.
