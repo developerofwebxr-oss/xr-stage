@@ -26,6 +26,12 @@ const HEAD_RADIUS = 0.22;
 // 90 for a hemisphere. Default tuned to the reference shape.
 const HEAD_CUT_DEG = 128;
 
+// Vertical position of the head centre (metres). Raised so the flat face clears
+// the torso: the body capsule's top is at ~1.46m, so this keeps most of the face
+// above it, leaving only a small sliver of its bottom overlapping the body (which
+// keeps the head looking attached). Single knob — nudge to taste.
+const HEAD_Y = 1.62;
+
 // makeHead — a sphere truncated by an off-centre flat cut: a fuller rounded back
 // with a flat, circular face (narrower than the head) on the body's FORWARD side
 // (-Z), so facing is readable at a glance and turns with the body's yaw. The flat
@@ -68,7 +74,7 @@ function makeHead() {
   faceMount.position.z = openingZ;
   head.add(faceMount);
 
-  head.position.y = 1.5;
+  head.position.y = HEAD_Y;
   return head;
 }
 
