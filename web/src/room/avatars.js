@@ -15,34 +15,57 @@ import * as THREE from 'three';
 // deterministic "Keyface" avatar from a Nostr npub — same transforms, same pool
 // API, so nothing downstream changes.
 
-// makeHead — a head flattened on its front into a flat "face", so you can read at
-// a glance which way a body is pointing. The flat face is on the body's FORWARD
-// side (-Z), so it turns with the body's yaw.
+const HEAD_RADIUS = 0.22;
+
+// How much of the head sphere is kept as the rounded back, expressed as the polar
+// angle (from the back pole) at which the sphere is cut flat:
+//   90°  = an exact hemisphere
+//   >90° = the cut moves PAST the centre toward the front, leaving a fuller
+//          rounded back and a flat face narrower than the head.
+// Single tunable knob — nudge it up for a smaller face / fuller back, down toward
+// 90 for a hemisphere. Default tuned to the reference shape.
+const HEAD_CUT_DEG = 128;
+
+// makeHead — a sphere truncated by an off-centre flat cut: a fuller rounded back
+// with a flat, circular face (narrower than the head) on the body's FORWARD side
+// (-Z), so facing is readable at a glance and turns with the body's yaw. The flat
+// face keeps a profile image crisp (flat image on a flat surface).
 //
-// PROMPT 2 MOUNT POINT: the flat face is its own mesh, named 'faceMount', carrying
-// a dedicated material. To show a user's Nostr profile image, set
+// Built without clipping planes: the back is a partial SphereGeometry (front cap
+// removed via thetaLength) whose opening is a clean flat circle, capped by a
+// CircleGeometry disc sitting flush in the opening.
+//
+// PROMPT 2 MOUNT POINT: that disc is its own mesh, named 'faceMount', carrying a
+// dedicated material. To show a user's Nostr profile image, set
 //   faceMount.material.map = <texture>; faceMount.material.needsUpdate = true;
 // nothing else needs to change. For now it's a plain placeholder panel.
 function makeHead() {
   const head = new THREE.Group();
+  const cut = THREE.MathUtils.degToRad(HEAD_CUT_DEG);
 
-  // Cranium: a sphere squashed front-to-back so the face side reads as flat.
+  // Rounded back: a partial sphere covering its pole down to `cut`, removing the
+  // front cap. Built around the +Y pole, then rotated so the pole points +Z (back)
+  // and the flat opening faces -Z (forward).
   const skull = new THREE.Mesh(
-    new THREE.SphereGeometry(0.22, 16, 12),
+    new THREE.SphereGeometry(HEAD_RADIUS, 24, 16, 0, Math.PI * 2, 0, cut),
     new THREE.MeshStandardMaterial({ color: 0xe8e8ef, roughness: 0.6 }),
   );
-  skull.scale.z = 0.72;
+  skull.rotation.x = Math.PI / 2; // +Y pole → +Z (back); opening → -Z (forward)
   head.add(skull);
 
-  // The flat face on the forward (-Z) side — the image slot. A CircleGeometry
-  // faces +Z by default, so rotate it to face -Z (the body's forward).
+  // Flat circular face capping the opening: radius = opening radius, positioned
+  // flush in the opening plane, facing forward (-Z). CircleGeometry faces +Z by
+  // default, so flip it. Past-centre cut ⇒ cos(cut) < 0 ⇒ the opening sits in
+  // front of centre (negative z).
+  const openingRadius = HEAD_RADIUS * Math.sin(cut);
+  const openingZ = HEAD_RADIUS * Math.cos(cut);
   const faceMount = new THREE.Mesh(
-    new THREE.CircleGeometry(0.18, 24),
+    new THREE.CircleGeometry(openingRadius, 32),
     new THREE.MeshStandardMaterial({ color: 0x222a3a, roughness: 0.85, metalness: 0 }),
   );
   faceMount.name = 'faceMount';
   faceMount.rotation.y = Math.PI;
-  faceMount.position.z = -0.162; // flush on the front of the squashed skull
+  faceMount.position.z = openingZ;
   head.add(faceMount);
 
   head.position.y = 1.5;

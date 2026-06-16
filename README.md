@@ -141,11 +141,15 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
   `N speaking` indicator and `voice:` status badge are unchanged.
 - **"Request to speak"** placeholder, listeners only — visibly disabled with a
   tooltip + a small toast on tap. No real behavior (future phase).
-- **Flat-faced heads.** Every body's head is now flattened on its forward side into
-  a face panel, so facing is readable at a glance. That panel is a named mesh
-  (`faceMount`) with its own material — the single mount point for the Nostr
-  profile image in Prompt 2 (`faceMount.material.map = …`). The local first-person
-  body stays headless so it never blocks the camera; remote viewers see the head.
+- **Flat-faced heads.** Every body's head is a sphere truncated by an off-centre
+  flat cut (partial `SphereGeometry` via `thetaLength`, no clipping planes): a
+  fuller rounded back with a flat circular face — narrower than the head — on the
+  forward side, so facing is readable at a glance. The cut is a single tunable knob
+  (`HEAD_CUT_DEG` in [avatars.js](web/src/room/avatars.js)). The flat face is a
+  named mesh (`faceMount`) with its own material — the single mount point for the
+  Nostr profile image in Prompt 2 (`faceMount.material.map = …`). The local
+  first-person body stays headless so it never blocks the camera; remote viewers
+  see the head.
 
 **Bodies + token path (post-Prompt 1.1)** — no new scope:
 - **Real bodies.** Your camera now has a body: a capsule (room avatar style)
