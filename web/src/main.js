@@ -102,10 +102,20 @@ if (!isMobile) {
 
 // Mobile-only: the on-screen joystick (movement). Look is drag / gyro via Free look.
 if (isMobile) {
-  document.body.classList.add('mobile'); // lifts the joystick clear of the control bar
+  document.body.classList.add('mobile');
   createJoystick(document.getElementById('joystick'), {
     onMove: (strafe, forward) => setMoveInput(strafe, forward),
   });
+
+  // The control bar docks flush at the bottom (CSS); the joystick floats above it.
+  // Publish the bar's live height as --control-bar-h so the joystick (and toasts)
+  // always clear it — the bar is 1 row in landscape, 2 in portrait.
+  const controlbar = document.getElementById('controlbar');
+  const setBarHeight = () =>
+    document.documentElement.style.setProperty('--control-bar-h', `${controlbar.offsetHeight}px`);
+  if (window.ResizeObserver) new ResizeObserver(setBarHeight).observe(controlbar);
+  addEventListener('resize', setBarHeight);
+  setBarHeight();
 }
 
 // ── Free look toggle (every device) ─────────────────────────────────────────────

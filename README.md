@@ -134,6 +134,16 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Mobile control-bar docking** — mobile-only positioning, desktop unchanged:
+- The control bar now docks **flush to the bottom edge** on mobile
+  (`bottom: calc(env(safe-area-inset-bottom) + 8px)`) — it was floating mid-screen
+  because of an old "lift above the joystick" offset (`+124px`).
+- The joystick floats **just above the bar**, offset by the bar's live height:
+  a `ResizeObserver` in main.js publishes `--control-bar-h` (1 row landscape, 2 rows
+  portrait) and the joystick (and toast/error) use
+  `bottom: calc(env(safe-area-inset-bottom) + var(--control-bar-h) + 16px)`, so it
+  always clears the bar in either orientation. 1.12 viewport handling untouched.
+
 **Mobile viewport fix** — no behavior change beyond viewport sizing:
 - The canvas + overlay now track the **live visual viewport**, fixing the mobile
   black band (portrait/landscape, after rotation or URL-bar show/hide) and the
