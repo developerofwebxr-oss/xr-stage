@@ -134,6 +134,19 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Look controls rework** — no new features:
+- **Desktop default is hold-left-drag to look** (sats-arena style) — release to stop.
+  The old always-on pointer-lock free-look is no longer the default.
+- **One unified "Free look" toggle** (replaces "Gyro"), shown on every device.
+  OFF (default): hold-drag (desktop) / touch-drag (mobile). ON: pointer-lock free
+  mouse (desktop) / gyro (mobile). iOS gyro permission still prompts on the enabling
+  tap; if pointer lock drops (Esc) the toggle untoggles itself.
+- **Smoothed mobile gyro:** the device-orientation → look mapping is low-pass lerped
+  (factor 0.12) toward a target with a sub-degree deadzone, accounts for screen
+  orientation (portrait/landscape), and calibrates "forward" to the heading at the
+  moment Free look is enabled — no more twitch. One look path feeds rig yaw + camera
+  pitch (drag / pointer-lock / gyro all converge there).
+
 **Avatar separation: all bodies + head-safe gap** — no new features:
 - Separation now pushes the local player out of **every** body — live participants
   **and** the static seeded props (their positions are returned by

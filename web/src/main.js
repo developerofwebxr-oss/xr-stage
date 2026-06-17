@@ -32,6 +32,11 @@ const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 2
 // Who am I, spatially? Drives spawn + the movement clamp (A2/A3).
 const who = { role: config.role, isNextUp: config.isNextUp };
 
+// Mobile = coarse pointer, no fine pointer (per the skill — not viewport width).
+// Picks the Free-look mechanism (gyro vs pointer-lock) + shows the joystick.
+const isMobile = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
+let freeLookOn = false;
+
 // ── Role-based spawn ──────────────────────────────────────────────────────────
 // Speaker: on the main stage near the front, facing the audience (+Z).
 // Next-up: on the mic platform in front of the mic, facing the speaker (-Z).
@@ -65,11 +70,14 @@ boundaryRing.position.set(bnd.centre.x, bnd.y, bnd.centre.z);
 scene.add(boundaryRing);
 let boundaryGlow = 0;
 
-const { rig, update: updateLocomotion, enableDeviceOrientation, disableDeviceOrientation, setMoveInput } =
+const { rig, update: updateLocomotion, setFreeLook, setMoveInput } =
   createLocomotion(camera, renderer.domElement, {
     spawn,
+    isMobile,
     constrain: (x, z) => constrainPosition(who, x, z),
     onBoundary: () => { boundaryGlow = 1; }, // soft edge stop + glow, no snap-back
+    // Pointer lock dropped on its own (e.g. Esc) → reflect it in the toggle.
+    onFreeLookEnd: () => { freeLookOn = false; hud.setFreeLook(false); },
   });
 scene.add(rig);
 
@@ -81,39 +89,29 @@ const hud = createHud();
 hud.setRoom(config.room);
 stageState.role = config.role;
 
-// Desktop pointer-lock hint (fine pointer only).
-if (matchMedia('(pointer: fine)').matches) {
-  hud.showLockHint(true);
-  document.addEventListener('pointerlockchange', () => {
-    hud.showLockHint(document.pointerLockElement !== renderer.domElement);
-  });
-}
+// Desktop hint (fine pointer only): default look is hold-drag.
+if (!isMobile) hud.showLockHint(true);
 
-// ── Mobile-only controls: gyro toggle + joystick ────────────────────────────────
-const isMobile = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
+// Mobile-only: the on-screen joystick (movement). Look is drag / gyro via Free look.
 if (isMobile) {
   document.body.classList.add('mobile'); // lifts the joystick clear of the control bar
-  hud.showLockHint(false);
-
-  let gyroOn = false;
-  hud.showGyro(true);
-  hud.setGyro(false);
-  hud.onGyro(async () => {
-    if (!gyroOn) {
-      gyroOn = await enableDeviceOrientation();
-      hud.setGyro(gyroOn);
-      if (!gyroOn) hud.el.btnGyro.textContent = 'Gyro: denied';
-    } else {
-      disableDeviceOrientation();
-      gyroOn = false;
-      hud.setGyro(false);
-    }
-  });
-
   createJoystick(document.getElementById('joystick'), {
     onMove: (strafe, forward) => setMoveInput(strafe, forward),
   });
 }
+
+// ── Free look toggle (every device) ─────────────────────────────────────────────
+// OFF (default): hold-drag (desktop) / touch-drag (mobile). ON: pointer-lock free
+// mouse (desktop) / smoothed gyro (mobile). One toggle, device-appropriate mechanism.
+hud.showFreeLook(true);
+hud.setFreeLook(false);
+hud.onFreeLook(async () => {
+  const turningOn = !freeLookOn;
+  const ok = await setFreeLook(turningOn);
+  if (turningOn && !ok) { hud.el.btnFreelook.textContent = 'Free look: denied'; return; }
+  freeLookOn = turningOn;
+  hud.setFreeLook(freeLookOn);
+});
 
 // ── WebXR sessions + mode cluster (B2) ──────────────────────────────────────────
 // Screen is active by default; VR/AR enable + wire once feature-detection resolves.

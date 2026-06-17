@@ -94,9 +94,9 @@
       button.ctl.on { background: var(--bitcoin); color: #1a1205; border-color: var(--bitcoin); }
       button.ctl.soon { opacity: 0.4; cursor: not-allowed; }
       button.ctl[hidden] { display: none; }
-      /* Gyro: a small, standalone toggle beside the mode cluster (Fix 4). */
-      #btn-gyro { padding: 6px 9px; font-size: 12px; }
-      #btn-gyro[hidden] { display: none; }
+      /* Free look: a small, standalone toggle beside the mode cluster. */
+      #btn-freelook { padding: 6px 9px; font-size: 12px; }
+      #btn-freelook[hidden] { display: none; }
 
       .speaking { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--muted); padding: 0 2px; }
       .speaking b { color: var(--bitcoin); }
@@ -148,7 +148,7 @@
       body.mobile #topbar { font-size: 12px; gap: 8px; top: 10px; }
       body.mobile #controlbar { bottom: 124px; gap: 8px; }   /* sits above the joystick */
       body.mobile button.ctl { padding: 8px 10px; font-size: 12px; }
-      body.mobile #btn-gyro { padding: 6px 8px; font-size: 11px; }
+      body.mobile #btn-freelook { padding: 6px 8px; font-size: 11px; }
       body.mobile .mode-cluster .mode { padding: 6px 10px; font-size: 12px; }
       body.mobile #joystick { left: 14px; bottom: 16px; width: 96px; height: 96px; }
       body.mobile #joystick-thumb { width: 42px; height: 42px; margin: -21px 0 0 -21px; }
@@ -173,7 +173,7 @@
       <!-- Bottom control bar (Fix 2): two groups that wrap into ≤2 tidy rows -->
       <div id="controlbar" class="bar">
         <div class="grp">
-          <button class="ctl" id="btn-gyro" hidden>Gyro: off</button>
+          <button class="ctl" id="btn-freelook" hidden>Free look: off</button>
           <div class="mode-cluster" role="group" aria-label="Mode">
             <button class="mode" id="mode-screen" data-mode="screen">Screen</button>
             <button class="mode" id="mode-vr" data-mode="vr">VR</button>
@@ -197,7 +197,7 @@
     <!-- Mobile-only virtual joystick; shown by main.js after feature detection. -->
     <div id="joystick" hidden><div id="joystick-thumb"></div></div>
 
-    <div id="lock-hint" hidden>click to look · WASD to move · Esc to release</div>
+    <div id="lock-hint" hidden>hold-drag to look · WASD to move · Free look for mouse-look</div>
 
     <script type="module" src="/src/main.js"></script>
   </body>

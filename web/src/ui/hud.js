@@ -25,7 +25,7 @@ export function createHud() {
     btnZap: $('btn-zap'),
     voiceCount: $('voice-count'),
     speakerCount: $('speaker-count'),
-    btnGyro: $('btn-gyro'),
+    btnFreelook: $('btn-freelook'),
     // transient
     voiceError: $('voice-error'),
     toast: $('toast'),
@@ -88,12 +88,13 @@ export function createHud() {
     },
 
     showLockHint(show) { el.lockHint.hidden = !show; },
-    showGyro(show) { el.btnGyro.hidden = !show; },
-    setGyro(on) { el.btnGyro.textContent = on ? 'Gyro: on' : 'Gyro: off'; },
+    // Unified "Free look" toggle (desktop pointer-lock / mobile gyro).
+    showFreeLook(show) { el.btnFreelook.hidden = !show; },
+    setFreeLook(on) { el.btnFreelook.textContent = on ? 'Free look: on' : 'Free look: off'; },
 
     onVoice(fn) { el.btnVoice.addEventListener('click', fn); },
     onRequest(fn) { el.btnRequest.addEventListener('click', fn); },
     onZap(fn) { el.btnZap.addEventListener('click', fn); },
-    onGyro(fn) { el.btnGyro.addEventListener('click', fn); },
+    onFreeLook(fn) { el.btnFreelook.addEventListener('click', fn); },
   };
 }
