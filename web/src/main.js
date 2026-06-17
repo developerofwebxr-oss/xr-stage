@@ -183,10 +183,21 @@ addEventListener('resize', () => {
 
 // ── Frame loop ──────────────────────────────────────────────────────────────────
 const clock = new THREE.Clock();
+const MIN_SEPARATION = 0.7; // ~2 body radii — bodies won't fully overlap
+
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   updateLocomotion(dt, renderer);
-  if (presence) presence.update(dt);
+  if (presence) {
+    presence.update(dt);
+    // Fix 3: nudge the local rig out of any remote body it's overlapping, then
+    // re-clamp so the nudge can't push us into a forbidden zone.
+    const push = presence.separation(rig.position, MIN_SEPARATION);
+    if (push) {
+      const c = constrainPosition(who, rig.position.x + push.x, rig.position.z + push.z);
+      rig.position.set(c.x, c.y, c.z);
+    }
+  }
   // Fade the boundary glow (held at full while the player pushes the edge).
   if (boundaryGlow > 0) { boundaryGlow = Math.max(0, boundaryGlow - dt * 1.6); ringMat.opacity = boundaryGlow * 0.6; }
   renderer.render(scene, camera);

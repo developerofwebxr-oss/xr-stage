@@ -134,6 +134,19 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Geometry + clamp tuning** — no new features:
+- Mic platform footprint trimmed a notch (`MIC_PLATFORM_W` 5.0→4.2,
+  `MIC_PLATFORM_DEPTH` 3.6→3.0); still joined to the stage with standing room at
+  the mic.
+- Clamps are now **body-radius aware** (`BODY_RADIUS`): every edge is offset by the
+  avatar's radius, so a body stops flush against the stage/platform and never clips
+  into the mesh — kept inside by the radius, pushed outside by the radius (speaker,
+  next-up, and audience vs. both the stage disc and the platform).
+- Lightweight **avatar separation** ([presence.js](web/src/state/presence.js)):
+  the local rig is nudged out of any overlapping remote body to a ~0.7m gap
+  (local-only positional push, re-clamped to the zone — no physics). Static seeded
+  props aren't included yet (noted in code).
+
 **Tiered stage (connected mic platform)** — no new features:
 - The stage + mic are now **one connected two-level structure**: a raised main
   stage (`STAGE_TOP_Y`) with a step down (`STEP_HEIGHT`) to a lower **mic platform**

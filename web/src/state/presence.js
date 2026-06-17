@@ -53,7 +53,26 @@ export function createPresence(voice, scene, getPose) {
     pool.update(dt);
   }
 
-  return { update };
+  // Fix 3 — lightweight avatar separation (local-only, no physics). If `pos` is
+  // closer than `minGap` to a remote body, return the {x,z} nudge that pushes it
+  // out to that gap (the single deepest overlap; cheap O(remote bodies)). main
+  // applies it to the local rig then re-clamps. Each client pushes only ITSELF, so
+  // two people resolve mutually. NOTE: static seeded props aren't included yet —
+  // separation is vs. live participants; extend here if props need it.
+  function separation(pos, minGap) {
+    let best = null, bestPen = 0;
+    for (const { group } of pool.byId.values()) {
+      const dx = pos.x - group.position.x, dz = pos.z - group.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d < minGap && d > 1e-3) {
+        const pen = minGap - d;
+        if (pen > bestPen) { bestPen = pen; best = { x: (dx / d) * pen, z: (dz / d) * pen }; }
+      }
+    }
+    return best;
+  }
+
+  return { update, separation };
 }
 
 // Trim to mm precision — keeps presence payloads tiny over the wire.

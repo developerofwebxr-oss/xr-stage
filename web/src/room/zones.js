@@ -24,16 +24,18 @@ export const STEP_HEIGHT       = 0.4;                          // one step down 
 export const MIC_PLATFORM_TOP  = STAGE_TOP_Y - STEP_HEIGHT;    // 0.6
 
 // ── Tunable mic-platform footprint (a rectangle in front of the stage) ──────────
-export const MIC_PLATFORM_W     = 5.0;   // width (x)
-export const MIC_PLATFORM_DEPTH = 3.6;   // how far it reaches forward from the stage front
+export const MIC_PLATFORM_W     = 4.2;   // width (x) — a touch narrower
+export const MIC_PLATFORM_DEPTH = 3.0;   // forward reach from the stage front — a touch shorter
 export const STAND_CLEARANCE    = 1.3;   // standing room in front of the mic
 const PLATFORM_OVERLAP = 0.8;            // how far the platform tucks under the stage (joins them)
 
 // Outer edge of the audience floor (soft world bound).
 export const AUDIENCE_RADIUS = 20;
 
-// Keep bodies this far inside/outside an edge so the capsule doesn't clip it.
-export const BODY_MARGIN = 0.5;
+// The avatar's body radius. Clamps offset edges by THIS so a capsule (radius ~0.28)
+// stops flush against a wall/edge and never overlaps the mesh — a small epsilon
+// over the true radius guarantees no clipping from any approach.
+export const BODY_RADIUS = 0.32;
 
 // ── Derived layout ──────────────────────────────────────────────────────────────
 const STAGE_FRONT_Z = STAGE_POS.z + STAGE_RADIUS;                 // -2.5 (frontmost stage point)
@@ -44,10 +46,11 @@ export const MIC_PLATFORM_FRONT_Z = STAGE_FRONT_Z + MIC_PLATFORM_DEPTH;     // f
 export const MIC_STAND_POS = new THREE.Vector3(STAGE_POS.x, MIC_PLATFORM_TOP, STAGE_FRONT_Z + 0.45);
 export const QUESTIONER_POS = new THREE.Vector3(STAGE_POS.x, MIC_PLATFORM_TOP, MIC_STAND_POS.z + STAND_CLEARANCE);
 
-// Where the questioner may stand: the exposed platform top, in front of the stage.
-const NEXTUP_X_HALF = MIC_PLATFORM_W / 2 - BODY_MARGIN;
-const NEXTUP_Z_MIN  = STAGE_FRONT_Z + BODY_MARGIN;            // just in front of the stage
-const NEXTUP_Z_MAX  = MIC_PLATFORM_FRONT_Z - BODY_MARGIN;     // just inside the platform front
+// Where the questioner may stand: the exposed platform top, in front of the stage,
+// inset by the body radius so the capsule never overhangs an edge.
+const NEXTUP_X_HALF = MIC_PLATFORM_W / 2 - BODY_RADIUS;
+const NEXTUP_Z_MIN  = STAGE_FRONT_Z + BODY_RADIUS;            // just in front of the stage step
+const NEXTUP_Z_MAX  = MIC_PLATFORM_FRONT_Z - BODY_RADIUS;     // just inside the platform front lip
 
 // ── Backdrop screen: larger, framed, behind + above the stage ───────────────────
 export const SCREEN = {
@@ -60,10 +63,12 @@ export const SCREEN = {
 // ── Movement clamp ───────────────────────────────────────────────────────────────
 // constrainPosition(who, x, z) → { x, z, y, hit }
 //   who: { role:'speaker'|'listener', isNextUp:boolean }
+// Every edge is offset by BODY_RADIUS so the avatar stops cleanly against geometry
+// (kept inside by the radius; pushed outside by the radius) — no mesh clipping.
 export function constrainPosition(who, x, z) {
   // Speaker: confined to the MAIN STAGE top (inside the disc) at STAGE_TOP_Y.
   if (who.role === 'speaker') {
-    return clampInsideCircle(STAGE_POS, x, z, STAGE_RADIUS - BODY_MARGIN, STAGE_TOP_Y);
+    return clampInsideCircle(STAGE_POS, x, z, STAGE_RADIUS - BODY_RADIUS, STAGE_TOP_Y);
   }
 
   // Next-up: confined to the MIC PLATFORM standing area, at MIC_PLATFORM_TOP.
@@ -75,18 +80,19 @@ export function constrainPosition(who, x, z) {
     return { x, z, y: MIC_PLATFORM_TOP, hit };
   }
 
-  // Audience: kept OUT of the stage disc AND the mic-platform footprint, inside the
-  // outer bound, and in front of the stage.
+  // Audience: kept OUT of the stage disc AND the mic-platform footprint (each by the
+  // body radius), inside the outer bound, and in front of the stage.
   let hit = false;
   const dx = x - STAGE_POS.x, dz = z - STAGE_POS.z;
   const dist = Math.hypot(dx, dz) || 1e-6;
-  const min = STAGE_RADIUS + BODY_MARGIN;
+  const min = STAGE_RADIUS + BODY_RADIUS;
   if (dist < min) { const k = min / dist; x = STAGE_POS.x + dx * k; z = STAGE_POS.z + dz * k; hit = true; }
 
-  // Push off the mic-platform footprint (exit via the nearest of front/left/right).
-  const pMinX = STAGE_POS.x - MIC_PLATFORM_W / 2 - BODY_MARGIN;
-  const pMaxX = STAGE_POS.x + MIC_PLATFORM_W / 2 + BODY_MARGIN;
-  const pMaxZ = MIC_PLATFORM_FRONT_Z + BODY_MARGIN;
+  // Push off the mic-platform footprint (exit via the nearest of front/left/right),
+  // offset by the body radius so the capsule rests flush against the platform side.
+  const pMinX = STAGE_POS.x - MIC_PLATFORM_W / 2 - BODY_RADIUS;
+  const pMaxX = STAGE_POS.x + MIC_PLATFORM_W / 2 + BODY_RADIUS;
+  const pMaxZ = MIC_PLATFORM_FRONT_Z + BODY_RADIUS;
   if (x > pMinX && x < pMaxX && z > MIC_PLATFORM_BACK_Z && z < pMaxZ) {
     const dFront = pMaxZ - z, dLeft = x - pMinX, dRight = pMaxX - x;
     const m = Math.min(dFront, dLeft, dRight);
@@ -113,11 +119,11 @@ function clampInsideCircle(centre, x, z, max, y) {
 //   speaker/audience → a ring on the stage edge; next-up → the mic-platform rect.
 export function boundaryFor(who) {
   if (who.role === 'speaker') {
-    return { shape: 'ring', centre: STAGE_POS, radius: STAGE_RADIUS - BODY_MARGIN, y: STAGE_TOP_Y + 0.05 };
+    return { shape: 'ring', centre: STAGE_POS, radius: STAGE_RADIUS - BODY_RADIUS, y: STAGE_TOP_Y + 0.05 };
   }
   if (who.isNextUp) {
     const centre = new THREE.Vector3(STAGE_POS.x, 0, (NEXTUP_Z_MIN + NEXTUP_Z_MAX) / 2);
     return { shape: 'rect', centre, w: NEXTUP_X_HALF * 2, d: NEXTUP_Z_MAX - NEXTUP_Z_MIN, y: MIC_PLATFORM_TOP + 0.05 };
   }
-  return { shape: 'ring', centre: STAGE_POS, radius: STAGE_RADIUS + BODY_MARGIN, y: 0.06 };
+  return { shape: 'ring', centre: STAGE_POS, radius: STAGE_RADIUS + BODY_RADIUS, y: 0.06 };
 }
