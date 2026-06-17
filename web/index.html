@@ -10,17 +10,54 @@
     />
     <title>XR Stage — WebXR foundation</title>
     <style>
+      /* ════════════════════════════════════════════════════════════════════════
+         "Live Console" design system — instrumentation over a dark spatial stage.
+         Reusable tokens below seed Phase 2+ surfaces (identity, zap, chat).
+         ════════════════════════════════════════════════════════════════════════ */
       :root {
-        --bitcoin: #f7931a;
-        --ink: #e8e8ef;
-        --muted: rgba(232, 232, 239, 0.55);
-        --panel: rgba(14, 16, 22, 0.78);
-        --fill: rgba(255, 255, 255, 0.06);
-        --line: rgba(255, 255, 255, 0.13);
+        color-scheme: dark;
+
+        --bg: #05060a;
+        --ink: #eceef5;
+        --ink-dim: rgba(236, 238, 245, 0.6);
+        --ink-faint: rgba(236, 238, 245, 0.4);
+
+        /* Primary accent — Bitcoin (sats / energy / "live"). */
+        --orange: #f7931a;
+        --orange-bright: #ffb24a;
+        --orange-ink: #1a1206;
+        /* Secondary accent — Nostr identity (focus rings now; Phase 2 surfaces). */
+        --violet: #9b6cff;
+
+        /* State LEDs. */
+        --ok: #54e08a;
+        --warn: #ffcf6b;
+        --bad: #ff6f6b;
+
+        /* Glass panels + lines. */
+        --panel: rgba(12, 14, 19, 0.72);
+        --panel-edge: rgba(255, 255, 255, 0.10);
+        --fill: rgba(255, 255, 255, 0.045);
+        --fill-hover: rgba(255, 255, 255, 0.09);
+        --hairline: rgba(255, 255, 255, 0.12);
+
+        --r-lg: 16px;
+        --r-md: 11px;
+        --r-sm: 8px;
+
+        --shadow: 0 12px 40px -14px rgba(0, 0, 0, 0.75);
+        --ring-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        --glow-orange: 0 0 16px -3px rgba(247, 147, 26, 0.6);
+
+        --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+        --t: 150ms cubic-bezier(0.4, 0.1, 0.2, 1);
       }
+
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; overflow: hidden; background: #05060a; }
-      body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
+      body { font-family: var(--font-ui); color: var(--ink); }
 
       #app { position: fixed; inset: 0; }
       canvas { display: block; touch-action: none; }
@@ -29,86 +66,119 @@
       #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
       #hud[hidden] { display: none; }
 
-      /* ── Shared pill container ──────────────────────────────────────────────── */
+      /* Inline instrument icons (monochrome, inherit text colour). */
+      .ico {
+        width: 14px; height: 14px; flex: 0 0 auto; vertical-align: -2px;
+        fill: none; stroke: currentColor; stroke-width: 1.8;
+        stroke-linecap: round; stroke-linejoin: round; opacity: 0.85;
+      }
+
+      /* Keyboard focus — violet identity ring, distinct from hover/active orange. */
+      :focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+
+      /* ── Shared glass pill ──────────────────────────────────────────────────── */
       .bar {
         pointer-events: auto;
         display: flex; align-items: center; gap: 10px;
-        background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-        padding: 8px 12px; backdrop-filter: blur(10px);
-        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38);
+        background: var(--panel); border: 1px solid var(--panel-edge);
+        border-radius: var(--r-lg); padding: 8px 12px;
+        backdrop-filter: blur(16px) saturate(1.3);
+        -webkit-backdrop-filter: blur(16px) saturate(1.3);
+        box-shadow: var(--shadow), var(--ring-inset);
       }
 
-      /* ── Top status bar (B3 / Fix 5) ─────────────────────────────────────────── */
+      /* ── Top status bar — instrument readouts ─────────────────────────────────── */
       #topbar {
         position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 12;
-        font-size: 13px; gap: 10px; max-width: calc(100vw - 16px);
+        font-family: var(--font-mono); font-size: 13px; gap: 10px;
+        max-width: calc(100vw - 16px);
       }
-      #topbar > * { flex: 0 0 auto; }                 /* fixed items keep their size … */
-      #now-speaking {                                  /* … the speaking line absorbs slack + truncates */
+      #topbar > * { flex: 0 0 auto; }
+      .field { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-dim); }
+      #now-speaking {
         flex: 1 1 auto; min-width: 0; overflow: hidden;
-        text-overflow: ellipsis; white-space: nowrap;
+        text-overflow: ellipsis; white-space: nowrap; color: var(--ink-dim);
       }
-      #topbar b { color: var(--ink); font-weight: 600; }
-      #topbar .muted { color: var(--muted); }
-      #topbar .sep { width: 1px; height: 16px; background: var(--line); }
+      #topbar b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+      #topbar .muted { color: var(--ink-dim); }
+      #topbar .sep { width: 1px; height: 14px; background: var(--hairline); }
+
+      /* Connection LED — a tally light; pulses gently when live. */
       .statedot {
         width: 8px; height: 8px; border-radius: 50%; display: inline-block;
-        margin-right: 6px; background: #6b7280; vertical-align: middle;
+        background: #5b6472; flex: 0 0 auto;
       }
-      .statedot[data-state="connecting"] { background: #ffd479; }
-      .statedot[data-state="connected"]  { background: #5be37a; }
-      .statedot[data-state="failed"]     { background: #ff6b6b; }
+      .statedot[data-state="connecting"] { background: var(--warn); }
+      .statedot[data-state="connected"]  { background: var(--ok); animation: tally 2.4s ease-out infinite; }
+      .statedot[data-state="failed"]     { background: var(--bad); }
+      @keyframes tally {
+        0%   { box-shadow: 0 0 0 0 rgba(84, 224, 138, 0.5); }
+        70%  { box-shadow: 0 0 0 6px rgba(84, 224, 138, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(84, 224, 138, 0); }
+      }
 
-      /* ── Bottom control bar (Fix 2) ──────────────────────────────────────────── */
-      /* One pill, centred. Wide: a single row. Narrow: the two groups wrap into two
-         tidy centred rows (each group stays intact — no offset stack). */
+      /* ── Bottom control bar ───────────────────────────────────────────────────── */
       #controlbar {
         position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 12;
-        flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 16px);
+        flex-wrap: wrap; justify-content: center;
+        width: max-content; max-width: calc(100vw - 16px); /* one row wide; wraps when capped on narrow */
+      }
+      /* Powered "energy line" along the top edge — marks the live action surface. */
+      #controlbar::before {
+        content: ""; position: absolute; left: 16px; right: 16px; top: 0; height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(247, 147, 26, 0.6), transparent);
+        opacity: 0.7; pointer-events: none;
       }
       .grp { display: flex; align-items: center; justify-content: center; gap: 8px; }
 
-      /* Mode cluster (B2): a segmented control. */
+      /* Mode cluster — channel selector. */
       .mode-cluster {
         display: inline-flex; gap: 3px; padding: 3px;
-        background: var(--fill); border: 1px solid var(--line); border-radius: 10px;
+        background: rgba(0, 0, 0, 0.28); border: 1px solid var(--hairline); border-radius: var(--r-md);
       }
       .mode-cluster .mode {
-        pointer-events: auto; border: 0; background: transparent; color: var(--ink);
-        font: inherit; font-weight: 600; font-size: 13px; padding: 7px 13px;
-        border-radius: 8px; cursor: pointer; transition: background .15s, color .15s, opacity .15s;
+        pointer-events: auto; border: 0; background: transparent; color: var(--ink-dim);
+        font-family: var(--font-mono); font-weight: 600; font-size: 11px;
+        text-transform: uppercase; letter-spacing: 0.08em;
+        padding: 7px 13px; border-radius: 8px; cursor: pointer; transition: all var(--t);
       }
-      .mode-cluster .mode:hover:not(:disabled):not(.active) { background: rgba(255, 255, 255, 0.09); }
-      .mode-cluster .mode.active { background: var(--bitcoin); color: #1a1205; }
-      .mode-cluster .mode:disabled { opacity: 0.3; cursor: not-allowed; }
+      .mode-cluster .mode:hover:not(:disabled):not(.active) { background: var(--fill-hover); color: var(--ink); }
+      .mode-cluster .mode.active { background: var(--orange); color: var(--orange-ink); box-shadow: var(--glow-orange); }
+      .mode-cluster .mode:disabled { opacity: 0.28; cursor: not-allowed; }
 
       /* Control buttons. */
       button.ctl {
         pointer-events: auto; background: var(--fill); color: var(--ink);
-        border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px;
-        font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
-        white-space: nowrap; transition: border-color .15s, background .15s, color .15s;
+        border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 9px 14px;
+        font-family: var(--font-ui); font-weight: 600; font-size: 13px; cursor: pointer;
+        white-space: nowrap; transition: all var(--t); box-shadow: var(--ring-inset);
       }
-      button.ctl:hover:not(:disabled):not(.soon) { border-color: var(--bitcoin); }
-      button.ctl.primary { border-color: var(--bitcoin); }
-      button.ctl.on { background: var(--bitcoin); color: #1a1205; border-color: var(--bitcoin); }
-      button.ctl.soon { opacity: 0.4; cursor: not-allowed; }
+      button.ctl:hover:not(:disabled):not(.soon) { border-color: rgba(247, 147, 26, 0.6); background: var(--fill-hover); }
+      button.ctl.primary { border-color: rgba(247, 147, 26, 0.55); color: var(--orange-bright); } /* armed */
+      button.ctl.on { background: var(--orange); color: var(--orange-ink); border-color: var(--orange); box-shadow: var(--glow-orange), var(--ring-inset); } /* live */
+      button.ctl.soon { opacity: 0.42; color: var(--ink-dim); cursor: not-allowed; }
+      button.ctl .ico { vertical-align: -3px; margin-right: 5px; opacity: 0.95; }
       button.ctl[hidden] { display: none; }
       /* Free look: a small, standalone toggle beside the mode cluster. */
-      #btn-freelook { padding: 6px 9px; font-size: 12px; }
+      #btn-freelook { padding: 6px 9px; font-size: 12px; color: var(--ink-dim); }
       #btn-freelook[hidden] { display: none; }
 
-      .speaking { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--muted); padding: 0 2px; }
-      .speaking b { color: var(--bitcoin); }
+      .speaking {
+        display: flex; align-items: center; gap: 6px; padding: 0 2px;
+        font-family: var(--font-mono); font-size: 13px; color: var(--ink-dim);
+      }
+      .speaking b { color: var(--orange); font-variant-numeric: tabular-nums; }
       .speaking[hidden] { display: none; }
 
-      /* Error + toast. */
+      /* ── Transient surfaces: badges, toast, hints ─────────────────────────────── */
       .badge {
-        pointer-events: none; background: var(--panel); border: 1px solid var(--line);
-        border-radius: 8px; padding: 6px 10px; font-size: 13px; backdrop-filter: blur(6px);
+        pointer-events: none; background: var(--panel); border: 1px solid var(--panel-edge);
+        border-radius: var(--r-md); padding: 7px 11px; font-size: 13px;
+        backdrop-filter: blur(12px) saturate(1.3); -webkit-backdrop-filter: blur(12px) saturate(1.3);
+        box-shadow: var(--shadow), var(--ring-inset);
       }
-      .badge.err { border-color: #e5484d; color: #ffb4b4; }
-      .badge.err b { color: #ffd0d0; }
+      .badge.err { border-color: rgba(255, 111, 107, 0.55); color: #ffc9c7; }
+      .badge.err b { color: #ffe0df; }
       #voice-error {
         position: fixed; left: 50%; bottom: 78px; transform: translateX(-50%);
         max-width: 80vw; text-align: center; z-index: 12;
@@ -116,20 +186,23 @@
       #voice-error[hidden] { display: none; }
       #toast {
         position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%); z-index: 13;
-        background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-        padding: 8px 12px; font-size: 13px; color: var(--ink); backdrop-filter: blur(6px);
-        white-space: nowrap; opacity: 0; transition: opacity .2s; pointer-events: none;
+        background: var(--panel); border: 1px solid var(--panel-edge); border-radius: var(--r-md);
+        padding: 8px 13px; font-size: 13px; color: var(--ink); white-space: nowrap;
+        backdrop-filter: blur(12px) saturate(1.3); -webkit-backdrop-filter: blur(12px) saturate(1.3);
+        box-shadow: var(--shadow), var(--ring-inset);
+        opacity: 0; transition: opacity var(--t); pointer-events: none;
       }
       #toast.show { opacity: 1; }
 
-      /* Transient controls hint — a small top-centre badge (below the status bar),
-         fades in on load and out after a few seconds / on first input. Never centre. */
+      /* Transient controls hint — top-centre, fades in on load / out on first input. */
       #lock-hint {
         position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 9;
-        pointer-events: none; color: var(--muted); font-size: 13px; white-space: nowrap;
-        background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-        padding: 6px 12px; backdrop-filter: blur(6px);
-        opacity: 0; transition: opacity .35s;
+        pointer-events: none; color: var(--ink-dim);
+        font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.01em; white-space: nowrap;
+        background: var(--panel); border: 1px solid var(--panel-edge); border-radius: var(--r-md);
+        padding: 6px 12px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        box-shadow: var(--shadow), var(--ring-inset);
+        opacity: 0; transition: opacity 0.35s;
       }
       #lock-hint.show { opacity: 1; }
       #lock-hint[hidden] { display: none; }
@@ -138,23 +211,28 @@
       #freelook-hint {
         position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 9;
         pointer-events: none; color: var(--ink); font-size: 13px; white-space: nowrap;
-        background: var(--panel); border: 1px solid var(--bitcoin); border-radius: 8px;
-        padding: 6px 12px; backdrop-filter: blur(6px);
+        background: var(--panel); border: 1px solid rgba(247, 147, 26, 0.55); border-radius: var(--r-md);
+        padding: 7px 13px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        box-shadow: var(--shadow), var(--glow-orange);
       }
-      #freelook-hint b { color: var(--bitcoin); }
+      #freelook-hint b { color: var(--orange-bright); font-weight: 700; letter-spacing: 0.04em; }
       #freelook-hint[hidden] { display: none; }
 
-      /* ── Mobile movement joystick (Fix 3): bottom-left, low, clear of the bar ──── */
+      /* ── Mobile movement joystick: bottom-left, low, clear of the bar ──────────── */
       #joystick {
         position: fixed; left: 16px; bottom: 22px; width: 120px; height: 120px;
         border-radius: 50%; z-index: 11; pointer-events: auto; touch-action: none;
-        background: rgba(20, 24, 34, 0.4); border: 1px solid rgba(255, 255, 255, 0.18);
-        backdrop-filter: blur(4px);
+        background: radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.06), rgba(10, 12, 17, 0.5));
+        border: 1px solid var(--hairline);
+        backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+        box-shadow: var(--shadow), var(--ring-inset);
       }
       #joystick-thumb {
         position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
         margin: -26px 0 0 -26px; border-radius: 50%;
-        background: rgba(247, 147, 26, 0.55); border: 1px solid rgba(255, 255, 255, 0.32);
+        background: radial-gradient(circle at 40% 35%, var(--orange-bright), var(--orange));
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.6), var(--glow-orange);
         transform: translate(0, 0);
       }
       #joystick[hidden] { display: none; }
@@ -168,24 +246,35 @@
       body.mobile #joystick { left: 14px; bottom: 16px; width: 96px; height: 96px; }
       body.mobile #joystick-thumb { width: 42px; height: 42px; margin: -21px 0 0 -21px; }
       body.mobile #voice-error, body.mobile #toast { bottom: 214px; }
+
+      /* Respect reduced-motion: no pulse, near-instant transitions. */
+      @media (prefers-reduced-motion: reduce) {
+        * { transition-duration: 0.01ms !important; animation: none !important; }
+      }
     </style>
   </head>
   <body>
     <div id="app"></div>
 
     <div id="hud">
-      <!-- Top status (B3 / Fix 5) -->
+      <!-- Top status: room · connection · speaking · count -->
       <header id="topbar" class="bar">
-        <span>⌂ <b id="room-label">main-stage</b></span>
+        <span class="field">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M6 6a8.5 8.5 0 0 0 0 12M18 6a8.5 8.5 0 0 1 0 12"/></svg>
+          <b id="room-label">main-stage</b>
+        </span>
         <span class="sep"></span>
-        <span><span class="statedot" id="voice-dot" data-state="idle"></span><span id="voice-status" class="muted">idle</span></span>
+        <span class="field"><span class="statedot" id="voice-dot" data-state="idle"></span><span id="voice-status" class="muted">idle</span></span>
         <span class="sep"></span>
         <span id="now-speaking" class="muted">— no one speaking —</span>
         <span class="sep"></span>
-        <span>👥 <b id="presence-count">1</b></span>
+        <span class="field">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c0-3 2.4-5 5.5-5s5.5 2 5.5 5"/><path d="M16 6.6a3 3 0 0 1 0 5.4M17.2 14c2.4.4 3.8 2.2 3.8 5"/></svg>
+          <b id="presence-count">1</b>
+        </span>
       </header>
 
-      <!-- Bottom control bar (Fix 2): two groups that wrap into ≤2 tidy rows -->
+      <!-- Bottom control bar: two groups that wrap into ≤2 tidy rows -->
       <div id="controlbar" class="bar">
         <div class="grp">
           <button class="ctl" id="btn-freelook" hidden>Free look: off</button>
@@ -200,8 +289,11 @@
           <button class="ctl soon" id="btn-request" aria-disabled="true"
                   title="Available in a later phase" hidden>Request to speak</button>
           <button class="ctl soon" id="btn-zap" aria-disabled="true"
-                  title="Zaps arrive in a later phase">⚡ Zap</button>
-          <span class="speaking" id="voice-count" hidden>🎙 <b id="speaker-count">0</b></span>
+                  title="Zaps arrive in a later phase">
+            <svg class="ico" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>Zap</button>
+          <span class="speaking" id="voice-count" hidden>
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4"/></svg>
+            <b id="speaker-count">0</b></span>
         </div>
       </div>
 

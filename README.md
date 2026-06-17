@@ -134,6 +134,25 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Visual design pass — "Live Console"** — visual/CSS + tokens only, no behavior change:
+- Established a reusable **CSS token system** (palette, type, spacing, radii,
+  elevation, motion) in `web/index.html` so Phase 2+ surfaces inherit the look.
+  Bitcoin-orange primary accent; Nostr-violet reserved for identity (used now as
+  the keyboard-focus ring); state LEDs for ok/warn/bad.
+- Restyled every HUD surface to a **broadcast/control-surface** language:
+  translucent glass panels (blur + hairline + inset highlight), **monospace
+  instrument readouts** (room · connection · counts, tabular nums), an uppercase
+  **mode channel selector**, a **tally-light** system (the connection LED pulses
+  when live; active mode + "on" controls get an orange on-air glow), and a thin
+  orange "energy line" on the control bar.
+- Swapped the emoji glyphs (⌂ 👥 🎙 ⚡) for monochrome inline SVG icons
+  (`currentColor`) — purely presentational; all dynamic text spans untouched.
+- A11y floor: `:focus-visible` rings (violet) and `prefers-reduced-motion` honored.
+- Control bar now uses `width: max-content` (capped by `max-width`) so it's a single
+  row on wide screens and wraps to ≤2 tidy rows on narrow — the originally-intended
+  responsive behavior (was wrapping early on desktop since Free look was added).
+  No IDs/classes/structure or responsive logic otherwise changed.
+
 **Look-hint UX** — no new features:
 - The controls hint is now a **transient top-centre badge** (below the status bar,
   no longer covering scene centre): it fades in on load and out after ~4.5s or on
