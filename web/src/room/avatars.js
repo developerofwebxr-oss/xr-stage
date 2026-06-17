@@ -16,6 +16,14 @@ import * as THREE from 'three';
 // API, so nothing downstream changes.
 
 const HEAD_RADIUS = 0.22;
+const BODY_CAPSULE_RADIUS = 0.28;
+
+// Minimum gap between two body centres for the avatar-separation system. Heads
+// carry the Nostr profile pic, so heads must never intersect: keep centres at least
+// a HEAD diameter + epsilon apart, and never less than a BODY diameter (if heads
+// clear, bodies clear too). Single tunable knob (via GAP_EPSILON).
+const GAP_EPSILON = 0.12;
+export const MIN_BODY_GAP = Math.max(HEAD_RADIUS * 2, BODY_CAPSULE_RADIUS * 2) + GAP_EPSILON;
 
 // How much of the head sphere is kept as the rounded back, expressed as the polar
 // angle (from the back pole) at which the sphere is cut flat:
@@ -106,8 +114,8 @@ export function createPlayerBody(color) {
 }
 
 // A few static audience capsules as ambiance so a solo user isn't alone. Placed in
-// the audience area, clear of both spawn points and the stage — no static prop
-// stands where a real person (you or a remote participant) will be.
+// the audience area, clear of both spawn points and the stage. Returns their world
+// positions so the separation system keeps the player out of them too.
 export function seedPlaceholders(scene) {
   const audienceColors = [0x5b8cff, 0x9b6bff, 0x3fd0c9];
   const spots = [
@@ -115,10 +123,11 @@ export function seedPlaceholders(scene) {
     [2.6, 0, 0.4],
     [-1.2, 0, 2.2],
   ];
-  spots.forEach(([x, y, z], i) => {
+  return spots.map(([x, y, z], i) => {
     const a = makeCapsule(audienceColors[i % audienceColors.length]);
     a.position.set(x, y, z);
     scene.add(a);
+    return new THREE.Vector3(x, y, z);
   });
 }
 

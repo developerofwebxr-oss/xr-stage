@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { config } from './config.js';
 import { buildScene } from './room/scene.js';
 import { STAGE_POS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
-import { seedPlaceholders, createPlayerBody } from './room/avatars.js';
+import { seedPlaceholders, createPlayerBody, MIN_BODY_GAP } from './room/avatars.js';
 import { createLocomotion } from './xr/locomotion.js';
 import { setupXR } from './xr/session.js';
 import { createHud } from './ui/hud.js';
@@ -23,7 +23,9 @@ document.getElementById('app').appendChild(renderer.domElement);
 
 // ── Scene + people ──────────────────────────────────────────────────────────────
 const { scene, setARMode } = buildScene();
-seedPlaceholders(scene); // static ambiance only — no prop where a real person stands
+// Static ambiance capsules; their positions feed avatar separation so the player
+// can't stand inside them either.
+const staticBodies = seedPlaceholders(scene);
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
 
@@ -128,12 +130,18 @@ setupXR(renderer, {
   hud.onMode((m) => xr.enter(m));
 });
 
-// ── Voice + presence (lazy — only after the user toggles Listen/Speak) ───────────
+// ── Voice + presence ─────────────────────────────────────────────────────────────
 const voice = new Voice({
   onCounts: ({ participantCount, speakerCount }) => setState({ participantCount, speakerCount }),
   onState: (state) => hud.setVoiceState(state),
 });
-let presence = null;
+
+// Presence exists from the start so avatar separation (incl. static props) is always
+// active. The heartbeat send/receive only carries data once voice connects (sendData
+// no-ops with no room), so nothing leaks before the user joins.
+const presence = createPresence(voice, scene, () => ({
+  x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y,
+}), staticBodies);
 
 onStateChange((s) => {
   hud.setParticipantCount(s.participantCount);
@@ -159,9 +167,7 @@ hud.onVoice(async () => {
     if (!voice.isConnected) {
       await voice.connect();
       await voice.setListening(true); // resume audio playback within the gesture
-      presence = createPresence(voice, scene, () => ({
-        x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y,
-      }));
+      // presence already exists; its heartbeat starts flowing now that we're connected.
     }
     if (isSpeaker) await voice.setMicEnabled(next);
     else await voice.setListening(next);
@@ -183,20 +189,18 @@ addEventListener('resize', () => {
 
 // ── Frame loop ──────────────────────────────────────────────────────────────────
 const clock = new THREE.Clock();
-const MIN_SEPARATION = 0.7; // ~2 body radii — bodies won't fully overlap
 
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   updateLocomotion(dt, renderer);
-  if (presence) {
-    presence.update(dt);
-    // Fix 3: nudge the local rig out of any remote body it's overlapping, then
-    // re-clamp so the nudge can't push us into a forbidden zone.
-    const push = presence.separation(rig.position, MIN_SEPARATION);
-    if (push) {
-      const c = constrainPosition(who, rig.position.x + push.x, rig.position.z + push.z);
-      rig.position.set(c.x, c.y, c.z);
-    }
+  presence.update(dt);
+  // Nudge the local rig out of the deepest overlap with any body (live or static),
+  // keeping centres >= MIN_BODY_GAP (heads never intersect), then re-clamp so the
+  // nudge can't push us into a forbidden zone.
+  const push = presence.separation(rig.position, MIN_BODY_GAP);
+  if (push) {
+    const c = constrainPosition(who, rig.position.x + push.x, rig.position.z + push.z);
+    rig.position.set(c.x, c.y, c.z);
   }
   // Fade the boundary glow (held at full while the player pushes the edge).
   if (boundaryGlow > 0) { boundaryGlow = Math.max(0, boundaryGlow - dt * 1.6); ringMat.opacity = boundaryGlow * 0.6; }

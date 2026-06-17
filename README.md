@@ -134,6 +134,17 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Avatar separation: all bodies + head-safe gap** — no new features:
+- Separation now pushes the local player out of **every** body — live participants
+  **and** the static seeded props (their positions are returned by
+  `seedPlaceholders` and fed into the same `presence.separation()`). Presence is now
+  created at startup so this is active even before joining voice (the heartbeat
+  still only flows once connected).
+- The minimum gap is a single tunable `MIN_BODY_GAP` (in
+  [avatars.js](web/src/room/avatars.js)) = `max(head_diameter, body_diameter) +
+  epsilon` (0.68m), so **heads never intersect** (they carry the Nostr profile pic)
+  — and bodies clear too.
+
 **Geometry + clamp tuning** — no new features:
 - Mic platform footprint trimmed a notch (`MIC_PLATFORM_W` 5.0→4.2,
   `MIC_PLATFORM_DEPTH` 3.6→3.0); still joined to the stage with standing room at

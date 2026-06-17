@@ -16,7 +16,9 @@ const SEND_INTERVAL = 1000 / SEND_HZ;
 const STALE_MS = 4000;             // drop avatars we haven't heard from in this long
 
 // getPose() returns the local player's pose: { x, y, z, yaw }.
-export function createPresence(voice, scene, getPose) {
+// staticBodies: world positions of the seeded ambiance capsules (Vector3-like with
+// .x/.z) — separated against too, so the player can't stand inside them either.
+export function createPresence(voice, scene, getPose, staticBodies = []) {
   const pool = new AvatarPool(scene);
   const lastSeen = new Map(); // id → timestamp
 
@@ -53,22 +55,23 @@ export function createPresence(voice, scene, getPose) {
     pool.update(dt);
   }
 
-  // Fix 3 — lightweight avatar separation (local-only, no physics). If `pos` is
-  // closer than `minGap` to a remote body, return the {x,z} nudge that pushes it
-  // out to that gap (the single deepest overlap; cheap O(remote bodies)). main
-  // applies it to the local rig then re-clamps. Each client pushes only ITSELF, so
-  // two people resolve mutually. NOTE: static seeded props aren't included yet —
-  // separation is vs. live participants; extend here if props need it.
+  // Lightweight avatar separation (local-only, no physics). If `pos` is closer than
+  // `minGap` to ANY other body — live participant OR static seeded prop — return the
+  // {x,z} nudge that pushes it out to that gap (the single deepest overlap; cheap
+  // O(bodies)). main applies it to the local rig then re-clamps. Each client pushes
+  // only ITSELF, so two live people resolve mutually; static props don't move.
   function separation(pos, minGap) {
     let best = null, bestPen = 0;
-    for (const { group } of pool.byId.values()) {
-      const dx = pos.x - group.position.x, dz = pos.z - group.position.z;
+    const consider = (bx, bz) => {
+      const dx = pos.x - bx, dz = pos.z - bz;
       const d = Math.hypot(dx, dz);
       if (d < minGap && d > 1e-3) {
         const pen = minGap - d;
         if (pen > bestPen) { bestPen = pen; best = { x: (dx / d) * pen, z: (dz / d) * pen }; }
       }
-    }
+    };
+    for (const { group } of pool.byId.values()) consider(group.position.x, group.position.z);
+    for (const b of staticBodies) consider(b.x, b.z);
     return best;
   }
 
