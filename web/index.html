@@ -38,15 +38,19 @@
         box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38);
       }
 
-      /* ── Top status bar (B3) ─────────────────────────────────────────────────── */
+      /* ── Top status bar (B3 / Fix 5) ─────────────────────────────────────────── */
       #topbar {
         position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 12;
-        font-size: 13px; gap: 12px; max-width: calc(100vw - 20px); white-space: nowrap;
+        font-size: 13px; gap: 10px; max-width: calc(100vw - 16px);
+      }
+      #topbar > * { flex: 0 0 auto; }                 /* fixed items keep their size … */
+      #now-speaking {                                  /* … the speaking line absorbs slack + truncates */
+        flex: 1 1 auto; min-width: 0; overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap;
       }
       #topbar b { color: var(--ink); font-weight: 600; }
       #topbar .muted { color: var(--muted); }
-      #topbar .sep { width: 1px; height: 16px; background: var(--line); flex: 0 0 auto; }
-      #now-speaking { overflow: hidden; text-overflow: ellipsis; }
+      #topbar .sep { width: 1px; height: 16px; background: var(--line); }
       .statedot {
         width: 8px; height: 8px; border-radius: 50%; display: inline-block;
         margin-right: 6px; background: #6b7280; vertical-align: middle;
@@ -55,11 +59,14 @@
       .statedot[data-state="connected"]  { background: #5be37a; }
       .statedot[data-state="failed"]     { background: #ff6b6b; }
 
-      /* ── Bottom control bar (B1) ─────────────────────────────────────────────── */
+      /* ── Bottom control bar (Fix 2) ──────────────────────────────────────────── */
+      /* One pill, centred. Wide: a single row. Narrow: the two groups wrap into two
+         tidy centred rows (each group stays intact — no offset stack). */
       #controlbar {
-        position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 12;
-        max-width: calc(100vw - 16px); flex-wrap: wrap; justify-content: center;
+        position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 12;
+        flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 16px);
       }
+      .grp { display: flex; align-items: center; justify-content: center; gap: 8px; }
 
       /* Mode cluster (B2): a segmented control. */
       .mode-cluster {
@@ -75,28 +82,25 @@
       .mode-cluster .mode.active { background: var(--bitcoin); color: #1a1205; }
       .mode-cluster .mode:disabled { opacity: 0.3; cursor: not-allowed; }
 
-      .divider { width: 1px; height: 26px; background: var(--line); }
-
       /* Control buttons. */
       button.ctl {
         pointer-events: auto; background: var(--fill); color: var(--ink);
         border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px;
         font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
-        transition: border-color .15s, background .15s, color .15s;
+        white-space: nowrap; transition: border-color .15s, background .15s, color .15s;
       }
       button.ctl:hover:not(:disabled):not(.soon) { border-color: var(--bitcoin); }
       button.ctl.primary { border-color: var(--bitcoin); }
       button.ctl.on { background: var(--bitcoin); color: #1a1205; border-color: var(--bitcoin); }
       button.ctl.soon { opacity: 0.4; cursor: not-allowed; }
       button.ctl[hidden] { display: none; }
+      /* Gyro: a small, standalone toggle beside the mode cluster (Fix 4). */
+      #btn-gyro { padding: 6px 9px; font-size: 12px; }
+      #btn-gyro[hidden] { display: none; }
 
       .speaking { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--muted); padding: 0 2px; }
       .speaking b { color: var(--bitcoin); }
       .speaking[hidden] { display: none; }
-
-      /* Gyro toggle (mobile only) — top-right, out of the bars' way. */
-      #btn-gyro { position: fixed; top: 12px; right: 12px; z-index: 12; }
-      #btn-gyro[hidden] { display: none; }
 
       /* Error + toast. */
       .badge {
@@ -125,7 +129,7 @@
       }
       #lock-hint[hidden] { display: none; }
 
-      /* ── Mobile movement joystick (bottom-left), raised clear of the control bar ── */
+      /* ── Mobile movement joystick (Fix 3): bottom-left, low, clear of the bar ──── */
       #joystick {
         position: fixed; left: 16px; bottom: 22px; width: 120px; height: 120px;
         border-radius: 50%; z-index: 11; pointer-events: auto; touch-action: none;
@@ -139,16 +143,23 @@
         transform: translate(0, 0);
       }
       #joystick[hidden] { display: none; }
-      /* On touch devices, lift the joystick above the bottom control bar. */
-      body.mobile #joystick { bottom: 148px; width: 108px; height: 108px; }
-      body.mobile #joystick-thumb { width: 46px; height: 46px; margin: -23px 0 0 -23px; }
+
+      /* ── Mobile layout: compact controls; joystick low-left; bar lifted clear ──── */
+      body.mobile #topbar { font-size: 12px; gap: 8px; top: 10px; }
+      body.mobile #controlbar { bottom: 124px; gap: 8px; }   /* sits above the joystick */
+      body.mobile button.ctl { padding: 8px 10px; font-size: 12px; }
+      body.mobile #btn-gyro { padding: 6px 8px; font-size: 11px; }
+      body.mobile .mode-cluster .mode { padding: 6px 10px; font-size: 12px; }
+      body.mobile #joystick { left: 14px; bottom: 16px; width: 96px; height: 96px; }
+      body.mobile #joystick-thumb { width: 42px; height: 42px; margin: -21px 0 0 -21px; }
+      body.mobile #voice-error, body.mobile #toast { bottom: 214px; }
     </style>
   </head>
   <body>
     <div id="app"></div>
 
     <div id="hud">
-      <!-- Top status (B3) -->
+      <!-- Top status (B3 / Fix 5) -->
       <header id="topbar" class="bar">
         <span>⌂ <b id="room-label">main-stage</b></span>
         <span class="sep"></span>
@@ -159,23 +170,24 @@
         <span>👥 <b id="presence-count">1</b></span>
       </header>
 
-      <!-- Gyro look toggle (mobile only) -->
-      <button class="ctl" id="btn-gyro" hidden>Gyro: off</button>
-
-      <!-- Bottom control bar (B1) -->
+      <!-- Bottom control bar (Fix 2): two groups that wrap into ≤2 tidy rows -->
       <div id="controlbar" class="bar">
-        <div class="mode-cluster" role="group" aria-label="Mode">
-          <button class="mode" id="mode-screen" data-mode="screen">Screen</button>
-          <button class="mode" id="mode-vr" data-mode="vr">VR</button>
-          <button class="mode" id="mode-ar" data-mode="ar">AR</button>
+        <div class="grp">
+          <button class="ctl" id="btn-gyro" hidden>Gyro: off</button>
+          <div class="mode-cluster" role="group" aria-label="Mode">
+            <button class="mode" id="mode-screen" data-mode="screen">Screen</button>
+            <button class="mode" id="mode-vr" data-mode="vr">VR</button>
+            <button class="mode" id="mode-ar" data-mode="ar">AR</button>
+          </div>
         </div>
-        <span class="divider"></span>
-        <button class="ctl primary" id="btn-voice">Listen: off</button>
-        <button class="ctl soon" id="btn-request" aria-disabled="true"
-                title="Available in a later phase" hidden>Request to speak</button>
-        <button class="ctl soon" id="btn-zap" aria-disabled="true"
-                title="Zaps arrive in a later phase">⚡ Zap</button>
-        <span class="speaking" id="voice-count" hidden>🎙 <b id="speaker-count">0</b></span>
+        <div class="grp">
+          <button class="ctl primary" id="btn-voice">Listen: off</button>
+          <button class="ctl soon" id="btn-request" aria-disabled="true"
+                  title="Available in a later phase" hidden>Request to speak</button>
+          <button class="ctl soon" id="btn-zap" aria-disabled="true"
+                  title="Zaps arrive in a later phase">⚡ Zap</button>
+          <span class="speaking" id="voice-count" hidden>🎙 <b id="speaker-count">0</b></span>
+        </div>
       </div>
 
       <div class="badge err" id="voice-error" hidden></div>

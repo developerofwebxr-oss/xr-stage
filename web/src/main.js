@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { config } from './config.js';
 import { buildScene } from './room/scene.js';
-import { STAGE_POS, STAGE_TOP_Y, constrainPosition, boundaryFor } from './room/zones.js';
+import { STAGE_POS, STAGE_TOP_Y, PEDESTAL_POS, constrainPosition, boundaryFor } from './room/zones.js';
 import { seedPlaceholders, createPlayerBody } from './room/avatars.js';
 import { createLocomotion } from './xr/locomotion.js';
 import { setupXR } from './xr/session.js';
@@ -32,11 +32,11 @@ const who = { role: config.role, isNextUp: config.isNextUp };
 
 // ── Role-based spawn ──────────────────────────────────────────────────────────
 // Speaker: on the stage TOP near the front, facing the audience (+Z).
-// Next-up: inside the under-stage green room, facing the front opening (+Z).
+// Next-up: at the mic stand on the floor, facing the stage (-Z) to ask.
 // Audience: in front of the stage, facing it (-Z).
 let spawn;
 if (who.role === 'speaker')   spawn = { position: [STAGE_POS.x, STAGE_TOP_Y, STAGE_POS.z + 1.5], yaw: Math.PI };
-else if (who.isNextUp)        spawn = { position: [STAGE_POS.x, 0, STAGE_POS.z], yaw: Math.PI };
+else if (who.isNextUp)        spawn = { position: [PEDESTAL_POS.x, 0, PEDESTAL_POS.z], yaw: 0 };
 else                          spawn = { position: [STAGE_POS.x, 0, STAGE_POS.z + 12], yaw: 0 };
 
 // ── Boundary glow (A2): a ring that flares when the player hits their zone edge ──
@@ -46,7 +46,7 @@ const ringMat = new THREE.MeshBasicMaterial({
 });
 const boundaryRing = new THREE.Mesh(new THREE.TorusGeometry(bnd.radius, 0.06, 12, 96), ringMat);
 boundaryRing.rotation.x = -Math.PI / 2;
-boundaryRing.position.set(STAGE_POS.x, bnd.y, STAGE_POS.z);
+boundaryRing.position.set(bnd.centre.x, bnd.y, bnd.centre.z);
 scene.add(boundaryRing);
 let boundaryGlow = 0;
 

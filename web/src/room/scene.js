@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import {
-  STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y, STAGE_THICK,
+  STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y,
   SCREEN, PEDESTAL_POS,
 } from './zones.js';
 
 // room/scene.js — builds the static venue from the zone constants in zones.js:
-// a raised stage platform with an enclosed green room underneath, a framed backdrop
-// screen above/behind it, a pedestal/mic spot beside the front, plus floor, grid,
-// lights and sky. All primitives, no loaded assets, to hold 60fps+ on Quest/mobile.
+// a low, SOLID stage platform, a framed backdrop screen above/behind it, the
+// questioner's mic stand beside the front, plus floor, grid, lights and sky. All
+// primitives, no loaded assets, to hold 60fps+ on Quest/mobile.
 //
 // setARMode toggles the passthrough look (hide sky/floor/screen, keep the venue).
 
@@ -38,14 +38,13 @@ export function buildScene() {
   grid.position.y = 0.01;
   scene.add(grid);
 
-  // ── Stage platform (raised) ──────────────────────────────────────────────────
-  // Slab top sits at STAGE_TOP_Y; the space beneath is the green room.
-  const stageMat = new THREE.MeshStandardMaterial({ color: 0x161a28, roughness: 0.8, metalness: 0.1 });
+  // ── Stage platform (low + solid) ───────────────────────────────────────────────
+  // A solid cylinder from the floor up to STAGE_TOP_Y — no cavity beneath.
   const slab = new THREE.Mesh(
-    new THREE.CylinderGeometry(STAGE_RADIUS, STAGE_RADIUS, STAGE_THICK, 48),
-    stageMat,
+    new THREE.CylinderGeometry(STAGE_RADIUS, STAGE_RADIUS + 0.15, STAGE_TOP_Y, 56),
+    new THREE.MeshStandardMaterial({ color: 0x161a28, roughness: 0.8, metalness: 0.1 }),
   );
-  slab.position.set(STAGE_POS.x, STAGE_TOP_Y - STAGE_THICK / 2, STAGE_POS.z);
+  slab.position.set(STAGE_POS.x, STAGE_TOP_Y / 2, STAGE_POS.z);
   scene.add(slab);
 
   // Bitcoin-orange rim glow around the stage-top edge.
@@ -57,34 +56,7 @@ export function buildScene() {
   rim.position.set(STAGE_POS.x, STAGE_TOP_Y + 0.01, STAGE_POS.z);
   scene.add(rim);
 
-  // ── Green room (under-stage waiting area) ──────────────────────────────────────
-  // A cylindrical wall shell enclosing the back + sides, OPEN at the front (+Z) as
-  // the entrance. Double-sided so it reads from inside. The slab above is its
-  // ceiling; access is gated by the movement clamp (only the next-up may enter).
-  const wall = new THREE.Mesh(
-    new THREE.CylinderGeometry(
-      STAGE_RADIUS, STAGE_RADIUS, STAGE_TOP_Y, 48, 1,
-      true, Math.PI / 3, Math.PI * 4 / 3, // open ~120° toward the front (+Z)
-    ),
-    new THREE.MeshStandardMaterial({ color: 0x10131e, roughness: 0.95, side: THREE.DoubleSide }),
-  );
-  wall.position.set(STAGE_POS.x, STAGE_TOP_Y / 2, STAGE_POS.z);
-  scene.add(wall);
-
-  // Green-room floor tint + a dim warm light so the interior isn't pitch black.
-  const greenFloor = new THREE.Mesh(
-    new THREE.CircleGeometry(STAGE_RADIUS - 0.15, 48),
-    new THREE.MeshStandardMaterial({ color: 0x14110c, roughness: 1, emissive: 0x140d02 }),
-  );
-  greenFloor.rotation.x = -Math.PI / 2;
-  greenFloor.position.set(STAGE_POS.x, 0.03, STAGE_POS.z);
-  scene.add(greenFloor);
-
-  const greenLight = new THREE.PointLight(0xffcaa0, 0.5, STAGE_RADIUS * 2.4, 2);
-  greenLight.position.set(STAGE_POS.x, STAGE_TOP_Y - 0.5, STAGE_POS.z);
-  scene.add(greenLight);
-
-  // ── Pedestal / mic spot (call-up target; logic is Phase 3) ─────────────────────
+  // ── Mic stand (questioner's spot; call-up logic is Phase 3) ─────────────────────
   const pedestal = new THREE.Group();
   pedestal.position.copy(PEDESTAL_POS);
   const base = new THREE.Mesh(

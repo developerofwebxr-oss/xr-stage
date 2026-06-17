@@ -134,6 +134,22 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Stage geometry + mobile UI refinement** — no new features:
+- **Lower, solid stage.** Stage is now a low, solid platform (`STAGE_TOP_Y` 0.5) —
+  the raised stage + under-stage green room are gone (no cavity). The questioner's
+  **mic stand** stays at floor level beside the stage front; the next-up zone now
+  targets the mic stand (not an under-stage room), so Phase 3's request-to-speak
+  flow sends the selected person there. Speaker→stage and audience→floor clamps
+  unchanged.
+- **Cleaner control bar.** One centred bottom pill that's a single row on wide
+  screens and wraps into **two tidy centred rows** on portrait (modes group + voice
+  group — no offset stack, consistent sizes).
+- **Joystick** anchored bottom-left and lowered, never overlapping the bar.
+- **Gyro toggle** moved out of the top-right into a small standalone button beside
+  the mode cluster (no longer collides with the top status).
+- **Top status** tidied: room · connection · speaking · count, with the speaking
+  line truncating gracefully on narrow widths (no clipping/overlap).
+
 **Stage & spatial + control bar** — no new scope:
 - **Bigger raised stage + framed screen.** Stage is wider/deeper and raised to
   walk underneath; size/height are tunable constants in
