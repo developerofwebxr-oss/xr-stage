@@ -76,8 +76,9 @@ const { rig, update: updateLocomotion, setFreeLook, setMoveInput } =
     isMobile,
     constrain: (x, z) => constrainPosition(who, x, z),
     onBoundary: () => { boundaryGlow = 1; }, // soft edge stop + glow, no snap-back
-    // Pointer lock dropped on its own (e.g. Esc) → reflect it in the toggle.
-    onFreeLookEnd: () => { freeLookOn = false; hud.setFreeLook(false); },
+    // Pointer lock dropped on its own (e.g. Esc) → reflect it in the toggle + hide
+    // the ESC hint, so the button and pointer-lock state never get out of sync.
+    onFreeLookEnd: () => { freeLookOn = false; hud.setFreeLook(false); hud.showFreeLookHint(false); },
   });
 scene.add(rig);
 
@@ -89,8 +90,14 @@ const hud = createHud();
 hud.setRoom(config.room);
 stageState.role = config.role;
 
-// Desktop hint (fine pointer only): default look is hold-drag.
-if (!isMobile) hud.showLockHint(true);
+// Desktop hint (fine pointer only): default look is hold-drag. Show it briefly,
+// then fade after a few seconds OR on the first look/move input, whichever's first.
+if (!isMobile) {
+  hud.flashLockHint();
+  const hideHint = () => hud.hideLockHint();
+  addEventListener('keydown', hideHint, { once: true });            // WASD etc.
+  renderer.domElement.addEventListener('pointerdown', hideHint, { once: true }); // drag-look
+}
 
 // Mobile-only: the on-screen joystick (movement). Look is drag / gyro via Free look.
 if (isMobile) {
@@ -111,6 +118,8 @@ hud.onFreeLook(async () => {
   if (turningOn && !ok) { hud.el.btnFreelook.textContent = 'Free look: denied'; return; }
   freeLookOn = turningOn;
   hud.setFreeLook(freeLookOn);
+  hud.hideLockHint();                                  // toggling is an input
+  if (!isMobile) hud.showFreeLookHint(freeLookOn);     // desktop pointer-lock ESC hint
 });
 
 // ── WebXR sessions + mode cluster (B2) ──────────────────────────────────────────
@@ -121,6 +130,8 @@ setupXR(renderer, {
     hud.setActiveMode(mode === 'flat' ? 'screen' : mode);
     hud.showOverlay(mode === 'flat');            // no 2D HUD inside immersive
     document.getElementById('joystick').hidden = mode !== 'flat' ? true : !isMobile;
+    if (mode === 'flat' && !isMobile) hud.flashLockHint(); // brief reminder on return
+    if (mode !== 'flat') hud.showFreeLookHint(false);
   },
   onARMode: (on) => setARMode(on),
 }).then((xr) => {

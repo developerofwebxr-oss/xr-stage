@@ -30,9 +30,25 @@ export function createHud() {
     voiceError: $('voice-error'),
     toast: $('toast'),
     lockHint: $('lock-hint'),
+    freelookHint: $('freelook-hint'),
   };
   const modeBtns = { screen: el.modeScreen, vr: el.modeVr, ar: el.modeAr };
   let toastTimer = null;
+
+  // Transient controls hint: fade in, auto-fade after `ms`, or hide on demand.
+  let hintTimer = null;
+  function hideLockHint() {
+    clearTimeout(hintTimer);
+    el.lockHint.classList.remove('show');
+    hintTimer = setTimeout(() => { el.lockHint.hidden = true; }, 400); // after fade
+  }
+  function flashLockHint(ms = 4500) {
+    clearTimeout(hintTimer);
+    el.lockHint.hidden = false;
+    void el.lockHint.offsetWidth; // reflow so the fade-in transition runs
+    el.lockHint.classList.add('show');
+    hintTimer = setTimeout(hideLockHint, ms);
+  }
 
   return {
     el,
@@ -87,7 +103,8 @@ export function createHud() {
       toastTimer = setTimeout(() => el.toast.classList.remove('show'), 2200);
     },
 
-    showLockHint(show) { el.lockHint.hidden = !show; },
+    flashLockHint, hideLockHint,                       // transient controls hint
+    showFreeLookHint(show) { el.freelookHint.hidden = !show; }, // desktop ESC hint
     // Unified "Free look" toggle (desktop pointer-lock / mobile gyro).
     showFreeLook(show) { el.btnFreelook.hidden = !show; },
     setFreeLook(on) { el.btnFreelook.textContent = on ? 'Free look: on' : 'Free look: off'; },

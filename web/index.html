@@ -122,12 +122,27 @@
       }
       #toast.show { opacity: 1; }
 
-      /* Click-to-start hint for desktop pointer lock. */
+      /* Transient controls hint — a small top-centre badge (below the status bar),
+         fades in on load and out after a few seconds / on first input. Never centre. */
       #lock-hint {
-        position: fixed; inset: 0; display: grid; place-items: center; z-index: 5;
-        pointer-events: none; color: rgba(232, 232, 239, 0.7); font-size: 14px;
+        position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 9;
+        pointer-events: none; color: var(--muted); font-size: 13px; white-space: nowrap;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+        padding: 6px 12px; backdrop-filter: blur(6px);
+        opacity: 0; transition: opacity .35s;
       }
+      #lock-hint.show { opacity: 1; }
       #lock-hint[hidden] { display: none; }
+
+      /* Free-look ESC hint — shown while desktop pointer-lock hides the cursor. */
+      #freelook-hint {
+        position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 9;
+        pointer-events: none; color: var(--ink); font-size: 13px; white-space: nowrap;
+        background: var(--panel); border: 1px solid var(--bitcoin); border-radius: 8px;
+        padding: 6px 12px; backdrop-filter: blur(6px);
+      }
+      #freelook-hint b { color: var(--bitcoin); }
+      #freelook-hint[hidden] { display: none; }
 
       /* ── Mobile movement joystick (Fix 3): bottom-left, low, clear of the bar ──── */
       #joystick {
@@ -198,6 +213,7 @@
     <div id="joystick" hidden><div id="joystick-thumb"></div></div>
 
     <div id="lock-hint" hidden>hold-drag to look · WASD to move · Free look for mouse-look</div>
+    <div id="freelook-hint" hidden>Free look on — press <b>ESC</b> to exit</div>
 
     <script type="module" src="/src/main.js"></script>
   </body>

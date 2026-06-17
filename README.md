@@ -134,6 +134,16 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Look-hint UX** — no new features:
+- The controls hint is now a **transient top-centre badge** (below the status bar,
+  no longer covering scene centre): it fades in on load and out after ~4.5s or on
+  the first look/move input, and re-flashes briefly when returning to flat mode.
+- **Free-look exit discoverability + state-sync:** while Free look is on (desktop
+  pointer-lock), a `Free look on — press ESC to exit` hint shows (the cursor is
+  captured, so the button can't be clicked). `pointerlockchange` releasing the lock
+  (ESC or otherwise) flips the toggle back to off and hides the hint — the UI and
+  pointer-lock state never desync.
+
 **Look controls rework** — no new features:
 - **Desktop default is hold-left-drag to look** (sats-arena style) — release to stop.
   The old always-on pointer-lock free-look is no longer the default.
