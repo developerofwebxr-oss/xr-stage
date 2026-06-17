@@ -60,10 +60,14 @@
       body { font-family: var(--font-ui); color: var(--ink); }
 
       #app { position: fixed; inset: 0; }
-      canvas { display: block; touch-action: none; }
+      /* Canvas fills the live visual viewport. 100dvh tracks mobile browser-chrome
+         show/hide so there's never a black band; display size is CSS, buffer is set
+         by syncViewport() in main.js. */
+      canvas { position: fixed; inset: 0; width: 100vw; height: 100dvh; display: block; touch-action: none; }
 
-      /* HUD overlay: click-through except for explicit controls. */
-      #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+      /* HUD overlay: anchored to the viewport (not the canvas), click-through except
+         for explicit controls. */
+      #hud { position: fixed; inset: 0; height: 100dvh; pointer-events: none; z-index: 10; }
       #hud[hidden] { display: none; }
 
       /* Inline instrument icons (monochrome, inherit text colour). */
@@ -89,7 +93,8 @@
 
       /* ── Top status bar — instrument readouts ─────────────────────────────────── */
       #topbar {
-        position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 12;
+        position: fixed; top: calc(env(safe-area-inset-top) + 12px); left: 50%;
+        transform: translateX(-50%); z-index: 12;
         font-family: var(--font-mono); font-size: 13px; gap: 10px;
         max-width: calc(100vw - 16px);
       }
@@ -119,7 +124,8 @@
 
       /* ── Bottom control bar ───────────────────────────────────────────────────── */
       #controlbar {
-        position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 12;
+        position: fixed; bottom: calc(env(safe-area-inset-bottom) + 16px); left: 50%;
+        transform: translateX(-50%); z-index: 12;
         flex-wrap: wrap; justify-content: center;
         width: max-content; max-width: calc(100vw - 16px); /* one row wide; wraps when capped on narrow */
       }
@@ -220,7 +226,8 @@
 
       /* ── Mobile movement joystick: bottom-left, low, clear of the bar ──────────── */
       #joystick {
-        position: fixed; left: 16px; bottom: 22px; width: 120px; height: 120px;
+        position: fixed; left: calc(env(safe-area-inset-left) + 16px);
+        bottom: calc(env(safe-area-inset-bottom) + 22px); width: 120px; height: 120px;
         border-radius: 50%; z-index: 11; pointer-events: auto; touch-action: none;
         background: radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.06), rgba(10, 12, 17, 0.5));
         border: 1px solid var(--hairline);
@@ -238,12 +245,12 @@
       #joystick[hidden] { display: none; }
 
       /* ── Mobile layout: compact controls; joystick low-left; bar lifted clear ──── */
-      body.mobile #topbar { font-size: 12px; gap: 8px; top: 10px; }
-      body.mobile #controlbar { bottom: 124px; gap: 8px; }   /* sits above the joystick */
+      body.mobile #topbar { font-size: 12px; gap: 8px; top: calc(env(safe-area-inset-top) + 10px); }
+      body.mobile #controlbar { bottom: calc(env(safe-area-inset-bottom) + 124px); gap: 8px; } /* sits above the joystick */
       body.mobile button.ctl { padding: 8px 10px; font-size: 12px; }
       body.mobile #btn-freelook { padding: 6px 8px; font-size: 11px; }
       body.mobile .mode-cluster .mode { padding: 6px 10px; font-size: 12px; }
-      body.mobile #joystick { left: 14px; bottom: 16px; width: 96px; height: 96px; }
+      body.mobile #joystick { left: calc(env(safe-area-inset-left) + 14px); bottom: calc(env(safe-area-inset-bottom) + 16px); width: 96px; height: 96px; }
       body.mobile #joystick-thumb { width: 42px; height: 42px; margin: -21px 0 0 -21px; }
       body.mobile #voice-error, body.mobile #toast { bottom: 214px; }
 

@@ -16,10 +16,11 @@ import { stageState, setState, onStateChange } from './state/stageState.js';
 
 // ── Renderer ────────────────────────────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
 document.getElementById('app').appendChild(renderer.domElement);
+// Drawing-buffer size is driven by syncViewport() (below) off the live visual
+// viewport; the canvas's *display* size is CSS (100vw/100dvh), so we never write
+// stale inline width/height. (Initial sizing happens after the camera exists.)
 
 // ── Scene + people ──────────────────────────────────────────────────────────────
 const { scene, setARMode } = buildScene();
@@ -189,12 +190,35 @@ hud.onVoice(async () => {
   }
 });
 
-// ── Resize ────────────────────────────────────────────────────────────────────
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
+// ── Viewport tracking ────────────────────────────────────────────────────────────
+// Size the drawing buffer to the LIVE visual viewport (handles mobile URL-bar
+// show/hide + rotation), not the stale layout viewport. CSS sizes the canvas's
+// display (100vw/100dvh), so setSize passes updateStyle=false — no stale inline px.
+const vv = window.visualViewport;
+function syncViewport() {
+  const w = Math.round(vv ? vv.width : innerWidth);
+  const h = Math.round(vv ? vv.height : innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-});
+}
+
+// rAF-debounced so a burst of events settles to one measure on the next frame.
+let resizeRAF = null;
+function onViewportChange() {
+  if (resizeRAF) cancelAnimationFrame(resizeRAF);
+  resizeRAF = requestAnimationFrame(syncViewport);
+}
+addEventListener('resize', onViewportChange);
+// orientationchange reports stale dimensions synchronously → also re-measure once
+// more after the rotation settles.
+addEventListener('orientationchange', () => { onViewportChange(); setTimeout(syncViewport, 300); });
+if (vv) {
+  vv.addEventListener('resize', onViewportChange);
+  vv.addEventListener('scroll', onViewportChange); // URL bar scrolling away
+}
+syncViewport(); // initial
 
 // ── Frame loop ──────────────────────────────────────────────────────────────────
 const clock = new THREE.Clock();

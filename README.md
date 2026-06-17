@@ -134,6 +134,20 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Mobile viewport fix** — no behavior change beyond viewport sizing:
+- The canvas + overlay now track the **live visual viewport**, fixing the mobile
+  black band (portrait/landscape, after rotation or URL-bar show/hide) and the
+  control bar floating mid-screen.
+- Canvas is `position:fixed; inset:0; width:100vw; height:100dvh` (dynamic viewport
+  height tracks browser-chrome show/hide). `syncViewport()` measures
+  `window.visualViewport` (fallback `inner*`) and calls `renderer.setSize(w,h,false)`
+  (no stale inline styles — CSS owns display size) + DPR + camera aspect, fired on
+  `resize` / `orientationchange` (with a settle re-measure) / `visualViewport`
+  `resize`+`scroll`, rAF-debounced.
+- Overlay anchored to the viewport (`#hud` height `100dvh`); top bar / control bar /
+  joystick positioned with `env(safe-area-inset-*)` (notch + home indicator).
+  Desktop positions unchanged (insets are 0 there).
+
 **Visual design pass — "Live Console"** — visual/CSS + tokens only, no behavior change:
 - Established a reusable **CSS token system** (palette, type, spacing, radii,
   elevation, motion) in `web/index.html` so Phase 2+ surfaces inherit the look.
