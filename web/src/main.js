@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { config } from './config.js';
 import { buildScene } from './room/scene.js';
-import { STAGE_POS, STAGE_TOP_Y, PEDESTAL_POS, constrainPosition, boundaryFor } from './room/zones.js';
+import { STAGE_POS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
 import { seedPlaceholders, createPlayerBody } from './room/avatars.js';
 import { createLocomotion } from './xr/locomotion.js';
 import { setupXR } from './xr/session.js';
@@ -31,21 +31,34 @@ const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 2
 const who = { role: config.role, isNextUp: config.isNextUp };
 
 // ── Role-based spawn ──────────────────────────────────────────────────────────
-// Speaker: on the stage TOP near the front, facing the audience (+Z).
-// Next-up: at the mic stand on the floor, facing the stage (-Z) to ask.
-// Audience: in front of the stage, facing it (-Z).
+// Speaker: on the main stage near the front, facing the audience (+Z).
+// Next-up: on the mic platform in front of the mic, facing the speaker (-Z).
+// Audience: in front of the structure, facing it (-Z).
 let spawn;
 if (who.role === 'speaker')   spawn = { position: [STAGE_POS.x, STAGE_TOP_Y, STAGE_POS.z + 1.5], yaw: Math.PI };
-else if (who.isNextUp)        spawn = { position: [PEDESTAL_POS.x, 0, PEDESTAL_POS.z], yaw: 0 };
-else                          spawn = { position: [STAGE_POS.x, 0, STAGE_POS.z + 12], yaw: 0 };
+else if (who.isNextUp)        spawn = { position: [QUESTIONER_POS.x, QUESTIONER_POS.y, QUESTIONER_POS.z], yaw: 0 };
+else                          spawn = { position: [STAGE_POS.x, 0, STAGE_POS.z + 13], yaw: 0 };
 
-// ── Boundary glow (A2): a ring that flares when the player hits their zone edge ──
+// ── Boundary glow: flares when the player hits their zone edge ───────────────────
+// A ring on the stage edge (speaker/audience) or a rectangle outline on the mic
+// platform (next-up). Shared material so one fade drives whichever shape.
 const bnd = boundaryFor(who);
-const ringMat = new THREE.MeshBasicMaterial({
-  color: 0xf7931a, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
-});
-const boundaryRing = new THREE.Mesh(new THREE.TorusGeometry(bnd.radius, 0.06, 12, 96), ringMat);
-boundaryRing.rotation.x = -Math.PI / 2;
+let ringMat, boundaryRing;
+if (bnd.shape === 'rect') {
+  ringMat = new THREE.LineBasicMaterial({ color: 0xf7931a, transparent: true, opacity: 0 });
+  const hw = bnd.w / 2, hd = bnd.d / 2;
+  const pts = [
+    new THREE.Vector3(-hw, 0, -hd), new THREE.Vector3(hw, 0, -hd),
+    new THREE.Vector3(hw, 0, hd), new THREE.Vector3(-hw, 0, hd), new THREE.Vector3(-hw, 0, -hd),
+  ];
+  boundaryRing = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), ringMat);
+} else {
+  ringMat = new THREE.MeshBasicMaterial({
+    color: 0xf7931a, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
+  });
+  boundaryRing = new THREE.Mesh(new THREE.TorusGeometry(bnd.radius, 0.06, 12, 96), ringMat);
+  boundaryRing.rotation.x = -Math.PI / 2;
+}
 boundaryRing.position.set(bnd.centre.x, bnd.y, bnd.centre.z);
 scene.add(boundaryRing);
 let boundaryGlow = 0;

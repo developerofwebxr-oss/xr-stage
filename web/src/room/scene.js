@@ -1,13 +1,15 @@
 import * as THREE from 'three';
 import {
-  STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y,
-  SCREEN, PEDESTAL_POS,
+  STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y, MIC_PLATFORM_TOP,
+  MIC_PLATFORM_W, MIC_PLATFORM_BACK_Z, MIC_PLATFORM_FRONT_Z,
+  SCREEN, MIC_STAND_POS, QUESTIONER_POS,
 } from './zones.js';
 
 // room/scene.js — builds the static venue from the zone constants in zones.js:
-// a low, SOLID stage platform, a framed backdrop screen above/behind it, the
-// questioner's mic stand beside the front, plus floor, grid, lights and sky. All
-// primitives, no loaded assets, to hold 60fps+ on Quest/mobile.
+// a TWO-LEVEL stage (a raised main stage + a connected step-down mic platform in
+// front of it), a framed backdrop screen above/behind, the mic stand on the lower
+// platform, plus floor, grid, lights and sky. All primitives, no loaded assets, to
+// hold 60fps+ on Quest/mobile.
 //
 // setARMode toggles the passthrough look (hide sky/floor/screen, keep the venue).
 
@@ -38,16 +40,29 @@ export function buildScene() {
   grid.position.y = 0.01;
   scene.add(grid);
 
-  // ── Stage platform (low + solid) ───────────────────────────────────────────────
-  // A solid cylinder from the floor up to STAGE_TOP_Y — no cavity beneath.
+  // ── Two-level stage: raised main stage + connected step-down mic platform ───────
+  const stageMat = new THREE.MeshStandardMaterial({ color: 0x161a28, roughness: 0.8, metalness: 0.1 });
+
+  // Main stage: a solid raised cylinder (top at STAGE_TOP_Y).
   const slab = new THREE.Mesh(
     new THREE.CylinderGeometry(STAGE_RADIUS, STAGE_RADIUS + 0.15, STAGE_TOP_Y, 56),
-    new THREE.MeshStandardMaterial({ color: 0x161a28, roughness: 0.8, metalness: 0.1 }),
+    stageMat,
   );
   slab.position.set(STAGE_POS.x, STAGE_TOP_Y / 2, STAGE_POS.z);
   scene.add(slab);
 
-  // Bitcoin-orange rim glow around the stage-top edge.
+  // Mic platform: a solid box one step down, joined to the stage front (it tucks
+  // under the stage by PLATFORM_OVERLAP so they read as one tiered structure; the
+  // stage's front wall above the platform top IS the step riser).
+  const platDepth = MIC_PLATFORM_FRONT_Z - MIC_PLATFORM_BACK_Z;
+  const platform = new THREE.Mesh(
+    new THREE.BoxGeometry(MIC_PLATFORM_W, MIC_PLATFORM_TOP, platDepth),
+    stageMat,
+  );
+  platform.position.set(STAGE_POS.x, MIC_PLATFORM_TOP / 2, (MIC_PLATFORM_BACK_Z + MIC_PLATFORM_FRONT_Z) / 2);
+  scene.add(platform);
+
+  // Bitcoin-orange edge glows: the main-stage rim + the mic-platform front lip.
   const rim = new THREE.Mesh(
     new THREE.TorusGeometry(STAGE_RADIUS, 0.05, 12, 80),
     new THREE.MeshBasicMaterial({ color: BITCOIN }),
@@ -56,35 +71,44 @@ export function buildScene() {
   rim.position.set(STAGE_POS.x, STAGE_TOP_Y + 0.01, STAGE_POS.z);
   scene.add(rim);
 
-  // ── Mic stand (questioner's spot; call-up logic is Phase 3) ─────────────────────
+  const lip = new THREE.Mesh(
+    new THREE.BoxGeometry(MIC_PLATFORM_W, 0.05, 0.06),
+    new THREE.MeshBasicMaterial({ color: BITCOIN }),
+  );
+  lip.position.set(STAGE_POS.x, MIC_PLATFORM_TOP + 0.005, MIC_PLATFORM_FRONT_Z);
+  scene.add(lip);
+
+  // ── Mic stand on the lower platform (questioner faces the speaker here) ──────────
   const pedestal = new THREE.Group();
-  pedestal.position.copy(PEDESTAL_POS);
+  pedestal.position.copy(MIC_STAND_POS); // base sits on the platform top
   const base = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.45, 0.5, 0.35, 24),
+    new THREE.CylinderGeometry(0.4, 0.45, 0.3, 24),
     new THREE.MeshStandardMaterial({ color: 0x1a1f30, roughness: 0.7, metalness: 0.2 }),
   );
-  base.position.y = 0.175;
+  base.position.y = 0.15;
   pedestal.add(base);
   const stand = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.04, 0.04, 1.2, 12),
+    new THREE.CylinderGeometry(0.04, 0.04, 1.15, 12),
     new THREE.MeshStandardMaterial({ color: 0x2a3047, roughness: 0.5, metalness: 0.4 }),
   );
-  stand.position.y = 0.35 + 0.6;
+  stand.position.y = 0.3 + 0.575;
   pedestal.add(stand);
   const micHead = new THREE.Mesh(
     new THREE.SphereGeometry(0.09, 16, 12),
     new THREE.MeshStandardMaterial({ color: 0x0c0e16, roughness: 0.6 }),
   );
-  micHead.position.y = 0.35 + 1.2;
+  micHead.position.y = 0.3 + 1.15;
   pedestal.add(micHead);
+  scene.add(pedestal);
+
+  // Highlight ring marking where the questioner stands (in front of the mic).
   const marker = new THREE.Mesh(
-    new THREE.TorusGeometry(0.62, 0.03, 10, 40),
+    new THREE.TorusGeometry(0.55, 0.03, 10, 40),
     new THREE.MeshBasicMaterial({ color: BITCOIN }),
   );
   marker.rotation.x = -Math.PI / 2;
-  marker.position.y = 0.02;
-  pedestal.add(marker);
-  scene.add(pedestal);
+  marker.position.set(QUESTIONER_POS.x, MIC_PLATFORM_TOP + 0.02, QUESTIONER_POS.z);
+  scene.add(marker);
 
   // ── Backdrop screen (larger, framed, above + behind the stage) ─────────────────
   const backdrop = new THREE.Mesh(
@@ -109,8 +133,8 @@ export function buildScene() {
   scene.add(border);
 
   // ── AR passthrough toggle ──────────────────────────────────────────────────────
-  // Hide the sky/floor/screen for passthrough; keep the venue (stage + green room +
-  // pedestal + avatars) so it stays anchored in the real room.
+  // Hide the sky/floor/screen for passthrough; keep the venue (stage + mic platform
+  // + avatars) so it stays anchored in the real room.
   function setARMode(on) {
     scene.background = on ? null : skyColor;
     scene.fog = on ? null : new THREE.Fog(skyColor, 22, 60);

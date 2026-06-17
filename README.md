@@ -134,6 +134,19 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Tiered stage (connected mic platform)** — no new features:
+- The stage + mic are now **one connected two-level structure**: a raised main
+  stage (`STAGE_TOP_Y`) with a step down (`STEP_HEIGHT`) to a lower **mic platform**
+  joined to its front (tucked under the stage, so the stage's front wall is the step
+  riser). The mic stand sits on the lower platform with standing room
+  (`STAND_CLEARANCE`) in front of it. Footprint/heights are tunable in
+  [zones.js](web/src/room/zones.js) (`MIC_PLATFORM_W/_DEPTH`, `STEP_HEIGHT`, …).
+- **Zones:** next-up/questioner is now confined to the mic-platform standing area
+  (facing the speaker) — replacing the old floor mic-stand spot; its glow is a
+  rectangle outline. Audience is kept off **both** the stage and the mic platform
+  (unless next-up); the questioner can't wander onto the stage or into the crowd.
+  Speaker→stage, audience→floor intact. Single reusable zone source unchanged.
+
 **Stage geometry + mobile UI refinement** — no new features:
 - **Lower, solid stage.** Stage is now a low, solid platform (`STAGE_TOP_Y` 0.5) —
   the raised stage + under-stage green room are gone (no cavity). The questioner's
