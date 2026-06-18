@@ -71,7 +71,7 @@ boundaryRing.position.set(bnd.centre.x, bnd.y, bnd.centre.z);
 scene.add(boundaryRing);
 let boundaryGlow = 0;
 
-const { rig, update: updateLocomotion, setFreeLook, setMoveInput } =
+const { rig, update: updateLocomotion, setFreeLook, setMoveInput, jump } =
   createLocomotion(camera, renderer.domElement, {
     spawn,
     isMobile,
@@ -107,6 +107,12 @@ if (isMobile) {
     onMove: (strafe, forward) => setMoveInput(strafe, forward),
   });
 
+  // Jump button, bottom-right (mirrors the joystick). pointerdown (not click) so the
+  // hop fires instantly; preventDefault keeps it from also starting a look-drag.
+  const jumpBtn = document.getElementById('jump-btn');
+  jumpBtn.hidden = false;
+  jumpBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); jump(); });
+
   // The control bar docks flush at the bottom (CSS); the joystick floats above it.
   // Publish the bar's live height as --control-bar-h so the joystick (and toasts)
   // always clear it — the bar is 1 row in landscape, 2 in portrait.
@@ -141,6 +147,7 @@ setupXR(renderer, {
     hud.setActiveMode(mode === 'flat' ? 'screen' : mode);
     hud.showOverlay(mode === 'flat');            // no 2D HUD inside immersive
     document.getElementById('joystick').hidden = mode !== 'flat' ? true : !isMobile;
+    document.getElementById('jump-btn').hidden = mode !== 'flat' ? true : !isMobile;
     if (mode === 'flat' && !isMobile) hud.flashLockHint(); // brief reminder on return
     if (mode !== 'flat') hud.showFreeLookHint(false);
   },

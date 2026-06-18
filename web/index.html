@@ -246,6 +246,22 @@
       }
       #joystick[hidden] { display: none; }
 
+      /* ── Mobile jump button: bottom-right, mirroring the joystick ───────────────── */
+      #jump-btn {
+        position: fixed; right: calc(env(safe-area-inset-right) + 16px);
+        bottom: calc(env(safe-area-inset-bottom) + 22px); width: 72px; height: 72px;
+        border-radius: 50%; z-index: 11; pointer-events: auto; touch-action: manipulation;
+        display: inline-flex; align-items: center; justify-content: center;
+        color: var(--orange-bright);
+        background: radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.06), rgba(10, 12, 17, 0.5));
+        border: 1px solid var(--hairline);
+        backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+        box-shadow: var(--shadow), var(--ring-inset);
+        transition: transform var(--t), background var(--t);
+      }
+      #jump-btn:active { transform: scale(0.92); background: rgba(247, 147, 26, 0.18); }
+      #jump-btn[hidden] { display: none; }
+
       /* ── Mobile layout: bar flush at the bottom; joystick floats just above it ──── */
       /* --control-bar-h is measured in main.js (ResizeObserver) — the bar is 1 row in
          landscape, 2 rows in portrait — so the joystick always clears it. */
@@ -259,6 +275,11 @@
         width: 96px; height: 96px;
       }
       body.mobile #joystick-thumb { width: 42px; height: 42px; margin: -21px 0 0 -21px; }
+      body.mobile #jump-btn {
+        right: calc(env(safe-area-inset-right) + 14px);
+        bottom: calc(env(safe-area-inset-bottom) + var(--control-bar-h, 96px) + 16px); /* above the bar */
+        width: 64px; height: 64px;
+      }
       /* Error + toast sit just above the bar too. */
       body.mobile #voice-error, body.mobile #toast { bottom: calc(env(safe-area-inset-bottom) + var(--control-bar-h, 96px) + 16px); }
 
@@ -318,6 +339,15 @@
 
     <!-- Mobile-only virtual joystick; shown by main.js after feature detection. -->
     <div id="joystick" hidden><div id="joystick-thumb"></div></div>
+
+    <!-- Mobile-only jump button; mirrors the joystick on the bottom-right. -->
+    <button id="jump-btn" hidden aria-label="Jump">
+      <svg viewBox="0 0 24 24" aria-hidden="true" width="26" height="26"
+           fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 19V6"/><path d="M6 11l6-6 6 6"/>
+      </svg>
+    </button>
 
     <div id="lock-hint" hidden>hold-drag to look · WASD to move · Free look for mouse-look</div>
     <div id="freelook-hint" hidden>Free look on — press <b>ESC</b> to exit</div>

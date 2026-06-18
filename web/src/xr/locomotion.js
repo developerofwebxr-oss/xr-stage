@@ -22,6 +22,10 @@ const DRAG_SENSITIVITY = 0.0035; // hold/touch-drag radians per pixel
 const PITCH_LIMIT = Math.PI / 2 - 0.05;
 const GYRO_LERP = 0.12;                          // low-pass toward the gyro target
 const GYRO_DEADZONE = THREE.MathUtils.degToRad(0.6); // ignore sub-degree sensor jitter
+// Jump: a modest hop for presence/expression, not a platformer leap. v²/2g ≈ 0.4m
+// peak, ~0.57s airtime — gentle enough for VR comfort.
+const JUMP_SPEED = 2.8;          // initial upward velocity (m/s)
+const GRAVITY = 9.8;             // downward accel while airborne (m/s²)
 
 // `constrain(x, z) -> { x, z, y, hit }` keeps the rig inside its zone every frame;
 // `onBoundary()` fires the frame a limit is hit. `isMobile` picks the Free-look
@@ -45,6 +49,14 @@ export function createLocomotion(camera, domElement, {
   rig.rotation.y = yaw;
   const keys = new Set();
   const moveInput = { x: 0, z: 0 }; // analog joystick, [-1,1]; merged with WASD
+
+  // Jump state (Screen + VR only; gated off in AR — see updateJump). One hop at a
+  // time: `airborne` blocks re-trigger until we land. `jumpHeight` is added ABOVE
+  // the clamped surface y in applyConstraint, so the horizontal boundaries/clamps
+  // and the tiered landing surface (floor / mic platform / stage) are untouched —
+  // jump is purely vertical.
+  let jumpQueued = false, airborne = false, jumpHeight = 0, vy = 0;
+  let spaceHeld = false, vrJumpWasPressed = false;
 
   // Free look: false → drag look; true → pointer-lock (desktop) / gyro (mobile).
   let freeLook = false;
@@ -81,8 +93,18 @@ export function createLocomotion(camera, domElement, {
     }
   });
 
-  addEventListener('keydown', (e) => keys.add(e.code));
-  addEventListener('keyup', (e) => keys.delete(e.code));
+  addEventListener('keydown', (e) => {
+    if (e.code === 'Space') {
+      e.preventDefault();               // don't scroll the page
+      if (!spaceHeld) { spaceHeld = true; jumpQueued = true; } // edge: one jump per press
+      return;                           // not a movement key — keep out of `keys`
+    }
+    keys.add(e.code);
+  });
+  addEventListener('keyup', (e) => {
+    if (e.code === 'Space') { spaceHeld = false; return; }
+    keys.delete(e.code);
+  });
 
   // ── Gyro free look (mobile, Free look ON) ───────────────────────────────────────
   // Smoothed: deviceorientation feeds a TARGET yaw/pitch (deadzoned + calibrated to
@@ -195,13 +217,32 @@ export function createLocomotion(camera, domElement, {
       }
     }
 
+    updateJump(dt, renderer, immersive);
     applyConstraint();
+  }
+
+  // Integrate the hop. Horizontal x/z is already settled above; this only touches
+  // the vertical offset. AR is kept grounded (rising off the real passthrough floor
+  // is disorienting), so a queued jump there is simply dropped.
+  function updateJump(dt, renderer, immersive) {
+    const isAR = immersive && isARSession(renderer);
+    if (jumpQueued) {
+      jumpQueued = false;
+      if (!airborne && !isAR) { vy = JUMP_SPEED; airborne = true; }
+    }
+    if (airborne) {
+      jumpHeight += vy * dt;
+      vy -= GRAVITY * dt;
+      if (jumpHeight <= 0) { jumpHeight = 0; vy = 0; airborne = false; } // landed
+    }
   }
 
   function applyConstraint() {
     if (!constrain) return;
     const c = constrain(rig.position.x, rig.position.z);
-    rig.position.set(c.x, c.y, c.z);
+    // c.y is the surface under our (clamped) XZ — floor / mic platform / stage. The
+    // hop rides ON TOP of it, so we always land back on the right tier.
+    rig.position.set(c.x, c.y + jumpHeight, c.z);
     if (c.hit && onBoundary) onBoundary();
   }
 
@@ -233,11 +274,28 @@ export function createLocomotion(camera, domElement, {
         } else if (Math.abs(x) < 0.3) {
           snapCooldown = false;
         }
+        // Jump on Y (left controller). xr-standard maps Y → buttons[5]; no other
+        // controller button is bound (snap/move are sticks, exit is the system
+        // button), so Y is free. Rising-edge so a held press is one hop.
+        const yPressed = !!gp.buttons?.[5]?.pressed;
+        if (yPressed && !vrJumpWasPressed) jumpQueued = true;
+        vrJumpWasPressed = yPressed;
       }
     }
   }
 
-  return { rig, update, setFreeLook, setMoveInput };
+  // jump() queues a hop from any input source (the optional mobile button calls it).
+  // Same guards as Space/VR apply in updateJump (single hop, dropped in AR).
+  function jump() { jumpQueued = true; }
+
+  return { rig, update, setFreeLook, setMoveInput, jump };
+}
+
+// AR vs VR: an immersive session in passthrough reports a non-opaque environment
+// blend mode. Lets us keep jump grounded in AR without any mode-switch wiring.
+function isARSession(renderer) {
+  const s = renderer.xr.getSession();
+  return !!s && !!s.environmentBlendMode && s.environmentBlendMode !== 'opaque';
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
