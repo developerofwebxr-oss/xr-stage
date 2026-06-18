@@ -23,7 +23,7 @@ document.getElementById('app').appendChild(renderer.domElement);
 // stale inline width/height. (Initial sizing happens after the camera exists.)
 
 // ── Scene + people ──────────────────────────────────────────────────────────────
-const { scene, setARMode } = buildScene();
+const { scene, setARMode, update: updateScene } = buildScene();
 // Static ambiance capsules; their positions feed avatar separation so the player
 // can't stand inside them either.
 const staticBodies = seedPlaceholders(scene);
@@ -235,6 +235,7 @@ const clock = new THREE.Clock();
 
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
+  updateScene(dt);            // scene mood: ring spread + star flicker (GPU clocks)
   updateLocomotion(dt, renderer);
   presence.update(dt);
   // Nudge the local rig out of the deepest overlap with any body (live or static),
