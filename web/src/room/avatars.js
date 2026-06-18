@@ -18,6 +18,13 @@ import * as THREE from 'three';
 const HEAD_RADIUS = 0.22;
 const BODY_CAPSULE_RADIUS = 0.28;
 
+// Subtle self-glow on each body in its OWN colour, so an avatar always reads even in
+// the dim audience floor (no per-avatar lights — cheap, scales to any crowd). Kept
+// low so the lit stage still dominates. NOTE: only the BODY carries this; the head's
+// flat face disc (faceMount) keeps its own non-emissive material, so the Phase-2
+// Nostr profile image stays crisp/readable rather than washed out by glow.
+const BODY_EMISSIVE_INTENSITY = 0.28;
+
 // Minimum gap between two body centres for the avatar-separation system. Heads
 // carry the Nostr profile pic, so heads must never intersect: keep centres at least
 // a HEAD diameter + epsilon apart, and never less than a BODY diameter (if heads
@@ -95,7 +102,10 @@ function makeCapsule(color, { withHead = true } = {}) {
 
   const body = new THREE.Mesh(
     new THREE.CapsuleGeometry(0.28, 0.9, 6, 12),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.05 }),
+    new THREE.MeshStandardMaterial({
+      color, emissive: color, emissiveIntensity: BODY_EMISSIVE_INTENSITY,
+      roughness: 0.7, metalness: 0.05,
+    }),
   );
   body.position.y = 0.73; // capsule centre so its feet sit on y=0
   group.add(body);

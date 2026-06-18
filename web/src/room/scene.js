@@ -34,19 +34,62 @@ export function buildScene() {
   scene.fog = new THREE.Fog(skyColor, 22, 60);
 
   // ── Lights ──────────────────────────────────────────────────────────────────
-  // Low ambient so the eye is drawn to the lit stage; a soft directional fill from
-  // the side keeps the audience readable; one warm SpotLight aimed down at the
-  // stage makes it the brightest thing in the room. No shadow maps (Quest cost).
-  scene.add(new THREE.HemisphereLight(0x6f86c9, 0x05060a, 0.32));
-  const fill = new THREE.DirectionalLight(0x9fb4ff, 0.35);
+  // Moderate ambient so the crowd reads — audience faces/bodies/colours are clearly
+  // visible from the stage — without flattening the mood; a soft side fill shapes
+  // them. One warm SpotLight keeps the stage the brightest thing in the room, and a
+  // cool backlight rims whoever's on stage off the dark screen. No shadow maps
+  // (Quest cost); four cheap lights total, none casting.
+  scene.add(new THREE.HemisphereLight(0x7e93d6, 0x0a0c14, 0.6));
+  const fill = new THREE.DirectionalLight(0x9fb4ff, 0.4);
   fill.position.set(-6, 9, 6);
   scene.add(fill);
 
-  const spot = new THREE.SpotLight(0xffe6c0, 4.0, 0, Math.PI / 6, 0.5, 0); // decay 0 = no falloff (predictable)
+  // Stage key — warm, aimed down at the stage. decay 0 = no falloff (predictable).
+  const spot = new THREE.SpotLight(0xffe6c0, 4.2, 0, Math.PI / 6, 0.5, 0);
   spot.position.set(STAGE_POS.x, STAGE_TOP_Y + 10, STAGE_POS.z + 3);
   spot.target.position.set(STAGE_POS.x, STAGE_TOP_Y, STAGE_POS.z);
   scene.add(spot);
   scene.add(spot.target);
+
+  // Stage backlight/rim — cool, from behind + above the stage aiming forward, so a
+  // speaker is rim-lit and reads as separate from the dark backdrop screen.
+  // Directional = cheap (no position falloff, no shadow).
+  const back = new THREE.DirectionalLight(0xbfd0ff, 0.7);
+  back.position.set(STAGE_POS.x, STAGE_TOP_Y + 6, STAGE_POS.z - 9);
+  back.target.position.set(STAGE_POS.x, STAGE_TOP_Y + 0.5, STAGE_POS.z + 1.5);
+  scene.add(back);
+  scene.add(back.target);
+
+  // ── Faux light-beam cone (Screen + VR only) ─────────────────────────────────────
+  // A translucent additive cone from above the stage, brightest near the source and
+  // fading to nothing at the floor — a concert/venue beam without real volumetrics.
+  // Single open-ended mesh, depthWrite off. Hidden in AR (would float in passthrough).
+  const BEAM_H = STAGE_TOP_Y + 9.5;
+  const beam = new THREE.Mesh(
+    new THREE.ConeGeometry(STAGE_RADIUS * 1.05, BEAM_H, 40, 1, true),
+    new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      uniforms: { uColor: { value: new THREE.Color(0xffe6c0) } },
+      vertexShader: `
+        varying float vY;                              // 1 at apex (source) → 0 at base (floor)
+        void main() {
+          vY = position.y / ${BEAM_H.toFixed(2)} + 0.5;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        precision mediump float;
+        varying float vY;
+        uniform vec3 uColor;
+        void main() {
+          float a = pow(clamp(vY, 0.0, 1.0), 1.6) * 0.12; // fade toward the floor
+          gl_FragColor = vec4(uColor, a);
+        }
+      `,
+    }),
+  );
+  beam.position.set(STAGE_POS.x, BEAM_H / 2, STAGE_POS.z);
+  scene.add(beam);
 
   // ── Floor ───────────────────────────────────────────────────────────────────
   const floor = new THREE.Mesh(
@@ -239,6 +282,7 @@ export function buildScene() {
     frame.visible = !on;
     border.visible = !on;
     sky.points.visible = !on;
+    beam.visible = !on; // follows the sky rule — no light shaft floating in passthrough
   }
 
   // ── Per-frame tick (shader clocks) ──────────────────────────────────────────────
