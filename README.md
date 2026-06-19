@@ -134,6 +134,23 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Phase 2 — mock identity (Nostr-shaped)** — no real keys/relays/network:
+- New **`identity` service** ([identity/identity.js](web/src/identity/identity.js)) is
+  the single source of identity: `signIn(method)`, `current()`, `getProfile(pubkey)`
+  (async), `signEvent(event)` (async), `logout()`. Everything is **pubkey-keyed**,
+  mock data is **deterministic** from the pubkey (stable across reloads), and the
+  `Identity` carries **`lud16`** for future zaps. Mock now, but the surface matches
+  real Nostr so swapping in nostr-tools + NIP-07 is a module swap — callers don't change.
+- Every avatar (seeded ambiance + live presence peers) is assigned a stable mock
+  identity via the service (id → pubkey → profile), as a data layer over the
+  existing bodies — movement/presence logic untouched (`onAvatarSpawn` hook).
+- Avatars render identity: a deterministic **keyface** identicon
+  ([identity/keyface.js](web/src/identity/keyface.js)) on the `faceMount` disc (or
+  `getProfile().picture` when real), plus an over-head **name label** sprite.
+- **Sign in** control (mock `guest`) → sets `current()` and shows a compact
+  "signed in as …" chip (keyface + name). `method` param kept (real: nip07 desktop /
+  generate mobile+VR). No new deps; voice/presence/movement/modes/scene unchanged.
+
 **Mobile control-bar docking** — mobile-only positioning, desktop unchanged:
 - The control bar now docks **flush to the bottom edge** on mobile
   (`bottom: calc(env(safe-area-inset-bottom) + 8px)`) — it was floating mid-screen

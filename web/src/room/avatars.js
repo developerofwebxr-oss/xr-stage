@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { drawKeyface } from '../identity/keyface.js';
 
 // room/avatars.js — the bodies in the room: yours, everyone else's, and ambiance.
 //
@@ -123,9 +124,75 @@ export function createPlayerBody(color) {
   return makeCapsule(color, { withHead: false });
 }
 
+// ── Identity rendering (Phase 2) ─────────────────────────────────────────────────
+// Paint an identity onto a body: the profile picture (or a deterministic keyface) on
+// the faceMount disc, plus an over-head name label. Pure presentation — the identity
+// object comes from the identity service (the single source of identity).
+export function applyIdentity(group, identity) {
+  const face = group.getObjectByName('faceMount');
+  if (face) {
+    const tex = identity.picture
+      ? new THREE.TextureLoader().load(identity.picture)        // REAL: profile image
+      : new THREE.CanvasTexture(drawKeyface(identity.pubkey));   // MOCK: keyface
+    tex.colorSpace = THREE.SRGBColorSpace;
+    face.material.map = tex;
+    face.material.color.set(0xffffff); // let the texture show its true colours
+    face.material.needsUpdate = true;
+  }
+  setNameLabel(group, identity.name);
+}
+
+// Over-head name plate: a camera-facing sprite (Live Console: mono text on a glass
+// pill). Re-used per group so re-identifying just swaps the texture.
+function setNameLabel(group, name) {
+  const canvas = nameCanvas(name);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  let sprite = group.userData.nameSprite;
+  if (!sprite) {
+    sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+    sprite.position.set(0, HEAD_Y + 0.42, 0); // just above the head
+    sprite.renderOrder = 2;
+    group.add(sprite);
+    group.userData.nameSprite = sprite;
+  } else {
+    sprite.material.map?.dispose?.();
+    sprite.material.map = tex;
+    sprite.material.needsUpdate = true;
+  }
+  const h = 0.2;
+  sprite.scale.set(h * (canvas.width / canvas.height), h, 1);
+}
+
+function nameCanvas(name) {
+  const dpr = 2, padX = 18, fontPx = 30, font = `600 ${fontPx}px ui-monospace, "SF Mono", Menlo, monospace`;
+  const m = document.createElement('canvas').getContext('2d');
+  m.font = font;
+  const w = Math.ceil(m.measureText(name).width) + padX * 2;
+  const h = fontPx + 22;
+  const c = document.createElement('canvas');
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext('2d');
+  g.scale(dpr, dpr);
+  roundRect(g, 0.5, 0.5, w - 1, h - 1, 9);
+  g.fillStyle = 'rgba(12,14,19,0.78)'; g.fill();
+  g.strokeStyle = 'rgba(255,255,255,0.13)'; g.lineWidth = 1; g.stroke();
+  g.fillStyle = '#eceef5'; g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(name, w / 2, h / 2 + 1);
+  return c;
+}
+function roundRect(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
 // A few static audience capsules as ambiance so a solo user isn't alone. Placed in
-// the audience area, clear of both spawn points and the stage. Returns their world
-// positions so the separation system keeps the player out of them too.
+// the audience area, clear of both spawn points and the stage. Returns each one's
+// { group, position } — the position feeds the separation system (keep the player
+// out of them), the group lets main attach a mock identity (face + name).
 export function seedPlaceholders(scene) {
   const audienceColors = [0x5b8cff, 0x9b6bff, 0x3fd0c9];
   const spots = [
@@ -134,10 +201,10 @@ export function seedPlaceholders(scene) {
     [-1.2, 0, 2.2],
   ];
   return spots.map(([x, y, z], i) => {
-    const a = makeCapsule(audienceColors[i % audienceColors.length]);
-    a.position.set(x, y, z);
-    scene.add(a);
-    return new THREE.Vector3(x, y, z);
+    const group = makeCapsule(audienceColors[i % audienceColors.length]);
+    group.position.set(x, y, z);
+    scene.add(group);
+    return { group, position: new THREE.Vector3(x, y, z) };
   });
 }
 
@@ -145,9 +212,10 @@ export function seedPlaceholders(scene) {
 // Manages one capsule per remote participant id. Positions are smoothed toward the
 // last received presence sample so movement looks continuous between heartbeats.
 export class AvatarPool {
-  constructor(scene) {
+  constructor(scene, { onSpawn } = {}) {
     this.scene = scene;
     this.byId = new Map(); // id → { group, target: Vector3 }
+    this.onSpawn = onSpawn || null; // (id, group) when a remote avatar first appears
   }
 
   // Create-or-update a remote avatar's target position + yaw from a presence sample.
@@ -165,8 +233,12 @@ export class AvatarPool {
     entry.target.set(position[0], position[1], position[2]);
     entry.targetYaw = yaw;
     // Snap a freshly-spawned avatar straight to its pose so it doesn't glide in
-    // from the origin on its first frame.
-    if (isNew) { entry.group.position.copy(entry.target); entry.group.rotation.y = yaw; }
+    // from the origin on its first frame, then let the caller attach its identity.
+    if (isNew) {
+      entry.group.position.copy(entry.target);
+      entry.group.rotation.y = yaw;
+      if (this.onSpawn) this.onSpawn(id, entry.group);
+    }
     return entry;
   }
 

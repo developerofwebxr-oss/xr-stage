@@ -26,6 +26,7 @@ export function createHud() {
     voiceCount: $('voice-count'),
     speakerCount: $('speaker-count'),
     btnFreelook: $('btn-freelook'),
+    btnSignin: $('btn-signin'),
     // transient
     voiceError: $('voice-error'),
     toast: $('toast'),
@@ -109,9 +110,19 @@ export function createHud() {
     showFreeLook(show) { el.btnFreelook.hidden = !show; },
     setFreeLook(on) { el.btnFreelook.textContent = on ? 'Free look: on' : 'Free look: off'; },
 
+    // Mock sign-in control. Before: "Sign in". After: a compact "me" chip showing
+    // the keyface + name (the "signed in as …" indicator). info = { name, faceUrl }.
+    setSignedIn(info) {
+      if (!info) { el.btnSignin.classList.remove('me'); el.btnSignin.textContent = 'Sign in'; return; }
+      el.btnSignin.classList.add('me');
+      el.btnSignin.title = `Signed in as ${info.name}`;
+      el.btnSignin.innerHTML = `<img class="me-face" alt="" src="${info.faceUrl}"><span>${info.name}</span>`;
+    },
+
     onVoice(fn) { el.btnVoice.addEventListener('click', fn); },
     onRequest(fn) { el.btnRequest.addEventListener('click', fn); },
     onZap(fn) { el.btnZap.addEventListener('click', fn); },
     onFreeLook(fn) { el.btnFreelook.addEventListener('click', fn); },
+    onSignIn(fn) { el.btnSignin.addEventListener('click', fn); },
   };
 }

@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { config } from './config.js';
 import { buildScene } from './room/scene.js';
 import { STAGE_POS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
-import { seedPlaceholders, createPlayerBody, MIN_BODY_GAP } from './room/avatars.js';
+import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP } from './room/avatars.js';
+import { identity } from './identity/identity.js';
+import { drawKeyface } from './identity/keyface.js';
 import { createLocomotion } from './xr/locomotion.js';
 import { setupXR } from './xr/session.js';
 import { createHud } from './ui/hud.js';
@@ -24,9 +26,21 @@ document.getElementById('app').appendChild(renderer.domElement);
 
 // ── Scene + people ──────────────────────────────────────────────────────────────
 const { scene, setARMode, update: updateScene } = buildScene();
-// Static ambiance capsules; their positions feed avatar separation so the player
-// can't stand inside them either.
-const staticBodies = seedPlaceholders(scene);
+// Static ambiance capsules; positions feed avatar separation; groups get identities.
+const seeded = seedPlaceholders(scene);
+const staticBodies = seeded.map((s) => s.position);
+
+// ── Identity (Phase 2, mock) ──────────────────────────────────────────────────────
+// Every avatar is keyed by a pubkey (mock-derived from its stable id) → profile →
+// keyface + name, all via the identity service (the single source of identity). The
+// real swap (nostr-tools + NIP-07) lives behind this same service — callers unchanged.
+function identifyAvatar(group, seedId) {
+  const pubkey = identity.pubkeyFromSeed(seedId);
+  identity.getProfile(pubkey).then((profile) => {
+    applyIdentity(group, { pubkey, npub: identity.npubFromPubkey(pubkey), ...profile });
+  });
+}
+seeded.forEach((s, i) => identifyAvatar(s.group, `seed-${i}`)); // ambiance crowd
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
 
@@ -139,6 +153,16 @@ hud.onFreeLook(async () => {
   if (!isMobile) hud.showFreeLookHint(freeLookOn);     // desktop pointer-lock ESC hint
 });
 
+// ── Sign in (mock identity) ───────────────────────────────────────────────────────
+// signIn() goes through the identity service; the chip shows your keyface + name.
+// REAL: 'nip07' on desktop, 'generate' on mobile/VR, 'guest' anywhere — the mock
+// ignores the distinction but the method param is kept so the swap is clean.
+const signInMethod = isMobile ? 'generate' : 'nip07';
+hud.onSignIn(async () => {
+  const me = await identity.signIn(signInMethod);
+  hud.setSignedIn({ name: me.name, faceUrl: drawKeyface(me.pubkey, 64).toDataURL() });
+});
+
 // ── WebXR sessions + mode cluster (B2) ──────────────────────────────────────────
 // Screen is active by default; VR/AR enable + wire once feature-detection resolves.
 hud.setActiveMode('screen');
@@ -168,7 +192,11 @@ const voice = new Voice({
 // no-ops with no room), so nothing leaks before the user joins.
 const presence = createPresence(voice, scene, () => ({
   x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y,
-}), staticBodies);
+}), staticBodies, {
+  // Each remote peer gets a mock identity (face + name) keyed by its presence id.
+  // REAL: presence carries the peer's pubkey; this becomes getProfile(pubkey).
+  onAvatarSpawn: (id, group) => identifyAvatar(group, id),
+});
 
 onStateChange((s) => {
   hud.setParticipantCount(s.participantCount);

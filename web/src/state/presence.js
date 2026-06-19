@@ -18,8 +18,10 @@ const STALE_MS = 4000;             // drop avatars we haven't heard from in this
 // getPose() returns the local player's pose: { x, y, z, yaw }.
 // staticBodies: world positions of the seeded ambiance capsules (Vector3-like with
 // .x/.z) — separated against too, so the player can't stand inside them either.
-export function createPresence(voice, scene, getPose, staticBodies = []) {
-  const pool = new AvatarPool(scene);
+// onAvatarSpawn(id, group): fired when a remote avatar first appears, so the caller
+// can attach its (mock) identity — keeps identity out of the presence path.
+export function createPresence(voice, scene, getPose, staticBodies = [], { onAvatarSpawn } = {}) {
+  const pool = new AvatarPool(scene, { onSpawn: onAvatarSpawn });
   const lastSeen = new Map(); // id → timestamp
 
   // Inbound: update/spawn a remote avatar for any presence message.

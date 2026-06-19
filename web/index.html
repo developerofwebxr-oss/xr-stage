@@ -171,6 +171,11 @@
       #btn-freelook { color: var(--ink-dim); }
       #btn-freelook[hidden] { display: none; }
 
+      /* Sign-in control → a compact "me" chip (keyface + name) once signed in. */
+      #btn-signin.me { display: inline-flex; align-items: center; gap: 7px; color: var(--ink); }
+      #btn-signin.me span { font-weight: 600; }
+      #btn-signin .me-face { width: 18px; height: 18px; border-radius: 5px; display: block; }
+
       .speaking {
         display: flex; align-items: center; gap: 6px; padding: 0 2px;
         font-family: var(--font-mono); font-size: 13px; color: var(--ink-dim);
@@ -313,6 +318,7 @@
       <!-- Bottom control bar: two groups that wrap into ≤2 tidy rows -->
       <div id="controlbar" class="bar">
         <div class="grp">
+          <button class="ctl" id="btn-signin">Sign in</button>
           <button class="ctl" id="btn-freelook" hidden>Free look: off</button>
           <div class="mode-cluster" role="group" aria-label="Mode">
             <button class="mode" id="mode-screen" data-mode="screen">Screen</button>
