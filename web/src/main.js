@@ -9,6 +9,7 @@ import { createLocomotion } from './xr/locomotion.js';
 import { setupXR } from './xr/session.js';
 import { createHud } from './ui/hud.js';
 import { createJoystick } from './ui/joystick.js';
+import { createProfileCard } from './ui/profileCard.js';
 import { Voice } from './voice/livekit.js';
 import { createPresence } from './state/presence.js';
 import { stageState, setState, onStateChange } from './state/stageState.js';
@@ -198,6 +199,94 @@ const presence = createPresence(voice, scene, () => ({
   onAvatarSpawn: (id, group) => identifyAvatar(group, id),
 });
 
+// ── Click an avatar → in-world profile card (Phase 2.2) ──────────────────────────
+// Plain click raycasts to an avatar (the click stays free — never pointer-locks);
+// hold-drag still looks. VR uses the controller select ray. One card at a time.
+const card = createProfileCard(scene);
+const raycaster = new THREE.Raycaster();
+
+// Pickable avatar roots: seeded ambiance + live remote peers (NOT your own body).
+const pickables = () => seeded.map((s) => s.group).concat(presence.avatars());
+
+// Actions behind named handlers so the real swaps are contained (no inline logic in
+// the card UI). `profile` is the identity-service object stored on the avatar.
+function onVisit(profile) {
+  if (renderer.xr.isPresenting) return;                 // VR: profile opens on desktop
+  window.open(`https://njump.me/${profile.npub}`, '_blank', 'noopener');
+}
+function onFollow(profile) {
+  card.refresh(identity.toggleFollow(profile.pubkey));  // REAL: publish a kind:3 list
+}
+function onZap() {
+  // SEAM: routes to the (not-yet-built) wallet/zap service. No payment logic here.
+  if (!renderer.xr.isPresenting) hud.toast('Wallet coming soon');
+}
+
+function pickAvatarGroup() {
+  const hits = raycaster.intersectObjects(pickables(), true);
+  for (const h of hits) {
+    let o = h.object;
+    while (o) { if (o.userData && o.userData.identity) return o; o = o.parent; }
+  }
+  return null;
+}
+
+// Dispatch a configured raycaster: card buttons first, then avatars, then empty space.
+function pickFromRaycaster() {
+  if (card.isOpen()) {
+    const region = card.hitTest(raycaster);
+    if (region === 'visit') return onVisit(card.profile());
+    if (region === 'follow') return onFollow(card.profile());
+    if (region === 'zap') return onZap();
+    if (region === 'close') return card.close();
+    if (region === 'panel') return; // clicked the card body → keep it open
+  }
+  const group = pickAvatarGroup();
+  if (group) {
+    const profile = group.userData.identity;
+    if (card.isOpen() && card.profile() && card.profile().pubkey === profile.pubkey) {
+      card.close();                       // same avatar → toggle closed
+    } else {
+      const anchor = new THREE.Vector3();
+      group.getWorldPosition(anchor); anchor.y += 2.35; // float above the head
+      card.open(profile, anchor, identity.isFollowing(profile.pubkey));
+    }
+    return;
+  }
+  if (card.isOpen()) card.close();        // empty space → close
+}
+
+// Flat: a tap (pointer down→up with little movement) that isn't pointer-locked.
+{
+  const _ndc = new THREE.Vector2();
+  const dom = renderer.domElement;
+  let downX = 0, downY = 0, moved = false;
+  dom.addEventListener('pointerdown', (e) => { downX = e.clientX; downY = e.clientY; moved = false; });
+  dom.addEventListener('pointermove', (e) => { if (Math.hypot(e.clientX - downX, e.clientY - downY) > 6) moved = true; });
+  dom.addEventListener('pointerup', (e) => {
+    if (moved || document.pointerLockElement === dom) return; // drag-look / free look → not a pick
+    const r = dom.getBoundingClientRect();
+    _ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    raycaster.setFromCamera(_ndc, camera);
+    pickFromRaycaster();
+  });
+}
+
+// VR: the controller select ray picks the avatar / card.
+{
+  const _m = new THREE.Matrix4();
+  for (let i = 0; i < 2; i++) {
+    const controller = renderer.xr.getController(i);
+    rig.add(controller); // controllers live in the rig's (reference) space
+    controller.addEventListener('select', () => {
+      _m.identity().extractRotation(controller.matrixWorld);
+      raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+      raycaster.ray.direction.set(0, 0, -1).applyMatrix4(_m).normalize();
+      pickFromRaycaster();
+    });
+  }
+}
+
 onStateChange((s) => {
   hud.setParticipantCount(s.participantCount);
   hud.setSpeakerCount(s.speakerCount);
@@ -283,5 +372,7 @@ renderer.setAnimationLoop(() => {
   }
   // Fade the boundary glow (held at full while the player pushes the edge).
   if (boundaryGlow > 0) { boundaryGlow = Math.max(0, boundaryGlow - dt * 1.6); ringMat.opacity = boundaryGlow * 0.6; }
+  // Billboard the open profile card toward the active camera (cheap; no redraw).
+  card.update(renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
   renderer.render(scene, camera);
 });

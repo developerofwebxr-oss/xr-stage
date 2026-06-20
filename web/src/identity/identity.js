@@ -82,6 +82,7 @@ function guestSeed() {
 }
 
 let _current = null;
+const _following = new Set(); // pubkeys we follow (mock; session-persistent)
 
 export const identity = {
   // method: 'nip07' | 'generate' | 'guest'. MOCK ignores the distinction and returns
@@ -94,6 +95,13 @@ export const identity = {
 
   current() { return _current; },
   logout() { _current = null; },
+
+  // Follow list — session-persistent mock. REAL: publish a kind:3 contact list.
+  isFollowing(pubkey) { return _following.has(pubkey); },
+  toggleFollow(pubkey) {
+    if (_following.has(pubkey)) _following.delete(pubkey); else _following.add(pubkey);
+    return _following.has(pubkey);
+  },
 
   // Async even though the mock is instant — REAL fetches kind:0 metadata from relays.
   async getProfile(pubkey) { return buildProfile(pubkey); },

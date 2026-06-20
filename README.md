@@ -134,6 +134,22 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Phase 2.2 — click an avatar → in-world profile card** — mock actions, no new deps:
+- A plain click raycasts to an avatar and opens its **in-world 3D profile card** (a
+  billboarded panel — works in flat/VR/AR, not a DOM overlay). Hold-drag still looks;
+  pointer-lock (Free look) is unchanged and the click stays free (the skill's rule).
+  VR uses the controller `select` ray.
+- Card (data from `identity.getProfile`): keyface/picture, name, npub-short, nip05,
+  an **X** close, and three actions. **One card at a time** (opening another closes
+  the previous); clicking the same avatar / empty space closes it. Built on open,
+  **disposed on close** (no orphaned meshes/textures); canvas redrawn only on
+  open/change, never per frame — billboard is a per-frame quaternion copy.
+- Actions behind **named handlers** so real swaps are contained: **Visit profile** →
+  `https://njump.me/<npub>` (desktop; no-op in VR), **Follow** ⇄ **Following** (mock
+  toggle stored in the identity layer; real = kind:3), **⚡ Zap** → stub routed to the
+  not-yet-built wallet service (dimmed; "Wallet coming soon"). New
+  [ui/profileCard.js](web/src/ui/profileCard.js); identity is the only data source.
+
 **Phase 2 — mock identity (Nostr-shaped)** — no real keys/relays/network:
 - New **`identity` service** ([identity/identity.js](web/src/identity/identity.js)) is
   the single source of identity: `signIn(method)`, `current()`, `getProfile(pubkey)`

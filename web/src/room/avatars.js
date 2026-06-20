@@ -140,6 +140,7 @@ export function applyIdentity(group, identity) {
     face.material.needsUpdate = true;
   }
   setNameLabel(group, identity.name);
+  group.userData.identity = identity; // so click-picking can read it (Phase 2.2)
 }
 
 // Over-head name plate: a camera-facing sprite (Live Console: mono text on a glass

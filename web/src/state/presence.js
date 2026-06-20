@@ -77,7 +77,13 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
     return best;
   }
 
-  return { update, separation };
+  // Live remote avatar root groups (for click-picking). Seeded ambiance is tracked
+  // separately by the caller.
+  function avatars() {
+    return [...pool.byId.values()].map((e) => e.group);
+  }
+
+  return { update, separation, avatars };
 }
 
 // Trim to mm precision — keeps presence payloads tiny over the wire.
