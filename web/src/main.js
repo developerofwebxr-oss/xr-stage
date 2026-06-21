@@ -282,12 +282,26 @@ function pickFromRaycaster() {
   });
 }
 
-// VR: the controller select ray picks the avatar / card.
+// XR: the controller (or AR screen-tap) select ray feeds the SAME pickFromRaycaster
+// as the desktop click — one "select avatar" path for every input. Each controller
+// gets a visible aiming ray so the user can point.
 {
   const _m = new THREE.Matrix4();
   for (let i = 0; i < 2; i++) {
-    const controller = renderer.xr.getController(i);
+    const controller = renderer.xr.getController(i); // target-ray space
     rig.add(controller); // controllers live in the rig's (reference) space
+
+    // Aiming ray — hidden until a controller connects in an XR session (so it never
+    // shows as a stray line in flat mode, and is skipped for AR's screen-tap input).
+    const ray = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -5)]),
+      new THREE.LineBasicMaterial({ color: 0xf7931a, transparent: true, opacity: 0.6 }),
+    );
+    ray.visible = false;
+    controller.add(ray);
+    controller.addEventListener('connected', (e) => { ray.visible = e.data?.targetRayMode !== 'screen'; });
+    controller.addEventListener('disconnected', () => { ray.visible = false; });
+
     controller.addEventListener('select', () => {
       _m.identity().extractRotation(controller.matrixWorld);
       raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);

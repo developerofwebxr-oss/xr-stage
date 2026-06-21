@@ -246,7 +246,8 @@ export function createLocomotion(camera, domElement, {
     if (c.hit && onBoundary) onBoundary();
   }
 
-  // Read Quest thumbsticks: right stick = move (head-relative), left stick = snap-turn.
+  // Read Quest thumbsticks (conventional VR mapping): LEFT stick = walk/locomotion
+  // (head-relative), RIGHT stick = snap-turn. Jump stays on the left controller's Y.
   function readVRSticks(dt, renderer) {
     const session = renderer.xr.getSession();
     if (!session) return;
@@ -258,7 +259,8 @@ export function createLocomotion(camera, domElement, {
       const x = gp.axes[2] ?? 0;
       const y = gp.axes[3] ?? 0;
 
-      if (src.handedness === 'right') {
+      if (src.handedness === 'left') {
+        // Left stick = move (head-relative).
         if (Math.abs(x) > 0.15 || Math.abs(y) > 0.15) {
           _forward.set(0, 0, 1).applyAxisAngle(UP, headYaw);
           _right.set(1, 0, 0).applyAxisAngle(UP, headYaw);
@@ -266,7 +268,14 @@ export function createLocomotion(camera, domElement, {
           rig.position.addScaledVector(_forward, y * step);
           rig.position.addScaledVector(_right, x * step);
         }
-      } else if (src.handedness === 'left') {
+        // Jump on Y (left controller). xr-standard maps Y → buttons[5]; no other
+        // controller button is bound (turn/move are sticks, exit is the system
+        // button), so Y is free. Rising-edge so a held press is one hop.
+        const yPressed = !!gp.buttons?.[5]?.pressed;
+        if (yPressed && !vrJumpWasPressed) jumpQueued = true;
+        vrJumpWasPressed = yPressed;
+      } else if (src.handedness === 'right') {
+        // Right stick X = snap-turn.
         if (Math.abs(x) > 0.7 && !snapCooldown) {
           rig.rotation.y -= Math.sign(x) * SNAP_TURN;
           yaw = rig.rotation.y; // keep flat-look yaw in sync after a snap-turn
@@ -274,12 +283,6 @@ export function createLocomotion(camera, domElement, {
         } else if (Math.abs(x) < 0.3) {
           snapCooldown = false;
         }
-        // Jump on Y (left controller). xr-standard maps Y → buttons[5]; no other
-        // controller button is bound (snap/move are sticks, exit is the system
-        // button), so Y is free. Rising-edge so a held press is one hop.
-        const yPressed = !!gp.buttons?.[5]?.pressed;
-        if (yPressed && !vrJumpWasPressed) jumpQueued = true;
-        vrJumpWasPressed = yPressed;
       }
     }
   }

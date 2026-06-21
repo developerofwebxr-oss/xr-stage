@@ -210,7 +210,9 @@
       /* ── Profile card (Phase 2.2/2.3): fixed DOM panel, right-centre, always the
          same size/position so a far avatar's card is just as readable as a near one. */
       #profile-card {
-        position: fixed; top: 50%; right: 16px; transform: translateY(-50%); z-index: 14;
+        position: fixed; z-index: 14;
+        right: calc(env(safe-area-inset-right) + 16px);
+        bottom: calc(env(safe-area-inset-bottom) + 84px); /* low-right, above the control bar */
         width: 280px; max-width: calc(100vw - 32px); pointer-events: auto;
         background: var(--panel); border: 1px solid var(--panel-edge); border-radius: var(--r-lg);
         padding: 16px; color: var(--ink);
@@ -321,6 +323,8 @@
       }
       /* Error + toast sit just above the bar too. */
       body.mobile #voice-error, body.mobile #toast { bottom: calc(env(safe-area-inset-bottom) + var(--control-bar-h, 96px) + 16px); }
+      /* Profile card clears the taller mobile control bar (bottom-right). */
+      body.mobile #profile-card { bottom: calc(env(safe-area-inset-bottom) + var(--control-bar-h, 96px) + 16px); }
 
       /* Respect reduced-motion: no pulse, near-instant transitions. */
       @media (prefers-reduced-motion: reduce) {

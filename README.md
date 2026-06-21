@@ -134,6 +134,19 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Card reposition + two XR input fixes** — no new deps:
+- Profile card moved to the **lower-right**, anchored to the bottom-right with
+  safe-area insets (above the control bar; `--control-bar-h` on mobile) — no longer
+  vertically centered, so it doesn't cover the stage/centre. Same size/content/
+  one-at-a-time/handlers.
+- **VR stick mapping fixed** (was backwards): **left stick = walk/locomotion, right
+  stick = turn** (snap). Jump unchanged (left controller Y).
+- **XR controller select** now works: each controller has a visible orange **aiming
+  ray** (hidden until it connects in-session), and its `select` (and AR screen-tap)
+  feeds the **same `pickFromRaycaster`** as the desktop click — one unified
+  "select avatar" path. The selection-ring cue shows in XR even though the DOM card
+  is flat/mobile-only (head-anchored VR card is still deferred).
+
 **Phase 2.3 — profile card → fixed corner panel** — readable regardless of distance:
 - The card is now a **fixed DOM panel** (right-centre, constant size/position) instead
   of an in-world billboard, so a far avatar's card is just as readable as a near one.
