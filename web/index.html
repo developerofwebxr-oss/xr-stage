@@ -207,6 +207,40 @@
       }
       #toast.show { opacity: 1; }
 
+      /* ── Profile card (Phase 2.2/2.3): fixed DOM panel, right-centre, always the
+         same size/position so a far avatar's card is just as readable as a near one. */
+      #profile-card {
+        position: fixed; top: 50%; right: 16px; transform: translateY(-50%); z-index: 14;
+        width: 280px; max-width: calc(100vw - 32px); pointer-events: auto;
+        background: var(--panel); border: 1px solid var(--panel-edge); border-radius: var(--r-lg);
+        padding: 16px; color: var(--ink);
+        backdrop-filter: blur(16px) saturate(1.3); -webkit-backdrop-filter: blur(16px) saturate(1.3);
+        box-shadow: var(--shadow), var(--ring-inset);
+      }
+      #profile-card[hidden] { display: none; }
+      #profile-card::before { /* orange accent rule */
+        content: ""; position: absolute; left: 16px; right: 16px; top: 0; height: 2px;
+        background: linear-gradient(90deg, transparent, rgba(247, 147, 26, 0.7), transparent);
+      }
+      .pc-close {
+        position: absolute; top: 8px; right: 10px; width: 26px; height: 26px;
+        pointer-events: auto; background: transparent; border: 0; cursor: pointer;
+        color: var(--ink-dim); font-size: 16px; line-height: 1; border-radius: 6px;
+      }
+      .pc-close:hover { color: var(--ink); background: var(--fill-hover); }
+      .pc-head { display: flex; gap: 12px; align-items: center; }
+      .pc-face { width: 56px; height: 56px; border-radius: 12px; display: block; flex: 0 0 auto; }
+      .pc-meta { min-width: 0; }
+      .pc-name { font-family: var(--font-mono); font-weight: 600; font-size: 16px; }
+      .pc-npub, .pc-nip05 {
+        font-family: var(--font-mono); font-size: 12px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .pc-npub { color: var(--ink-dim); margin-top: 2px; }
+      .pc-nip05 { color: rgba(247, 147, 26, 0.85); margin-top: 1px; }
+      .pc-actions { display: flex; gap: 8px; margin-top: 14px; }
+      .pc-actions .ctl { flex: 1; padding: 8px 6px; font-size: 12px; text-align: center; }
+
       /* Transient controls hint — top-centre, fades in on load / out on first input. */
       #lock-hint {
         position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 9;
@@ -338,6 +372,24 @@
             <b id="speaker-count">0</b></span>
         </div>
       </div>
+
+      <!-- Profile card (fixed corner; opened by clicking an avatar). -->
+      <aside id="profile-card" hidden>
+        <button class="pc-close" id="pc-close" aria-label="Close">✕</button>
+        <div class="pc-head">
+          <img class="pc-face" id="pc-face" alt="" />
+          <div class="pc-meta">
+            <div class="pc-name" id="pc-name"></div>
+            <div class="pc-npub" id="pc-npub"></div>
+            <div class="pc-nip05" id="pc-nip05"></div>
+          </div>
+        </div>
+        <div class="pc-actions">
+          <button class="ctl" id="pc-visit">Visit profile</button>
+          <button class="ctl" id="pc-follow">Follow</button>
+          <button class="ctl soon" id="pc-zap" title="Wallet coming soon">⚡ Zap</button>
+        </div>
+      </aside>
 
       <div class="badge err" id="voice-error" hidden></div>
       <div id="toast"></div>

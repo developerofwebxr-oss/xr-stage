@@ -134,6 +134,19 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Phase 2.3 — profile card → fixed corner panel** — readable regardless of distance:
+- The card is now a **fixed DOM panel** (right-centre, constant size/position) instead
+  of an in-world billboard, so a far avatar's card is just as readable as a near one.
+  Clicking an avatar still selects it (same 2.2 raycast/click-to-interact); a
+  **selection ring** is parented to the picked avatar so it's clear who the card is for.
+- The in-world card meshes are **gone** — `ui/profileCard.js` is now DOM-only (no
+  THREE), so there's no per-open geometry/material/texture to leak.
+- Unchanged from 2.2: one card at a time (X / empty / re-click closes), content from
+  `identity.getProfile` (keyface, name, npub-short, nip05), and the **same named
+  handlers** `onVisit` (njump) / `onFollow` (mock toggle) / `onZap` (wallet stub) —
+  just moved into the fixed card. Data + handlers stay separate from the container so
+  the deferred **VR card** (camera-anchored) plugs into the same handlers.
+
 **Phase 2.2 — click an avatar → in-world profile card** — mock actions, no new deps:
 - A plain click raycasts to an avatar and opens its **in-world 3D profile card** (a
   billboarded panel — works in flat/VR/AR, not a DOM overlay). Hold-drag still looks;

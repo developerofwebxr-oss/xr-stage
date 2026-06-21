@@ -199,27 +199,50 @@ const presence = createPresence(voice, scene, () => ({
   onAvatarSpawn: (id, group) => identifyAvatar(group, id),
 });
 
-// ── Click an avatar → in-world profile card (Phase 2.2) ──────────────────────────
+// ── Click an avatar → fixed profile card (Phase 2.2 → 2.3) ───────────────────────
 // Plain click raycasts to an avatar (the click stays free — never pointer-locks);
-// hold-drag still looks. VR uses the controller select ray. One card at a time.
-const card = createProfileCard(scene);
+// hold-drag still looks. VR uses the controller select ray. The card is a FIXED DOM
+// panel (always the same size/position, readable for near OR far avatars); a ring
+// marks the selected avatar. One card at a time.
 const raycaster = new THREE.Raycaster();
 
 // Pickable avatar roots: seeded ambiance + live remote peers (NOT your own body).
 const pickables = () => seeded.map((s) => s.group).concat(presence.avatars());
 
-// Actions behind named handlers so the real swaps are contained (no inline logic in
-// the card UI). `profile` is the identity-service object stored on the avatar.
+// Selection cue: one reusable ring, parented to the selected avatar so it follows.
+const selectionRing = new THREE.Mesh(
+  new THREE.TorusGeometry(0.42, 0.03, 10, 44),
+  new THREE.MeshBasicMaterial({ color: 0xf7931a, transparent: true, opacity: 0.9, depthWrite: false }),
+);
+selectionRing.rotation.x = -Math.PI / 2;
+let selectedGroup = null;
+
+// Actions behind the SAME named handlers from 2.2 (Follow = mock toggle, Zap = stub),
+// just rendered in the fixed DOM card now — real swaps don't touch this.
 function onVisit(profile) {
-  if (renderer.xr.isPresenting) return;                 // VR: profile opens on desktop
+  if (renderer.xr.isPresenting) return;                       // VR: profile opens on desktop
   window.open(`https://njump.me/${profile.npub}`, '_blank', 'noopener');
 }
 function onFollow(profile) {
-  card.refresh(identity.toggleFollow(profile.pubkey));  // REAL: publish a kind:3 list
+  card.setFollowing(identity.toggleFollow(profile.pubkey));   // REAL: publish a kind:3 list
 }
 function onZap() {
   // SEAM: routes to the (not-yet-built) wallet/zap service. No payment logic here.
   if (!renderer.xr.isPresenting) hud.toast('Wallet coming soon');
+}
+
+const card = createProfileCard({ onVisit, onFollow, onZap, onClose: deselect });
+
+function selectAvatar(group, profile) {
+  group.add(selectionRing);              // ring follows the avatar
+  selectionRing.position.set(0, 0.06, 0);
+  selectedGroup = group;
+  card.open(profile, { following: identity.isFollowing(profile.pubkey) });
+}
+function deselect() {
+  if (selectionRing.parent) selectionRing.parent.remove(selectionRing);
+  selectedGroup = null;
+  card.close();
 }
 
 function pickAvatarGroup() {
@@ -231,29 +254,16 @@ function pickAvatarGroup() {
   return null;
 }
 
-// Dispatch a configured raycaster: card buttons first, then avatars, then empty space.
+// Pick an avatar (toggle-close on the same one) or close on empty space. Card
+// buttons are DOM, handled inside the card — they never reach this raycast.
 function pickFromRaycaster() {
-  if (card.isOpen()) {
-    const region = card.hitTest(raycaster);
-    if (region === 'visit') return onVisit(card.profile());
-    if (region === 'follow') return onFollow(card.profile());
-    if (region === 'zap') return onZap();
-    if (region === 'close') return card.close();
-    if (region === 'panel') return; // clicked the card body → keep it open
-  }
   const group = pickAvatarGroup();
   if (group) {
-    const profile = group.userData.identity;
-    if (card.isOpen() && card.profile() && card.profile().pubkey === profile.pubkey) {
-      card.close();                       // same avatar → toggle closed
-    } else {
-      const anchor = new THREE.Vector3();
-      group.getWorldPosition(anchor); anchor.y += 2.35; // float above the head
-      card.open(profile, anchor, identity.isFollowing(profile.pubkey));
-    }
+    if (group === selectedGroup) deselect();                 // same avatar → close
+    else selectAvatar(group, group.userData.identity);       // replaces any open card
     return;
   }
-  if (card.isOpen()) card.close();        // empty space → close
+  deselect();                                                // empty space → close
 }
 
 // Flat: a tap (pointer down→up with little movement) that isn't pointer-locked.
@@ -372,7 +382,5 @@ renderer.setAnimationLoop(() => {
   }
   // Fade the boundary glow (held at full while the player pushes the edge).
   if (boundaryGlow > 0) { boundaryGlow = Math.max(0, boundaryGlow - dt * 1.6); ringMat.opacity = boundaryGlow * 0.6; }
-  // Billboard the open profile card toward the active camera (cheap; no redraw).
-  card.update(renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
   renderer.render(scene, camera);
 });
