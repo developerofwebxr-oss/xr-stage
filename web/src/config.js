@@ -31,4 +31,11 @@ export const config = {
   // A throwaway per-tab identity until Nostr login lands (Prompt 2). Stable for
   // the life of the page so presence/voice agree on who we are.
   identity: `${params.get('role') === 'speaker' ? 'spk' : 'lis'}-${Math.random().toString(36).slice(2, 8)}`,
+
+  // ENABLE_FLY — the Controller & Input Standard's fly toggle (right-stick-click /
+  // F / mobile button) is per-game disable-able via this flag. OFF for this game:
+  // it's a grounded venue, flying isn't part of the experience. The binding is fully
+  // wired on all three realities, so flipping this to true enables it everywhere.
+  // Overridable for testing with ?fly=1.
+  enableFly: params.get('fly') === '1',
 };

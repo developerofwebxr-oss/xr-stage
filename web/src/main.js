@@ -6,10 +6,14 @@ import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP } from 
 import { identity } from './identity/identity.js';
 import { drawKeyface } from './identity/keyface.js';
 import { createLocomotion } from './xr/locomotion.js';
+import { comfort } from './input/comfort.js';
 import { setupXR } from './xr/session.js';
 import { createHud } from './ui/hud.js';
 import { createJoystick } from './ui/joystick.js';
 import { createProfileCard } from './ui/profileCard.js';
+import { createZapUI } from './ui/zapUI.js';
+import { wallet } from './wallet/wallet.js';
+import { createZapEffects } from './room/zapEffect.js';
 import { Voice } from './voice/livekit.js';
 import { createPresence } from './state/presence.js';
 import { stageState, setState, onStateChange } from './state/stageState.js';
@@ -86,15 +90,26 @@ boundaryRing.position.set(bnd.centre.x, bnd.y, bnd.centre.z);
 scene.add(boundaryRing);
 let boundaryGlow = 0;
 
+// AR shell-off swaps room-bounds for per-prop collision (zones.js `ar` flag); set
+// when an AR session is active so locomotion's clamp lets the player roam the real room.
+let arActive = false;
+
 const { rig, update: updateLocomotion, setFreeLook, setMoveInput, jump } =
   createLocomotion(camera, renderer.domElement, {
     spawn,
     isMobile,
-    constrain: (x, z) => constrainPosition(who, x, z),
+    constrain: (x, z) => constrainPosition(who, x, z, arActive),
     onBoundary: () => { boundaryGlow = 1; }, // soft edge stop + glow, no snap-back
     // Pointer lock dropped on its own (e.g. Esc) → reflect it in the toggle + hide
     // the ESC hint, so the button and pointer-lock state never get out of sync.
     onFreeLookEnd: () => { freeLookOn = false; hud.setFreeLook(false); hud.showFreeLookHint(false); },
+    // Cross-input parity: these verbs are also bound on the desktop keys (inside
+    // locomotion) — here we route them to this game's actions. One handler per verb,
+    // shared by VR buttons + keyboard, so nothing is improvised per-platform.
+    onMenu: () => toggleMenu(),       // X / Esc·M  → Pause/Menu
+    onGrab: () => doGrab(),           // grip / E-hold·right-click → grab (inert seam)
+    onVerbB: () => toggleVoice(),     // B / B-key  → game verb: toggle mic (Listen/Speak)
+    onVerbY: () => zapSelected(),     // Y / Y-key  → game verb: zap the selected avatar
   });
 scene.add(rig);
 
@@ -166,6 +181,7 @@ hud.onSignIn(async () => {
 
 // ── WebXR sessions + mode cluster (B2) ──────────────────────────────────────────
 // Screen is active by default; VR/AR enable + wire once feature-detection resolves.
+let xrCtl = null; // the session controller; exposes enter('screen'|'vr'|'ar')
 hud.setActiveMode('screen');
 setupXR(renderer, {
   onModeChange: (mode) => {
@@ -173,14 +189,54 @@ setupXR(renderer, {
     hud.showOverlay(mode === 'flat');            // no 2D HUD inside immersive
     document.getElementById('joystick').hidden = mode !== 'flat' ? true : !isMobile;
     document.getElementById('jump-btn').hidden = mode !== 'flat' ? true : !isMobile;
+    if (mode !== 'flat') { hud.showMenu(false); zapUI.closeAll(); } // leaving flat closes DOM panels
     if (mode === 'flat' && !isMobile) hud.flashLockHint(); // brief reminder on return
     if (mode !== 'flat') hud.showFreeLookHint(false);
   },
-  onARMode: (on) => setARMode(on),
+  // AR = shell-off: passthrough look + per-prop collision (arActive flips the clamp).
+  onARMode: (on) => { arActive = on; setARMode(on); },
 }).then((xr) => {
+  xrCtl = xr;
   hud.configureModes(xr.supported); // grey out VR/AR the device can't do
   hud.onMode((m) => xr.enter(m));
 });
+
+// ── Pause / Menu + comfort layer (X · Esc·M · ☰) ─────────────────────────────────
+// One menu, opened from any reality's menu binding. Resume closes it; "Exit to screen
+// mode" is the in-app exit path (the platform button is the other). Comfort toggles
+// are ALL off by default and PERSISTED (comfort.js) — opt-in only, never baked on.
+function toggleMenu() { hud.isMenuOpen() ? hud.showMenu(false) : openMenu(); }
+function openMenu() { hud.setComfort(comfort.all()); hud.showMenu(true); }
+hud.onMenuButton(toggleMenu);
+hud.onResume(() => hud.showMenu(false));
+hud.onExit(() => { hud.showMenu(false); xrCtl?.enter('screen'); }); // ends VR/AR; no-op in flat
+hud.onComfortToggle((key, on) => comfort.set(key, on));
+
+// Apply comfort live: vignette visibility follows its toggle (snapTurn/haptics are
+// read where they act — locomotion turn + the pulse() helper). Persisted changes
+// re-apply on load too.
+function applyVignettePref() { hud.setVignetteVisible(comfort.get('vignette')); }
+comfort.onChange((key) => { if (key === 'vignette') applyVignettePref(); });
+applyVignettePref();
+
+// Haptic pulse on the active controllers (VR only, opt-in). Used by select + grab;
+// land/jump haptics are a small follow-up (needs a locomotion onLand hook).
+function pulse(intensity = 0.4, ms = 40) {
+  if (!comfort.get('haptics') || !renderer.xr.isPresenting) return;
+  const session = renderer.xr.getSession();
+  for (const src of session?.inputSources || []) {
+    src.gamepad?.hapticActuators?.[0]?.pulse?.(intensity, ms);
+  }
+}
+
+// Grab (inert seam): the unified secondary-pointer verb, bound on grip / E-hold /
+// right-click per the standard. This venue has no grabbable props yet, so it's a
+// no-op beyond the haptic + a toast — the architecture is in place for a future slice
+// that adds grabbable objects (raycast nearest interactable, parent to the hand).
+function doGrab() {
+  pulse(0.5, 50);
+  if (!renderer.xr.isPresenting) hud.toast('Nothing to grab here yet');
+}
 
 // ── Voice + presence ─────────────────────────────────────────────────────────────
 const voice = new Voice({
@@ -226,9 +282,10 @@ function onVisit(profile) {
 function onFollow(profile) {
   card.setFollowing(identity.toggleFollow(profile.pubkey));   // REAL: publish a kind:3 list
 }
-function onZap() {
-  // SEAM: routes to the (not-yet-built) wallet/zap service. No payment logic here.
-  if (!renderer.xr.isPresenting) hud.toast('Wallet coming soon');
+function onZap(profile) {
+  // The wallet/zap seam is LIVE now (mock): the card's Zap routes through the one
+  // unified zap-avatar flow (flat/mobile → amount picker, VR → quick-zap).
+  zapAvatar(profile.pubkey, profile.name);
 }
 
 const card = createProfileCard({ onVisit, onFollow, onZap, onClose: deselect });
@@ -274,6 +331,7 @@ function pickFromRaycaster() {
   dom.addEventListener('pointerdown', (e) => { downX = e.clientX; downY = e.clientY; moved = false; });
   dom.addEventListener('pointermove', (e) => { if (Math.hypot(e.clientX - downX, e.clientY - downY) > 6) moved = true; });
   dom.addEventListener('pointerup', (e) => {
+    if (e.button !== 0) return;                               // left-click selects; right-click = grab
     if (moved || document.pointerLockElement === dom) return; // drag-look / free look → not a pick
     const r = dom.getBoundingClientRect();
     _ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
@@ -306,10 +364,68 @@ function pickFromRaycaster() {
       _m.identity().extractRotation(controller.matrixWorld);
       raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
       raycaster.ray.direction.set(0, 0, -1).applyMatrix4(_m).normalize();
+      pulse(0.3, 30);          // select/fire haptic (opt-in via the comfort menu)
       pickFromRaycaster();
     });
   }
 }
+
+// ── Wallet + zap (Phase 3, mock) ─────────────────────────────────────────────────
+// The wallet service is the ONE source of balance + zaps, SEPARATE from identity
+// (signing ≠ paying). All three zap seams — the profile-card Zap, the control-bar Zap
+// (spend hub), and the Y binding — funnel through ONE zap-avatar flow: flat/mobile
+// opens the amount picker, VR quick-zaps a default. Real Lightning (NWC/LNbits) swaps
+// in behind wallet.js without touching any caller here.
+const DEFAULT_ZAP = 21; // sats — the VR quick-zap amount (no DOM picker in immersive)
+const zapFx = createZapEffects();
+const fmtSats = (n) => n.toLocaleString('en-US');
+const zapNote = () => `Zap from ${identity.current()?.name || 'anon'}`;
+
+const zapUI = createZapUI({
+  onConnect: () => connectWallet(),
+  onZapSomeone: () => { zapUI.closeHub(); zapSelected(); },
+  onPickAmount: (pubkey, amountSats) => wallet.zap({ toPubkey: pubkey, amountSats, note: zapNote() }),
+});
+
+async function connectWallet() {
+  await wallet.connect();                 // REAL: NWC connect / WebLN.enable()
+  hud.showBalance(true);
+  hud.setBalance(wallet.getBalance());
+  openSpendHub();                          // re-render the hub now that a wallet is connected
+}
+function openSpendHub() { zapUI.openHub({ connected: wallet.isConnected(), balance: wallet.getBalance() }); }
+
+// The one "zap a person" entry: connect-gated, then input-appropriate.
+function zapAvatar(pubkey, name) {
+  if (!wallet.isConnected()) { hud.toast('Connect a wallet to zap'); openSpendHub(); return; }
+  if (renderer.xr.isPresenting) wallet.zap({ toPubkey: pubkey, amountSats: DEFAULT_ZAP, note: zapNote() }); // VR quick-zap
+  else zapUI.openPicker({ pubkey, name });                                                                  // flat/mobile picker
+}
+// Zap whoever is currently selected (ring/card target) — the Y binding + hub action.
+function zapSelected() {
+  const g = selectedGroup;
+  if (!g) { if (!renderer.xr.isPresenting) hud.toast('Tap someone to zap them'); return; }
+  const id = g.userData.identity;
+  zapAvatar(id.pubkey, id.name);
+}
+// The on-screen avatar group for a pubkey (target for the in-world zap burst).
+function groupForPubkey(pubkey) {
+  return pickables().find((g) => g.userData?.identity?.pubkey === pubkey) || null;
+}
+
+// Feedback for EVERY zap state. The in-world burst works in VR; toasts are the
+// flat/mobile addition. Balance only changes on 'confirmed' (the wallet owns it).
+wallet.onZap((e) => {
+  if (e.state === 'pending') {
+    if (!renderer.xr.isPresenting) hud.toast(`Zapping ${fmtSats(e.amountSats)} sats…`);
+  } else if (e.state === 'confirmed') {
+    hud.setBalance(wallet.getBalance());
+    zapFx.spawn(groupForPubkey(e.toPubkey), e.amountSats); // ⚡ burst on the zapped avatar
+    if (!renderer.xr.isPresenting) hud.toast(`⚡ Sent ${fmtSats(e.amountSats)} sats`);
+  } else if (e.state === 'failed') {
+    if (!renderer.xr.isPresenting) hud.toast(`Zap failed — ${e.reason}`);
+  }
+});
 
 onStateChange((s) => {
   hud.setParticipantCount(s.participantCount);
@@ -326,9 +442,13 @@ let active = false;
 hud.setVoiceToggle(`${verb}: off`, false);
 hud.showRequest(!isSpeaker);                              // listener-only placeholder
 hud.onRequest(() => hud.toast('Request to speak — available in a later phase'));
-hud.onZap(() => hud.toast('Zaps arrive in a later phase')); // reserved Phase 3 slot
+hud.onZap(openSpendHub);                                 // control-bar Zap → spend-menu hub
+hud.onVoice(toggleVoice);                                 // control-bar mic == game verb B
 
-hud.onVoice(async () => {
+// Game verb B → the Listen/Speak mic toggle. Named so the VR B button and the desktop
+// B key route to the exact same action as the control-bar button (cross-input parity).
+async function toggleVoice() {
+  if (hud.el.btnVoice.disabled) return;                  // ignore re-entrant taps/keys
   const next = !active;
   hud.el.btnVoice.disabled = true;
   try {
@@ -346,7 +466,7 @@ hud.onVoice(async () => {
   } finally {
     hud.el.btnVoice.disabled = false;
   }
-});
+}
 
 // ── Viewport tracking ────────────────────────────────────────────────────────────
 // Size the drawing buffer to the LIVE visual viewport (handles mobile URL-bar
@@ -380,6 +500,7 @@ syncViewport(); // initial
 
 // ── Frame loop ──────────────────────────────────────────────────────────────────
 const clock = new THREE.Clock();
+const _prevPos = new THREE.Vector3().copy(rig.position); // for the movement vignette
 
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
@@ -396,5 +517,14 @@ renderer.setAnimationLoop(() => {
   }
   // Fade the boundary glow (held at full while the player pushes the edge).
   if (boundaryGlow > 0) { boundaryGlow = Math.max(0, boundaryGlow - dt * 1.6); ringMat.opacity = boundaryGlow * 0.6; }
+
+  // Comfort vignette (flat, opt-in): fade in while actually moving (> ~0.2 m/s).
+  if (comfort.get('vignette') && !renderer.xr.isPresenting) {
+    hud.setVignetteLevel(rig.position.distanceTo(_prevPos) > dt * 0.2 ? 1 : 0);
+  }
+  _prevPos.copy(rig.position);
+
+  zapFx.update(dt);           // in-world zap bursts (no-op when none are active)
+
   renderer.render(scene, camera);
 });

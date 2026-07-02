@@ -326,6 +326,80 @@
       /* Profile card clears the taller mobile control bar (bottom-right). */
       body.mobile #profile-card { bottom: calc(env(safe-area-inset-bottom) + var(--control-bar-h, 96px) + 16px); }
 
+      /* ── Comfort: movement vignette (opt-in, off by default) ──────────────────── */
+      /* A tunnelling vignette that fades in while moving — a motion-sickness aid.
+         Behind the HUD (z 8), click-through. Only meaningful in flat; VR uses a
+         shader vignette (device-only). */
+      #vignette {
+        position: fixed; inset: 0; z-index: 8; pointer-events: none; opacity: 0;
+        transition: opacity 180ms ease-out;
+        background: radial-gradient(ellipse at center, transparent 36%, rgba(0, 0, 0, 0.9) 94%);
+      }
+      #vignette[hidden] { display: none; }
+
+      /* ── Pause / Menu (X · Esc·M · ☰): Resume · Exit · comfort toggles ─────────── */
+      #pause-menu {
+        position: fixed; inset: 0; z-index: 20; pointer-events: auto;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(3, 4, 8, 0.55);
+        backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+      }
+      #pause-menu[hidden] { display: none; }
+      #pause-panel {
+        flex-direction: column; align-items: stretch; gap: 9px;
+        width: min(320px, calc(100vw - 32px)); padding: 18px;
+      }
+      .pm-title {
+        font-family: var(--font-mono); font-weight: 600; font-size: 15px;
+        letter-spacing: 0.04em;
+      }
+      #pause-panel .ctl { text-align: center; }
+      .pm-section {
+        margin-top: 8px; font-family: var(--font-mono); font-size: 11px; color: var(--ink-dim);
+        text-transform: uppercase; letter-spacing: 0.08em;
+      }
+      .pm-hint { text-transform: none; letter-spacing: 0; color: var(--ink-faint); }
+      .pm-toggle {
+        display: flex; align-items: center; gap: 10px; padding: 7px 2px;
+        font-size: 13px; color: var(--ink); cursor: pointer; pointer-events: auto;
+      }
+      .pm-toggle input { width: 16px; height: 16px; accent-color: var(--orange); cursor: pointer; }
+
+      /* ── Zap: spend-menu hub + amount picker (flat/mobile) ────────────────────── */
+      #spend-menu, #zap-picker {
+        position: fixed; inset: 0; z-index: 20; pointer-events: auto;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(3, 4, 8, 0.55);
+        backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+      }
+      #spend-menu[hidden], #zap-picker[hidden] { display: none; }
+      #spend-panel, #zap-picker-panel {
+        position: relative; flex-direction: column; align-items: stretch; gap: 9px;
+        width: min(320px, calc(100vw - 32px)); padding: 18px;
+      }
+      #spend-panel .ctl, #zap-picker-panel .ctl { text-align: center; }
+      #spend-wallet { font-family: var(--font-mono); font-size: 13px; color: var(--ink-dim); padding: 2px 0 4px; }
+      #spend-wallet b { color: var(--orange); font-variant-numeric: tabular-nums; }
+      #spend-wallet .ctl { text-align: center; width: 100%; }
+      #zp-presets { display: flex; gap: 8px; }
+      #zp-presets .ctl { flex: 1; }
+      .zp-preset.sel { background: var(--orange); color: var(--orange-ink); border-color: var(--orange); box-shadow: var(--glow-orange); }
+      .zp-custom { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-dim); }
+      .zp-custom input {
+        flex: 1; background: var(--fill); border: 1px solid var(--hairline); border-radius: var(--r-sm);
+        color: var(--ink); padding: 8px 10px; font-family: var(--font-mono); font-size: 14px;
+      }
+      .zp-actions { display: flex; gap: 8px; margin-top: 2px; }
+      .zp-actions .ctl { flex: 1; }
+
+      /* Small wallet balance readout, sits beside the Zap control. */
+      #wallet-balance {
+        display: inline-flex; align-items: center; gap: 4px; padding: 0 4px;
+        font-family: var(--font-mono); font-size: 13px; color: var(--ink-dim);
+      }
+      #wallet-balance b { color: var(--orange); font-variant-numeric: tabular-nums; }
+      #wallet-balance[hidden] { display: none; }
+
       /* Respect reduced-motion: no pulse, near-instant transitions. */
       @media (prefers-reduced-motion: reduce) {
         * { transition-duration: 0.01ms !important; animation: none !important; }
@@ -336,6 +410,9 @@
     <div id="app"></div>
 
     <div id="hud">
+      <!-- Comfort vignette during movement (opt-in via the menu; off by default). -->
+      <div id="vignette" hidden></div>
+
       <!-- Top status: room · connection · speaking · count -->
       <header id="topbar" class="bar">
         <span class="field">
@@ -356,6 +433,7 @@
       <!-- Bottom control bar: two groups that wrap into ≤2 tidy rows -->
       <div id="controlbar" class="bar">
         <div class="grp">
+          <button class="ctl" id="btn-menu" aria-label="Menu" title="Menu (Esc / M)">☰</button>
           <button class="ctl" id="btn-signin">Sign in</button>
           <button class="ctl" id="btn-freelook" hidden>Free look: off</button>
           <div class="mode-cluster" role="group" aria-label="Mode">
@@ -368,9 +446,9 @@
           <button class="ctl primary" id="btn-voice">Listen: off</button>
           <button class="ctl soon" id="btn-request" aria-disabled="true"
                   title="Available in a later phase" hidden>Request to speak</button>
-          <button class="ctl soon" id="btn-zap" aria-disabled="true"
-                  title="Zaps arrive in a later phase">
+          <button class="ctl" id="btn-zap" title="Sats / Zap">
             <svg class="ico" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>Zap</button>
+          <span id="wallet-balance" hidden><svg class="ico" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg><b id="wallet-balance-val">0</b></span>
           <span class="speaking" id="voice-count" hidden>
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4"/></svg>
             <b id="speaker-count">0</b></span>
@@ -391,9 +469,54 @@
         <div class="pc-actions">
           <button class="ctl" id="pc-visit">Visit profile</button>
           <button class="ctl" id="pc-follow">Follow</button>
-          <button class="ctl soon" id="pc-zap" title="Wallet coming soon">⚡ Zap</button>
+          <button class="ctl" id="pc-zap">⚡ Zap</button>
         </div>
       </aside>
+
+      <!-- Pause / Menu (opened by VR X · desktop Esc·M · the ☰ button). -->
+      <div id="pause-menu" hidden>
+        <div id="pause-panel" class="bar" role="dialog" aria-modal="true" aria-label="Menu">
+          <div class="pm-title">Menu</div>
+          <button class="ctl" id="pm-resume">Resume</button>
+          <button class="ctl" id="pm-exit">Exit to screen mode</button>
+          <div class="pm-section">Comfort <span class="pm-hint">— all off by default</span></div>
+          <label class="pm-toggle"><input type="checkbox" id="pm-vignette" /> <span>Vignette while moving</span></label>
+          <label class="pm-toggle"><input type="checkbox" id="pm-snapTurn" /> <span>Snap turn (instead of smooth)</span></label>
+          <label class="pm-toggle"><input type="checkbox" id="pm-haptics" /> <span>Haptics (fire · grab · land)</span></label>
+        </div>
+      </div>
+
+      <!-- Spend-menu hub (opened by the control-bar Zap): home for all sats actions. -->
+      <div id="spend-menu" hidden>
+        <div id="spend-panel" class="bar" role="dialog" aria-modal="true" aria-label="Sats">
+          <div class="pm-title">Sats</div>
+          <div id="spend-wallet"><!-- connect button or balance, filled by zapUI --></div>
+          <div class="pm-section">Actions</div>
+          <button class="ctl" id="sp-zap-someone">⚡ Zap someone</button>
+          <button class="ctl soon" id="sp-zap-comment" disabled>Zap to comment — soon</button>
+          <button class="ctl soon" id="sp-zap-request" disabled>Zap to request to speak — soon</button>
+        </div>
+      </div>
+
+      <!-- Amount picker (flat/mobile): presets + custom → confirm → wallet.zap(). -->
+      <div id="zap-picker" hidden>
+        <div id="zap-picker-panel" class="bar" role="dialog" aria-modal="true" aria-label="Zap amount">
+          <button class="pc-close" id="zp-close" aria-label="Close">✕</button>
+          <div class="pm-title">Zap <span id="zp-name"></span></div>
+          <div id="zp-presets">
+            <button class="ctl zp-preset" data-amt="21">21</button>
+            <button class="ctl zp-preset" data-amt="100">100</button>
+            <button class="ctl zp-preset" data-amt="1000">1000</button>
+          </div>
+          <label class="zp-custom">custom sats
+            <input type="number" id="zp-amount" min="1" step="1" value="21" inputmode="numeric" />
+          </label>
+          <div class="zp-actions">
+            <button class="ctl" id="zp-cancel">Cancel</button>
+            <button class="ctl primary" id="zp-send">Send ⚡</button>
+          </div>
+        </div>
+      </div>
 
       <div class="badge err" id="voice-error" hidden></div>
       <div id="toast"></div>
@@ -411,7 +534,7 @@
       </svg>
     </button>
 
-    <div id="lock-hint" hidden>hold-drag to look · WASD to move · Free look for mouse-look</div>
+    <div id="lock-hint" hidden>hold-drag to look · WASD move · Shift run · Space jump · Esc menu</div>
     <div id="freelook-hint" hidden>Free look on — press <b>ESC</b> to exit</div>
 
     <script type="module" src="/src/main.js"></script>

@@ -61,11 +61,15 @@ export const SCREEN = {
 };
 
 // ── Movement clamp ───────────────────────────────────────────────────────────────
-// constrainPosition(who, x, z) → { x, z, y, hit }
+// constrainPosition(who, x, z, ar=false) → { x, z, y, hit }
 //   who: { role:'speaker'|'listener', isNextUp:boolean }
+//   ar:  AR passthrough — the bounded room is gone (shell-off), so swap the room
+//        BOUNDS (outer audience radius + the in-front-of-stage wall) for PER-PROP
+//        collision only: the player still can't walk through the stage or mic
+//        platform, but is free to roam the real room beyond the venue footprint.
 // Every edge is offset by BODY_RADIUS so the avatar stops cleanly against geometry
 // (kept inside by the radius; pushed outside by the radius) — no mesh clipping.
-export function constrainPosition(who, x, z) {
+export function constrainPosition(who, x, z, ar = false) {
   // Speaker: confined to the MAIN STAGE top (inside the disc) at STAGE_TOP_Y.
   if (who.role === 'speaker') {
     return clampInsideCircle(STAGE_POS, x, z, STAGE_RADIUS - BODY_RADIUS, STAGE_TOP_Y);
@@ -100,10 +104,14 @@ export function constrainPosition(who, x, z) {
     hit = true;
   }
 
-  const ox = x - STAGE_POS.x, oz = z - STAGE_POS.z;
-  const od = Math.hypot(ox, oz);
-  if (od > AUDIENCE_RADIUS) { const k = AUDIENCE_RADIUS / od; x = STAGE_POS.x + ox * k; z = STAGE_POS.z + oz * k; hit = true; }
-  if (z < STAGE_POS.z) { z = STAGE_POS.z; hit = true; }
+  // Room BOUNDS (outer radius + the front-of-stage wall) — dropped in AR, where the
+  // real room is the boundary and the per-prop exclusions above are enough.
+  if (!ar) {
+    const ox = x - STAGE_POS.x, oz = z - STAGE_POS.z;
+    const od = Math.hypot(ox, oz);
+    if (od > AUDIENCE_RADIUS) { const k = AUDIENCE_RADIUS / od; x = STAGE_POS.x + ox * k; z = STAGE_POS.z + oz * k; hit = true; }
+    if (z < STAGE_POS.z) { z = STAGE_POS.z; hit = true; }
+  }
 
   return { x, z, y: 0, hit };
 }

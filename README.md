@@ -134,6 +134,62 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Phase 3 — mock wallet + zap-a-person** — Lightning-shaped, no real Lightning, no new deps:
+- **`wallet` service (`src/wallet/wallet.js`)** — the ONE source of balance + zaps,
+  SEPARATE from identity (signing ≠ paying). `connect()` → fake 21,000 sats ·
+  `getBalance()` · `zap({ toPubkey, amountSats, note })` async through
+  **pending → confirmed | failed** · `onZap(cb)` · `disconnect()` · `isConnected()`.
+  Shape matches the real swap: zap is async with ~1s pending; keyed by pubkey + amount
+  + note (NIP-57); **reads the recipient's `lud16` via `identity.getProfile()`** before
+  paying (plumbing for real LNURL→invoice); **balance decrements only on `confirmed`**;
+  **insufficient balance → `failed`**. Swapping in NWC/LNbits touches only this file.
+- **Zap a person (one unified flow)** — the profile-card Zap, the control-bar Zap, and
+  the **Y** binding all funnel through one `zapAvatar`: flat/mobile opens an **amount
+  picker** (21 / 100 / 1000 + custom → confirm), VR **quick-zaps** a default (21) to the
+  selected avatar with no DOM. Zapping is connect-gated (prompts the hub if no wallet).
+- **Spend-menu hub** (control-bar Zap) — home for sats actions: Connect wallet / live
+  balance, **⚡ Zap someone** (live), and disabled **Zap to comment / Zap to request to
+  speak** ("— soon") placeholders. Small balance readout sits beside the Zap control.
+- **In-world zap feedback (`src/room/zapEffect.js`)** — a ⚡+amount burst on the zapped
+  avatar, parented in-world so it shows in **VR** too; built on the event, disposed after
+  ~0.9s, **zero per-frame cost when idle** (72fps-safe). Flat/mobile also get a toast.
+- Verified in real Chrome: connect → 21,000; zap 100 → pending→confirmed, balance 20,900
+  + in-world ⚡; zap 999,999 → failed (insufficient), balance unchanged; reads `lud16`;
+  full UI path (hub → connect → picker → send 1,000 → 20,000). No console errors.
+  VR quick-zap feel is on-device-only.
+
+**Controller & Input Standard alignment** — conform to the webxr-threejs cross-reality
+input standard; gameplay unchanged, only bindings/architecture (no new deps):
+- **Locomotion:** left stick / WASD move; speeds now **fixed walk 1.4 / sprint 2.8 m/s**
+  — analog inputs (VR stick, mobile joystick) sprint by **magnitude** (full push),
+  keyboard sprints with **Shift**. Right stick = **smooth (softly-eased) turn** by
+  default (snap is now an opt-in comfort toggle, no longer baked on). **Fly** (right-
+  stick click / **F** / mobile btn) is fully wired behind **`ENABLE_FLY`** —
+  **off** for this grounded venue (`?fly=1` to try).
+- **Buttons (canonical map):** **A = jump** (was left Y), **X = Pause/Menu**, triggers =
+  select, **grips = grab**, **B = toggle mic (Listen/Speak)**, **Y = zap** — this game's
+  two free verbs, bound on VR + desktop key + the existing on-screen control-bar buttons.
+- **Cross-input parity:** every verb bound on all three realities — desktop **Esc**(primary)/
+  **M** menu, **E-hold / right-click** grab, **Shift** sprint, **F** fly; mobile joystick-
+  to-edge sprint + the **☰** menu button. Grab is an **inert seam** (no grabbable props
+  yet — wired on grip/E/right-click, no-op + toast until a future slice adds objects).
+- **Pause/Menu (X · Esc·M · ☰):** Resume · Exit to screen mode · comfort toggles. DOM
+  panel for flat/mobile; the VR X button opens it too (in-world VR menu panel deferred,
+  like the VR profile card — platform button still exits VR regardless).
+- **Comfort layer (`input/comfort.js`):** vignette · snap turn · haptics — **ALL OFF by
+  default**, opt-in via the menu, **persisted** to `localStorage`. Speeds are fixed, not
+  a comfort toggle ("don't nanny").
+- **Exit:** no custom X/A "exit VR/AR" binding (there wasn't one) — exit = platform button
+  + the menu's "Exit to screen mode".
+- **AR shell-off (`EnvironmentAdapter`):** scene split into a **shell** (sky/floor/grid/
+  backdrop/beam/fog) vs **props** (stage/mic/rings); AR suppresses the whole shell via
+  `environment.setShellVisible(false)` and swaps room-bounds clamping for **per-prop
+  collision** (`constrainPosition(..., ar)` drops the outer radius + front wall, keeps
+  the stage/platform exclusions). Flat/VR untouched.
+- Verified in real Chrome (flat): walk 1.4 / sprint 2.8 m/s, drag-look turn, jump
+  ~0.47 m peak + lands back, Esc/M menu open/close, comfort toggle **persists across
+  reload**, E / right-click grab, no console errors. VR/AR feel is on-device-only.
+
 **Card reposition + two XR input fixes** — no new deps:
 - Profile card moved to the **lower-right**, anchored to the bottom-right with
   safe-area insets (above the control bar; `--control-bar-h` on mobile) — no longer

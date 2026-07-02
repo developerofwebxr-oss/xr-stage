@@ -268,22 +268,30 @@ export function buildScene() {
   border.position.copy(backdrop.position).setZ(SCREEN.z + 0.01);
   scene.add(border);
 
-  // ── AR passthrough toggle ──────────────────────────────────────────────────────
-  // Hide the sky/floor/screen for passthrough; keep the venue (stage + mic platform
-  // + avatars) so it stays anchored in the real room. The starfield is hidden too —
-  // a sky dome would occlude the real world. The radiating floor rings stay: they
-  // read fine projected on the real floor and reinforce the stage focal point.
-  function setARMode(on) {
-    scene.background = on ? null : skyColor;
-    scene.fog = on ? null : new THREE.Fog(skyColor, 22, 60);
-    floor.visible = !on;
-    grid.visible = !on;
-    backdrop.visible = !on;
-    frame.visible = !on;
-    border.visible = !on;
-    sky.points.visible = !on;
-    beam.visible = !on; // follows the sky rule — no light shaft floating in passthrough
-  }
+  // ── Environment adapter: the AR "shell-off" seam ────────────────────────────────
+  // Per the standard, the bounded ENCLOSURE — sky/starfield, floor, grid, backdrop
+  // screen, light beam, fog, background — is VR-only. In AR, passthrough IS the
+  // environment, so the whole shell is suppressed; only the freestanding venue PROPS
+  // (stage, mic platform, mic stand, edge glows, the radiating floor rings, contact
+  // shadow) remain, anchored to the real floor.
+  //
+  // We keep ONE persistent scene across flat↔VR↔AR (no rebuild on mode switch), so the
+  // seam is a visibility toggle over a cleanly-SEPARATED shell list — not a build-time
+  // skip. The separation is the architecture: shell and props never mix, so this one
+  // `shell` array is the single place an AR path suppresses the enclosure. Flat and VR
+  // are untouched (shell stays visible).
+  const shell = [floor, grid, backdrop, frame, border, sky.points, beam];
+  const environment = {
+    shell,
+    setShellVisible(visible) {
+      for (const o of shell) o.visible = visible;
+      scene.background = visible ? skyColor : null;
+      scene.fog = visible ? new THREE.Fog(skyColor, 22, 60) : null;
+    },
+  };
+
+  // AR passthrough = shell off. (Kept as the name main.js wires `onARMode` to.)
+  function setARMode(on) { environment.setShellVisible(!on); }
 
   // ── Per-frame tick (shader clocks) ──────────────────────────────────────────────
   // Drives the ring spread + star flicker. Frozen entirely under prefers-reduced-
@@ -296,7 +304,7 @@ export function buildScene() {
     sky.material.uniforms.uTime.value = elapsed;
   }
 
-  return { scene, backdrop, setARMode, update };
+  return { scene, backdrop, setARMode, environment, update };
 }
 
 // A soft black radial-gradient texture for the faked contact shadow under the stage

@@ -23,16 +23,29 @@ export function createHud() {
     btnVoice: $('btn-voice'),
     btnRequest: $('btn-request'),
     btnZap: $('btn-zap'),
+    walletBalance: $('wallet-balance'),
+    walletBalanceVal: $('wallet-balance-val'),
     voiceCount: $('voice-count'),
     speakerCount: $('speaker-count'),
     btnFreelook: $('btn-freelook'),
     btnSignin: $('btn-signin'),
+    btnMenu: $('btn-menu'),
+    // pause menu + comfort
+    pauseMenu: $('pause-menu'),
+    pmResume: $('pm-resume'),
+    pmExit: $('pm-exit'),
+    pmVignette: $('pm-vignette'),
+    pmSnapTurn: $('pm-snapTurn'),
+    pmHaptics: $('pm-haptics'),
+    vignette: $('vignette'),
     // transient
     voiceError: $('voice-error'),
     toast: $('toast'),
     lockHint: $('lock-hint'),
     freelookHint: $('freelook-hint'),
   };
+  // comfort key → its checkbox, for the menu's persisted toggles.
+  const comfortBoxes = { vignette: el.pmVignette, snapTurn: el.pmSnapTurn, haptics: el.pmHaptics };
   const modeBtns = { screen: el.modeScreen, vr: el.modeVr, ar: el.modeAr };
   let toastTimer = null;
 
@@ -89,6 +102,9 @@ export function createHud() {
       el.btnVoice.classList.toggle('on', !!on);
     },
     showRequest(show) { el.btnRequest.hidden = !show; },
+    // Wallet balance readout beside the Zap control (shown once a wallet connects).
+    showBalance(show) { el.walletBalance.hidden = !show; },
+    setBalance(sats) { el.walletBalanceVal.textContent = Number(sats).toLocaleString('en-US'); },
     setSpeakerCount(n) {
       el.voiceCount.hidden = false;
       el.speakerCount.textContent = String(n);
@@ -124,5 +140,29 @@ export function createHud() {
     onZap(fn) { el.btnZap.addEventListener('click', fn); },
     onFreeLook(fn) { el.btnFreelook.addEventListener('click', fn); },
     onSignIn(fn) { el.btnSignin.addEventListener('click', fn); },
+
+    // ── Pause / Menu + comfort (X · Esc·M · ☰) ────────────────────────────────────
+    showMenu(show) { el.pauseMenu.hidden = !show; },
+    isMenuOpen() { return !el.pauseMenu.hidden; },
+    onMenuButton(fn) { el.btnMenu.addEventListener('click', fn); },
+    onResume(fn) { el.pmResume.addEventListener('click', fn); },
+    onExit(fn) { el.pmExit.addEventListener('click', fn); },
+    // Reflect comfort state into the checkboxes (called on open, for persistence).
+    setComfort(state) {
+      for (const [k, box] of Object.entries(comfortBoxes)) if (box) box.checked = !!state[k];
+    },
+    // fn(key, checked) when the user flips a comfort toggle.
+    onComfortToggle(fn) {
+      for (const [k, box] of Object.entries(comfortBoxes)) {
+        if (box) box.addEventListener('change', () => fn(k, box.checked));
+      }
+    },
+
+    // ── Comfort vignette (flat) ───────────────────────────────────────────────────
+    setVignetteVisible(on) {
+      el.vignette.hidden = !on;
+      if (!on) el.vignette.style.opacity = '0';
+    },
+    setVignetteLevel(level) { el.vignette.style.opacity = String(Math.max(0, Math.min(1, level))); },
   };
 }
