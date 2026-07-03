@@ -28,11 +28,14 @@ export function createHud() {
     voiceCount: $('voice-count'),
     speakerCount: $('speaker-count'),
     btnFreelook: $('btn-freelook'),
-    btnSignin: $('btn-signin'),
+    btnSignin: $('btn-signin'),   // the "You" control-bar entry (opens the You menu)
+    btnStage: $('btn-stage'),
     btnMenu: $('btn-menu'),
     // pause menu + comfort
     pauseMenu: $('pause-menu'),
     pmResume: $('pm-resume'),
+    pmInstructions: $('pm-instructions'),
+    pmShare: $('pm-share'),
     pmExit: $('pm-exit'),
     pmVignette: $('pm-vignette'),
     pmSnapTurn: $('pm-snapTurn'),
@@ -129,7 +132,7 @@ export function createHud() {
     // Mock sign-in control. Before: "Sign in". After: a compact "me" chip showing
     // the keyface + name (the "signed in as …" indicator). info = { name, faceUrl }.
     setSignedIn(info) {
-      if (!info) { el.btnSignin.classList.remove('me'); el.btnSignin.textContent = 'Sign in'; return; }
+      if (!info) { el.btnSignin.classList.remove('me'); el.btnSignin.textContent = 'You'; el.btnSignin.title = 'You — identity & wallet'; return; }
       el.btnSignin.classList.add('me');
       el.btnSignin.title = `Signed in as ${info.name}`;
       el.btnSignin.innerHTML = `<img class="me-face" alt="" src="${info.faceUrl}"><span>${info.name}</span>`;
@@ -145,7 +148,10 @@ export function createHud() {
     showMenu(show) { el.pauseMenu.hidden = !show; },
     isMenuOpen() { return !el.pauseMenu.hidden; },
     onMenuButton(fn) { el.btnMenu.addEventListener('click', fn); },
+    onStage(fn) { el.btnStage.addEventListener('click', fn); },   // control-bar Stage
     onResume(fn) { el.pmResume.addEventListener('click', fn); },
+    onInstructions(fn) { el.pmInstructions.addEventListener('click', fn); },
+    onShare(fn) { el.pmShare.addEventListener('click', fn); },
     onExit(fn) { el.pmExit.addEventListener('click', fn); },
     // Reflect comfort state into the checkboxes (called on open, for persistence).
     setComfort(state) {

@@ -198,7 +198,7 @@
       }
       #voice-error[hidden] { display: none; }
       #toast {
-        position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%); z-index: 13;
+        position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%); z-index: 30;
         background: var(--panel); border: 1px solid var(--panel-edge); border-radius: var(--r-md);
         padding: 8px 13px; font-size: 13px; color: var(--ink); white-space: nowrap;
         backdrop-filter: blur(12px) saturate(1.3); -webkit-backdrop-filter: blur(12px) saturate(1.3);
@@ -365,22 +365,40 @@
       }
       .pm-toggle input { width: 16px; height: 16px; accent-color: var(--orange); cursor: pointer; }
 
-      /* ── Zap: spend-menu hub + amount picker (flat/mobile) ────────────────────── */
-      #spend-menu, #zap-picker {
+      /* ── Modal surfaces: spend hub · amount picker · You · Stage · panels ──────── */
+      #spend-menu, #zap-picker, #you-menu, #stage-menu, #instructions, #booking {
         position: fixed; inset: 0; z-index: 20; pointer-events: auto;
         display: flex; align-items: center; justify-content: center;
         background: rgba(3, 4, 8, 0.55);
         backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
       }
-      #spend-menu[hidden], #zap-picker[hidden] { display: none; }
-      #spend-panel, #zap-picker-panel {
+      #spend-menu[hidden], #zap-picker[hidden], #you-menu[hidden],
+      #stage-menu[hidden], #instructions[hidden], #booking[hidden] { display: none; }
+      #spend-panel, #zap-picker-panel, #you-panel, #stage-panel, #instructions-panel, #booking-panel {
         position: relative; flex-direction: column; align-items: stretch; gap: 9px;
         width: min(320px, calc(100vw - 32px)); padding: 18px;
       }
-      #spend-panel .ctl, #zap-picker-panel .ctl { text-align: center; }
-      #spend-wallet { font-family: var(--font-mono); font-size: 13px; color: var(--ink-dim); padding: 2px 0 4px; }
-      #spend-wallet b { color: var(--orange); font-variant-numeric: tabular-nums; }
-      #spend-wallet .ctl { text-align: center; width: 100%; }
+      #spend-panel .ctl, #zap-picker-panel .ctl, #you-panel .ctl,
+      #stage-panel .ctl, #booking-panel .ctl { text-align: center; }
+
+      /* You menu — identity header + wallet/account rows. */
+      .you-identity { display: flex; align-items: center; gap: 12px; }
+      .you-face { width: 44px; height: 44px; border-radius: 10px; display: block; }
+      .you-name { font-family: var(--font-mono); font-weight: 600; font-size: 15px; }
+      .you-name.muted { color: var(--ink-dim); }
+      #you-wallet, #you-account { display: flex; flex-direction: column; gap: 8px; }
+      .you-balance { font-family: var(--font-mono); font-size: 13px; color: var(--ink-dim); }
+      .you-balance b { color: var(--orange); font-variant-numeric: tabular-nums; }
+
+      /* Stage menu — schedule block. */
+      .stage-sched { font-family: var(--font-mono); font-size: 13px; color: var(--ink-dim); display: flex; flex-direction: column; gap: 3px; }
+      .stage-sched b { color: var(--ink); }
+      .stage-sched .muted { color: var(--ink-faint); margin-top: 2px; }
+
+      /* Instructions — how-to list. */
+      .how-to { margin: 2px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-dim); line-height: 1.7; }
+      .how-to b { color: var(--ink); font-weight: 600; }
+
       #zp-presets { display: flex; gap: 8px; }
       #zp-presets .ctl { flex: 1; }
       .zp-preset.sel { background: var(--orange); color: var(--orange-ink); border-color: var(--orange); box-shadow: var(--glow-orange); }
@@ -434,7 +452,8 @@
       <div id="controlbar" class="bar">
         <div class="grp">
           <button class="ctl" id="btn-menu" aria-label="Menu" title="Menu (Esc / M)">☰</button>
-          <button class="ctl" id="btn-signin">Sign in</button>
+          <button class="ctl" id="btn-signin" title="You — identity & wallet">You</button>
+          <button class="ctl" id="btn-stage" title="Stage — schedule & booking">Stage</button>
           <button class="ctl" id="btn-freelook" hidden>Free look: off</button>
           <div class="mode-cluster" role="group" aria-label="Mode">
             <button class="mode" id="mode-screen" data-mode="screen">Screen</button>
@@ -478,23 +497,83 @@
         <div id="pause-panel" class="bar" role="dialog" aria-modal="true" aria-label="Menu">
           <div class="pm-title">Menu</div>
           <button class="ctl" id="pm-resume">Resume</button>
+          <button class="ctl" id="pm-instructions">Instructions</button>
+          <button class="ctl" id="pm-share">Share invite link</button>
           <button class="ctl" id="pm-exit">Exit to screen mode</button>
-          <div class="pm-section">Comfort <span class="pm-hint">— all off by default</span></div>
+          <div class="pm-section">Settings <span class="pm-hint">— comfort, all off by default</span></div>
           <label class="pm-toggle"><input type="checkbox" id="pm-vignette" /> <span>Vignette while moving</span></label>
           <label class="pm-toggle"><input type="checkbox" id="pm-snapTurn" /> <span>Snap turn (instead of smooth)</span></label>
           <label class="pm-toggle"><input type="checkbox" id="pm-haptics" /> <span>Haptics (fire · grab · land)</span></label>
         </div>
       </div>
 
-      <!-- Spend-menu hub (opened by the control-bar Zap): home for all sats actions. -->
+      <!-- Spend-menu hub (control-bar Zap): ROOM-level sats actions only. -->
       <div id="spend-menu" hidden>
         <div id="spend-panel" class="bar" role="dialog" aria-modal="true" aria-label="Sats">
+          <button class="pc-close" id="spend-close" aria-label="Close">✕</button>
           <div class="pm-title">Sats</div>
-          <div id="spend-wallet"><!-- connect button or balance, filled by zapUI --></div>
-          <div class="pm-section">Actions</div>
-          <button class="ctl" id="sp-zap-someone">⚡ Zap someone</button>
-          <button class="ctl soon" id="sp-zap-comment" disabled>Zap to comment — soon</button>
-          <button class="ctl soon" id="sp-zap-request" disabled>Zap to request to speak — soon</button>
+          <div class="pm-section">Room</div>
+          <button class="ctl" id="sp-zap-speaker">⚡ Zap the speaker</button>
+          <button class="ctl soon" id="sp-zap-comment" aria-disabled="true">Zap to comment</button>
+          <button class="ctl soon" id="sp-take-mic" aria-disabled="true">⚡ Take the mic</button>
+        </div>
+      </div>
+
+      <!-- You menu (control-bar You): identity + wallet home. -->
+      <div id="you-menu" hidden>
+        <div id="you-panel" class="bar" role="dialog" aria-modal="true" aria-label="You">
+          <button class="pc-close" id="you-close" aria-label="Close">✕</button>
+          <div class="pm-title">You</div>
+          <div id="you-identity" class="you-identity"></div>
+          <div class="pm-section">Wallet</div>
+          <div id="you-wallet"></div>
+          <div class="pm-section">Account</div>
+          <div id="you-account"></div>
+        </div>
+      </div>
+
+      <!-- Stage menu (control-bar Stage): schedule + booking. -->
+      <div id="stage-menu" hidden>
+        <div id="stage-panel" class="bar" role="dialog" aria-modal="true" aria-label="Stage">
+          <button class="pc-close" id="stage-close" aria-label="Close">✕</button>
+          <div class="pm-title">Stage</div>
+          <div class="pm-section">Schedule</div>
+          <div class="stage-sched">
+            <div>Now: <b>—</b></div>
+            <div>Up next: <b>—</b></div>
+            <div class="muted">No one booked yet.</div>
+          </div>
+          <button class="ctl" id="stage-book">Book a slot</button>
+          <button class="ctl soon" id="stage-speaker-hub" aria-disabled="true">Speaker hub</button>
+        </div>
+      </div>
+
+      <!-- Instructions panel (from Pause · reuses the controls hint). -->
+      <div id="instructions" hidden>
+        <div id="instructions-panel" class="bar" role="dialog" aria-modal="true" aria-label="Instructions">
+          <button class="pc-close" id="instructions-close" aria-label="Close">✕</button>
+          <div class="pm-title">Instructions</div>
+          <ul class="how-to">
+            <li><b>Move</b> — WASD / arrows / on-screen joystick</li>
+            <li><b>Look</b> — hold-drag (Free look for mouse / gyro)</li>
+            <li><b>Sprint</b> — Shift / push the stick to the edge</li>
+            <li><b>Jump</b> — Space / jump button</li>
+            <li><b>Select</b> — click / tap an avatar for their card</li>
+            <li><b>Zap</b> — the ⚡ Zap control, or an avatar's card</li>
+            <li><b>Menu</b> — Esc / M / the ☰ button</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Booking surface (from Stage · placeholder form; request not live yet). -->
+      <div id="booking" hidden>
+        <div id="booking-panel" class="bar" role="dialog" aria-modal="true" aria-label="Book a slot">
+          <button class="pc-close" id="booking-close" aria-label="Close">✕</button>
+          <div class="pm-title">Book a slot</div>
+          <label class="zp-custom">topic
+            <input type="text" id="booking-topic" placeholder="What will you talk about?" />
+          </label>
+          <button class="ctl soon" id="booking-request" aria-disabled="true">Request slot</button>
         </div>
       </div>
 

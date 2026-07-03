@@ -134,6 +134,32 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Menu shell — all five homes** — structural UI; every button in its home, live ones
+wired, not-yet ones dimmed (toast "Not available yet", no "coming soon" copy). No new
+backend features, no new deps. Design principle: a button lives where its target is.
+- **Profile card** (on an avatar) — Visit · Follow · Zap, all live (unchanged).
+- **Spend hub** (control-bar Zap → room actions only) — **Zap the speaker** (live when
+  someone's on the stage disc, dimmed when empty), **Zap to comment** + **Take the mic**
+  (dimmed → toast). Removed "Zap someone" (person-zapping is the card's job).
+- **You menu** (new `You` control-bar chip) — identity (name + face), **Connect wallet +
+  balance** (moved here as its home; balance still surfaces beside the Zap control),
+  Activity (dim), Sign in / Switch / Log out (`identity.signIn`/`logout`).
+- **Pause / Settings** (X · Esc·M · ☰) — added **Instructions** (live how-to panel) and
+  **Share invite link** (live: copies `location.href`, toast "Link copied"); Resume,
+  comfort toggles, Exit already existed.
+- **Stage menu** (new `Stage` control-bar button) — Schedule (Now / Up next, "No one
+  booked yet"), **Book a slot** (live → booking stub form), Speaker hub (dimmed seam).
+- New module `src/ui/menus.js` (You/Stage/Instructions/Booking); `src/ui/zapUI.js`
+  reworked to room-only. All full-screen surfaces are **one-at-a-time** (opening one
+  closes the others; the corner profile card coexists). VR: these are DOM (invisible in
+  immersive) — the in-world VR versions are the deferred VR-UI slice; VR entry/exit
+  unaffected.
+- Verified in real Chrome (flat): all five homes open + close each other; Zap-the-speaker
+  dims on an empty stage (toast) and goes live with someone on it; every dim button
+  toasts "Not available yet"; You connect → balance; Book opens the stub; Instructions
+  opens; no console errors. (Share's clipboard write needs a focused real gesture — it
+  falls back to surfacing the URL; works on a genuine click.)
+
 **Phase 3 — mock wallet + zap-a-person** — Lightning-shaped, no real Lightning, no new deps:
 - **`wallet` service (`src/wallet/wallet.js`)** — the ONE source of balance + zaps,
   SEPARATE from identity (signing ≠ paying). `connect()` → fake 21,000 sats ·

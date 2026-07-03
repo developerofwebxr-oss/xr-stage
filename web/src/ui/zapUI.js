@@ -1,27 +1,28 @@
-// ui/zapUI.js — the flat/mobile zap surfaces: the SPEND-MENU HUB and the AMOUNT
-// PICKER. Container only; all balance/payment logic lives in the wallet service, and
-// the recipient comes from the identity service — this module just collects intent.
+// ui/zapUI.js — the ROOM-level spend hub + the flat/mobile amount picker. Container
+// only; balance/payment logic lives in the wallet service and the recipient comes from
+// identity. Person-zapping is the profile card's job — the hub is room actions only:
 //
-//   createZapUI({ onConnect, onZapSomeone, onPickAmount })
-//     openHub({ connected, balance })   spend hub — home for sats actions
+//   Zap the speaker — live when someone's on stage, dimmed (toast) when empty.
+//   Zap to comment  — dimmed (→ future board), toast on tap.
+//   Take the mic    — dimmed (→ future questioner queue), toast on tap.
+//
+//   createZapUI({ toast, onZapSpeaker, onPickAmount })
+//     openHub({ speakerAvailable })   spend hub
 //     closeHub()
-//     openPicker({ pubkey, name })      amount picker for one recipient
+//     openPicker({ pubkey, name })    amount picker for one recipient
 //     closePicker()
 //     closeAll() · isOpen()
-//
-// The hub lists the ONE live action (zap someone) plus disabled "coming soon" entries
-// for features that don't exist yet (zap-to-comment, zap-to-request) — structure now,
-// no faked behaviour. The picker's presets + custom field resolve to onPickAmount(
-// pubkey, sats); VR skips the picker entirely (the Y binding quick-zaps a default).
 
 const $ = (id) => document.getElementById(id);
-const fmt = (n) => n.toLocaleString('en-US');
+const NOT_YET = 'Not available yet';
 
-export function createZapUI({ onConnect, onZapSomeone, onPickAmount } = {}) {
+export function createZapUI({ toast, onZapSpeaker, onPickAmount } = {}) {
   const el = {
     hub: $('spend-menu'),
-    hubWallet: $('spend-wallet'),
-    spZapSomeone: $('sp-zap-someone'),
+    spZapSpeaker: $('sp-zap-speaker'),
+    spZapComment: $('sp-zap-comment'),
+    spTakeMic: $('sp-take-mic'),
+    spClose: $('spend-close'),
     picker: $('zap-picker'),
     pName: $('zp-name'),
     pClose: $('zp-close'),
@@ -30,29 +31,27 @@ export function createZapUI({ onConnect, onZapSomeone, onPickAmount } = {}) {
     pAmount: $('zp-amount'),
     pPresets: $('zp-presets'),
   };
-  let recipient = null; // { pubkey, name } while the picker is open
+  let recipient = null;         // { pubkey, name } while the picker is open
+  let speakerAvailable = false; // gate for "Zap the speaker"
+  const dim = (msg = NOT_YET) => toast && toast(msg);
 
-  // ── Spend hub ─────────────────────────────────────────────────────────────────
-  function renderWallet({ connected, balance }) {
-    el.hubWallet.innerHTML = '';
-    if (connected) {
-      const line = document.createElement('div');
-      line.innerHTML = `⚡ Balance: <b>${fmt(balance)}</b> sats`;
-      el.hubWallet.appendChild(line);
-    } else {
-      const btn = document.createElement('button');
-      btn.className = 'ctl primary';
-      btn.id = 'sp-connect';
-      btn.textContent = 'Connect wallet';
-      btn.addEventListener('click', () => onConnect && onConnect());
-      el.hubWallet.appendChild(btn);
-    }
+  // ── Spend hub (room actions) ────────────────────────────────────────────────────
+  function openHub({ speakerAvailable: avail = false } = {}) {
+    speakerAvailable = avail;
+    el.spZapSpeaker.classList.toggle('soon', !avail);
+    el.spZapSpeaker.setAttribute('aria-disabled', String(!avail));
+    el.hub.hidden = false;
   }
-  function openHub(state) { renderWallet(state); el.hub.hidden = false; }
   function closeHub() { el.hub.hidden = true; }
 
+  el.spClose.addEventListener('click', closeHub);
   el.hub.addEventListener('click', (e) => { if (e.target === el.hub) closeHub(); }); // backdrop
-  el.spZapSomeone.addEventListener('click', () => onZapSomeone && onZapSomeone());
+  el.spZapSpeaker.addEventListener('click', () => {
+    if (!speakerAvailable) return dim('No one on stage to zap');
+    onZapSpeaker && onZapSpeaker(); // hub stays open; the picker opens over it
+  });
+  el.spZapComment.addEventListener('click', () => dim()); // → future comment board
+  el.spTakeMic.addEventListener('click', () => dim());    // → future questioner queue
 
   // ── Amount picker (flat/mobile only) ────────────────────────────────────────────
   function setAmount(v) {
@@ -64,7 +63,8 @@ export function createZapUI({ onConnect, onZapSomeone, onPickAmount } = {}) {
   function openPicker({ pubkey, name } = {}) {
     recipient = { pubkey, name };
     el.pName.textContent = name || 'someone';
-    setAmount(21); // default preset
+    setAmount(21);
+    closeHub();                // the picker replaces the hub
     el.picker.hidden = false;
     el.pSend.focus?.();
   }
@@ -74,7 +74,7 @@ export function createZapUI({ onConnect, onZapSomeone, onPickAmount } = {}) {
     const b = e.target.closest('.zp-preset');
     if (b) setAmount(Number(b.dataset.amt));
   });
-  el.pAmount.addEventListener('input', () => setAmount(el.pAmount.value)); // clears preset highlight if custom
+  el.pAmount.addEventListener('input', () => setAmount(el.pAmount.value)); // custom clears preset highlight
   el.pClose.addEventListener('click', closePicker);
   el.pCancel.addEventListener('click', closePicker);
   el.picker.addEventListener('click', (e) => { if (e.target === el.picker) closePicker(); }); // backdrop

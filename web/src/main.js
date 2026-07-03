@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { config } from './config.js';
 import { buildScene } from './room/scene.js';
-import { STAGE_POS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
+import { STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
 import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP } from './room/avatars.js';
 import { identity } from './identity/identity.js';
 import { drawKeyface } from './identity/keyface.js';
@@ -12,6 +12,7 @@ import { createHud } from './ui/hud.js';
 import { createJoystick } from './ui/joystick.js';
 import { createProfileCard } from './ui/profileCard.js';
 import { createZapUI } from './ui/zapUI.js';
+import { createMenus } from './ui/menus.js';
 import { wallet } from './wallet/wallet.js';
 import { createZapEffects } from './room/zapEffect.js';
 import { Voice } from './voice/livekit.js';
@@ -169,15 +170,18 @@ hud.onFreeLook(async () => {
   if (!isMobile) hud.showFreeLookHint(freeLookOn);     // desktop pointer-lock ESC hint
 });
 
-// ── Sign in (mock identity) ───────────────────────────────────────────────────────
-// signIn() goes through the identity service; the chip shows your keyface + name.
-// REAL: 'nip07' on desktop, 'generate' on mobile/VR, 'guest' anywhere — the mock
-// ignores the distinction but the method param is kept so the swap is clean.
+// ── Identity → the "You" home ────────────────────────────────────────────────────
+// The control-bar "You" chip opens the You menu (its home); the actual sign-in/switch/
+// log-out live inside it. signInFlow() goes through the identity service and updates
+// the chip. REAL: 'nip07' desktop, 'generate' mobile/VR — the mock ignores it.
 const signInMethod = isMobile ? 'generate' : 'nip07';
-hud.onSignIn(async () => {
+async function signInFlow() {
   const me = await identity.signIn(signInMethod);
   hud.setSignedIn({ name: me.name, faceUrl: drawKeyface(me.pubkey, 64).toDataURL() });
-});
+  return me;
+}
+hud.onSignIn(() => openYou());   // "You" control-bar chip → You menu
+hud.onStage(() => openStage());  // "Stage" control-bar button → Stage menu
 
 // ── WebXR sessions + mode cluster (B2) ──────────────────────────────────────────
 // Screen is active by default; VR/AR enable + wire once feature-detection resolves.
@@ -189,7 +193,7 @@ setupXR(renderer, {
     hud.showOverlay(mode === 'flat');            // no 2D HUD inside immersive
     document.getElementById('joystick').hidden = mode !== 'flat' ? true : !isMobile;
     document.getElementById('jump-btn').hidden = mode !== 'flat' ? true : !isMobile;
-    if (mode !== 'flat') { hud.showMenu(false); zapUI.closeAll(); } // leaving flat closes DOM panels
+    if (mode !== 'flat') closeAllMenus();        // leaving flat closes all DOM menus
     if (mode === 'flat' && !isMobile) hud.flashLockHint(); // brief reminder on return
     if (mode !== 'flat') hud.showFreeLookHint(false);
   },
@@ -206,11 +210,58 @@ setupXR(renderer, {
 // mode" is the in-app exit path (the platform button is the other). Comfort toggles
 // are ALL off by default and PERSISTED (comfort.js) — opt-in only, never baked on.
 function toggleMenu() { hud.isMenuOpen() ? hud.showMenu(false) : openMenu(); }
-function openMenu() { hud.setComfort(comfort.all()); hud.showMenu(true); }
+function openMenu() { closeAllMenus(); hud.setComfort(comfort.all()); hud.showMenu(true); }
 hud.onMenuButton(toggleMenu);
 hud.onResume(() => hud.showMenu(false));
+hud.onInstructions(() => openInstructions());
+hud.onShare(() => shareInvite());
 hud.onExit(() => { hud.showMenu(false); xrCtl?.enter('screen'); }); // ends VR/AR; no-op in flat
 hud.onComfortToggle((key, on) => comfort.set(key, on));
+
+// ── Menu shell: the five homes, one-at-a-time ────────────────────────────────────
+// Every full-screen surface routes through here so opening one closes the others
+// (the profile card is a corner panel and coexists). menus/zapUI are created in the
+// wallet section below; these coordinators only run on user interaction.
+function closeAllMenus() { hud.showMenu(false); zapUI.closeAll(); menus.closeAll(); }
+function openYou() {
+  closeAllMenus();
+  const me = identity.current();
+  menus.openYou({
+    signedIn: !!me,
+    name: me?.name || null,
+    faceUrl: me ? drawKeyface(me.pubkey, 64).toDataURL() : null,
+    walletConnected: wallet.isConnected(),
+    balance: wallet.getBalance(),
+  });
+}
+function openStage() { closeAllMenus(); menus.openStage(); }
+function openInstructions() { closeAllMenus(); menus.openInstructions(); }
+function openBooking() { closeAllMenus(); menus.openBooking(); }
+function openSpendHub() { closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup() }); }
+
+// Share the one-link URL to the clipboard. Primary path is the async Clipboard API
+// (works on a real gesture in a secure context); fall back to a hidden-textarea
+// execCommand copy, and if even that fails, surface the URL so it's never a dead end.
+async function shareInvite() {
+  const url = location.href;
+  try {
+    await navigator.clipboard.writeText(url);
+    hud.toast('Link copied');
+    return;
+  } catch { /* fall through to the legacy path */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = url;
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    hud.toast(ok ? 'Link copied' : `Copy failed — ${url}`);
+  } catch {
+    hud.toast(`Copy failed — ${url}`);
+  }
+}
 
 // Apply comfort live: vignette visibility follows its toggle (snapTurn/haptics are
 // read where they act — locomotion turn + the pulse() helper). Persisted changes
@@ -381,26 +432,58 @@ const zapFx = createZapEffects();
 const fmtSats = (n) => n.toLocaleString('en-US');
 const zapNote = () => `Zap from ${identity.current()?.name || 'anon'}`;
 
+// Spend hub = ROOM actions only. "Zap the speaker" is gated on stage occupancy; the
+// picker/onPickAmount path is shared with the card's per-person zap.
 const zapUI = createZapUI({
-  onConnect: () => connectWallet(),
-  onZapSomeone: () => { zapUI.closeHub(); zapSelected(); },
+  toast: (m) => hud.toast(m),
+  onZapSpeaker: () => {
+    const g = stageSpeakerGroup();
+    if (!g) return hud.toast('No one on stage to zap');
+    const id = g.userData.identity;
+    zapAvatar(id.pubkey, id.name); // for now single-speaker → direct; "which speaker" picker is later
+  },
   onPickAmount: (pubkey, amountSats) => wallet.zap({ toPubkey: pubkey, amountSats, note: zapNote() }),
 });
 
+// The You menu is the wallet's home. connect() lives there; the balance also surfaces
+// beside the Zap control (hud.showBalance) as a convenience readout.
 async function connectWallet() {
   await wallet.connect();                 // REAL: NWC connect / WebLN.enable()
   hud.showBalance(true);
   hud.setBalance(wallet.getBalance());
-  openSpendHub();                          // re-render the hub now that a wallet is connected
+  openYou();                              // refresh the You menu now that a wallet is connected
 }
-function openSpendHub() { zapUI.openHub({ connected: wallet.isConnected(), balance: wallet.getBalance() }); }
 
-// The one "zap a person" entry: connect-gated, then input-appropriate.
+// The one "zap a person" entry: connect-gated (prompts the You menu), then
+// input-appropriate.
 function zapAvatar(pubkey, name) {
-  if (!wallet.isConnected()) { hud.toast('Connect a wallet to zap'); openSpendHub(); return; }
+  if (!wallet.isConnected()) { hud.toast('Connect a wallet to zap'); openYou(); return; }
   if (renderer.xr.isPresenting) wallet.zap({ toPubkey: pubkey, amountSats: DEFAULT_ZAP, note: zapNote() }); // VR quick-zap
   else zapUI.openPicker({ pubkey, name });                                                                  // flat/mobile picker
 }
+
+// The stage's current speaker: the first avatar standing on the main-stage disc. Null
+// when the stage is empty (→ "Zap the speaker" dims). SEAM: a multi-speaker panel
+// would return the chosen one here.
+const _spk = new THREE.Vector3();
+function stageSpeakerGroup() {
+  for (const g of pickables()) {
+    g.getWorldPosition(_spk);
+    if (Math.hypot(_spk.x - STAGE_POS.x, _spk.z - STAGE_POS.z) <= STAGE_RADIUS && _spk.y > 0.5) return g;
+  }
+  return null;
+}
+
+// The You / Stage / Instructions / Booking homes. Live actions route to the identity +
+// wallet services; not-yet buttons dim + toast inside menus.js (no fake behaviour).
+const menus = createMenus({
+  toast: (m) => hud.toast(m),
+  onSignIn: async () => { await signInFlow(); openYou(); },
+  onSwitch: async () => { identity.logout(); await signInFlow(); openYou(); },
+  onLogout: () => { identity.logout(); hud.setSignedIn(null); openYou(); },
+  onConnectWallet: () => connectWallet(),
+  onBookOpen: () => openBooking(),
+});
 // Zap whoever is currently selected (ring/card target) — the Y binding + hub action.
 function zapSelected() {
   const g = selectedGroup;
@@ -441,7 +524,7 @@ let active = false;
 
 hud.setVoiceToggle(`${verb}: off`, false);
 hud.showRequest(!isSpeaker);                              // listener-only placeholder
-hud.onRequest(() => hud.toast('Request to speak — available in a later phase'));
+hud.onRequest(() => hud.toast('Not available yet'));
 hud.onZap(openSpendHub);                                 // control-bar Zap → spend-menu hub
 hud.onVoice(toggleVoice);                                 // control-bar mic == game verb B
 
