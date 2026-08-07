@@ -16,7 +16,7 @@
 const $ = (id) => document.getElementById(id);
 const NOT_YET = 'Not available yet';
 
-export function createZapUI({ toast, onZapSpeaker, onPickAmount } = {}) {
+export function createZapUI({ toast, onZapSpeaker, onZapComment, onPickAmount } = {}) {
   const el = {
     hub: $('spend-menu'),
     spZapSpeaker: $('sp-zap-speaker'),
@@ -50,7 +50,7 @@ export function createZapUI({ toast, onZapSpeaker, onPickAmount } = {}) {
     if (!speakerAvailable) return dim('No one on stage to zap');
     onZapSpeaker && onZapSpeaker(); // hub stays open; the picker opens over it
   });
-  el.spZapComment.addEventListener('click', () => dim()); // → future comment board
+  el.spZapComment.addEventListener('click', () => onZapComment && onZapComment()); // live → compose
   el.spTakeMic.addEventListener('click', () => dim());    // → future questioner queue
 
   // ── Amount picker (flat/mobile only) ────────────────────────────────────────────

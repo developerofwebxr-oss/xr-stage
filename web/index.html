@@ -366,20 +366,39 @@
       .pm-toggle input { width: 16px; height: 16px; accent-color: var(--orange); cursor: pointer; }
 
       /* ── Modal surfaces: spend hub · amount picker · You · Stage · panels ──────── */
-      #spend-menu, #zap-picker, #you-menu, #stage-menu, #instructions, #booking {
+      #spend-menu, #zap-picker, #you-menu, #stage-menu, #instructions, #booking,
+      #compose, #activity {
         position: fixed; inset: 0; z-index: 20; pointer-events: auto;
         display: flex; align-items: center; justify-content: center;
         background: rgba(3, 4, 8, 0.55);
         backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
       }
       #spend-menu[hidden], #zap-picker[hidden], #you-menu[hidden],
-      #stage-menu[hidden], #instructions[hidden], #booking[hidden] { display: none; }
-      #spend-panel, #zap-picker-panel, #you-panel, #stage-panel, #instructions-panel, #booking-panel {
+      #stage-menu[hidden], #instructions[hidden], #booking[hidden],
+      #compose[hidden], #activity[hidden] { display: none; }
+      #spend-panel, #zap-picker-panel, #you-panel, #stage-panel, #instructions-panel,
+      #booking-panel, #compose-panel, #activity-panel {
         position: relative; flex-direction: column; align-items: stretch; gap: 9px;
-        width: min(320px, calc(100vw - 32px)); padding: 18px;
+        width: min(340px, calc(100vw - 32px)); padding: 18px;
       }
       #spend-panel .ctl, #zap-picker-panel .ctl, #you-panel .ctl,
-      #stage-panel .ctl, #booking-panel .ctl { text-align: center; }
+      #stage-panel .ctl, #booking-panel .ctl, #compose-panel .ctl { text-align: center; }
+
+      /* Compose form. */
+      #compose-text {
+        width: 100%; min-height: 84px; resize: none; background: var(--fill);
+        border: 1px solid var(--hairline); border-radius: var(--r-sm); color: var(--ink);
+        padding: 10px 12px; font-family: var(--font-ui); font-size: 15px; line-height: 1.4;
+      }
+      .compose-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-dim); }
+      .compose-cost { display: flex; align-items: center; gap: 6px; }
+      .compose-cost input { width: 84px; background: var(--fill); border: 1px solid var(--hairline); border-radius: var(--r-sm); color: var(--ink); padding: 6px 8px; font-family: var(--font-mono); font-size: 13px; }
+      /* Activity list. */
+      #activity-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+      .act-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; background: var(--fill); border: 1px solid var(--hairline); border-radius: var(--r-sm); }
+      .act-text { font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .act-zaps { font-family: var(--font-mono); font-size: 12px; color: var(--orange); flex: 0 0 auto; }
+      .act-empty { font-size: 13px; color: var(--ink-dim); padding: 6px 2px; }
 
       /* You menu — identity header + wallet/account rows. */
       .you-identity { display: flex; align-items: center; gap: 12px; }
@@ -514,7 +533,7 @@
           <div class="pm-title">Sats</div>
           <div class="pm-section">Room</div>
           <button class="ctl" id="sp-zap-speaker">⚡ Zap the speaker</button>
-          <button class="ctl soon" id="sp-zap-comment" aria-disabled="true">Zap to comment</button>
+          <button class="ctl" id="sp-zap-comment">Zap to comment</button>
           <button class="ctl soon" id="sp-take-mic" aria-disabled="true">⚡ Take the mic</button>
         </div>
       </div>
@@ -574,6 +593,32 @@
             <input type="text" id="booking-topic" placeholder="What will you talk about?" />
           </label>
           <button class="ctl soon" id="booking-request" aria-disabled="true">Request slot</button>
+        </div>
+      </div>
+
+      <!-- Compose a comment (from the spend hub's "Zap to comment"). Posting costs a zap. -->
+      <div id="compose" hidden>
+        <div id="compose-panel" class="bar" role="dialog" aria-modal="true" aria-label="Post a comment">
+          <button class="pc-close" id="compose-close" aria-label="Close">✕</button>
+          <div class="pm-title">Post a comment</div>
+          <textarea id="compose-text" placeholder="Say something to the room…" maxlength="140"></textarea>
+          <div class="compose-meta">
+            <span class="compose-cost">costs <input type="number" id="compose-cost" min="1" step="1" value="21" inputmode="numeric" /> sats</span>
+            <span id="compose-count">0/140</span>
+          </div>
+          <div class="zp-actions">
+            <button class="ctl" id="compose-cancel">Cancel</button>
+            <button class="ctl primary" id="compose-post">Post ⚡</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity: the comments I've sent (from You → Activity). -->
+      <div id="activity" hidden>
+        <div id="activity-panel" class="bar" role="dialog" aria-modal="true" aria-label="Activity">
+          <button class="pc-close" id="activity-close" aria-label="Close">✕</button>
+          <div class="pm-title">Your comments</div>
+          <div id="activity-list"></div>
         </div>
       </div>
 

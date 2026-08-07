@@ -13,6 +13,9 @@ import { createJoystick } from './ui/joystick.js';
 import { createProfileCard } from './ui/profileCard.js';
 import { createZapUI } from './ui/zapUI.js';
 import { createMenus } from './ui/menus.js';
+import { createBoardUI } from './ui/boardUI.js';
+import { board } from './board/board.js';
+import { createCommentBoard } from './room/commentBoard.js';
 import { wallet } from './wallet/wallet.js';
 import { createZapEffects } from './room/zapEffect.js';
 import { Voice } from './voice/livekit.js';
@@ -222,7 +225,7 @@ hud.onComfortToggle((key, on) => comfort.set(key, on));
 // Every full-screen surface routes through here so opening one closes the others
 // (the profile card is a corner panel and coexists). menus/zapUI are created in the
 // wallet section below; these coordinators only run on user interaction.
-function closeAllMenus() { hud.showMenu(false); zapUI.closeAll(); menus.closeAll(); }
+function closeAllMenus() { hud.showMenu(false); zapUI.closeAll(); menus.closeAll(); boardUI.closeAll(); }
 function openYou() {
   closeAllMenus();
   const me = identity.current();
@@ -353,23 +356,27 @@ function deselect() {
   card.close();
 }
 
-function pickAvatarGroup() {
-  const hits = raycaster.intersectObjects(pickables(), true);
+// ONE raycast, two targets (per the standard's "select" pointer role): a comment card
+// on a screen → zap-to-boost it; an avatar → open/close its profile card. Nearest hit
+// wins. Desktop click, mobile tap and the VR controller select all feed this.
+function pickFromRaycaster() {
+  // Sprites (avatar name labels, zap bursts) need raycaster.camera to project — the
+  // VR controller path sets the ray directly (not setFromCamera), so ensure it here or
+  // Sprite.raycast throws on a null camera.
+  raycaster.camera = camera;
+  const targets = pickables().concat(commentBoard.pickables());
+  const hits = raycaster.intersectObjects(targets, true);
   for (const h of hits) {
     let o = h.object;
-    while (o) { if (o.userData && o.userData.identity) return o; o = o.parent; }
-  }
-  return null;
-}
-
-// Pick an avatar (toggle-close on the same one) or close on empty space. Card
-// buttons are DOM, handled inside the card — they never reach this raycast.
-function pickFromRaycaster() {
-  const group = pickAvatarGroup();
-  if (group) {
-    if (group === selectedGroup) deselect();                 // same avatar → close
-    else selectAvatar(group, group.userData.identity);       // replaces any open card
-    return;
+    while (o) {
+      if (o.userData && o.userData.commentId) { boostComment(o.userData.commentId); return; }
+      if (o.userData && o.userData.identity) {
+        if (o === selectedGroup) deselect();                 // same avatar → close
+        else selectAvatar(o, o.userData.identity);           // replaces any open card
+        return;
+      }
+      o = o.parent;
+    }
   }
   deselect();                                                // empty space → close
 }
@@ -442,6 +449,7 @@ const zapUI = createZapUI({
     const id = g.userData.identity;
     zapAvatar(id.pubkey, id.name); // for now single-speaker → direct; "which speaker" picker is later
   },
+  onZapComment: () => openCompose(),   // spend hub → post a comment (costs a zap)
   onPickAmount: (pubkey, amountSats) => wallet.zap({ toPubkey: pubkey, amountSats, note: zapNote() }),
 });
 
@@ -483,7 +491,52 @@ const menus = createMenus({
   onLogout: () => { identity.logout(); hud.setSignedIn(null); openYou(); },
   onConnectWallet: () => connectWallet(),
   onBookOpen: () => openBooking(),
+  onActivity: () => openActivity(),
 });
+
+// ── Comment board (Phase 3, mock) ────────────────────────────────────────────────
+// Two in-world screens (right = live feed, left = top-zapped wall) render the `board`
+// service; posting and boosting both charge through the `wallet` service and record
+// the result on 'confirmed'. Text entry is the DOM compose form (VR keyboard is v2).
+const BOARD_PUBKEY = identity.pubkeyFromSeed('board-house'); // sink for comment-post payments (mock)
+const BOOST_SATS = 21;                                        // one zap-to-boost
+const commentBoard = createCommentBoard(scene, { board });
+const boardUI = createBoardUI({
+  toast: (m) => hud.toast(m),
+  onPost: (text, amountSats) => postComment(text, amountSats),
+});
+
+function openCompose() {
+  const me = identity.current();
+  if (!me) { hud.toast('Sign in to comment'); openYou(); return; }
+  if (!wallet.isConnected()) { hud.toast('Connect a wallet to comment'); openYou(); return; }
+  closeAllMenus();
+  boardUI.openCompose({ cost: BOOST_SATS });
+}
+function openActivity() {
+  const me = identity.current();
+  closeAllMenus();
+  boardUI.openActivity(me ? board.byPubkey(me.pubkey) : []);
+}
+
+// Post a comment: charge the zap, and only on 'confirmed' record it to the board.
+async function postComment(text, amountSats) {
+  const me = identity.current();
+  if (!me) { hud.toast('Sign in to comment'); openYou(); return; }
+  boardUI.closeCompose();
+  const res = await wallet.zap({ toPubkey: BOARD_PUBKEY, amountSats, note: `comment: ${text.slice(0, 40)}` });
+  if (res.state === 'confirmed') board.post({ pubkey: me.pubkey, text }); // charge-on-confirmed
+  // a 'failed' zap surfaces via the global wallet.onZap toast; nothing is posted.
+}
+
+// Zap-to-boost: zapping a comment pays its author AND raises it on the top wall.
+async function boostComment(commentId) {
+  const c = board.get(commentId);
+  if (!c) return;
+  if (!wallet.isConnected()) { hud.toast('Connect a wallet to zap'); openYou(); return; }
+  const res = await wallet.zap({ toPubkey: c.pubkey, amountSats: BOOST_SATS, note: 'boost' });
+  if (res.state === 'confirmed') board.boost(commentId, BOOST_SATS);
+}
 // Zap whoever is currently selected (ring/card target) — the Y binding + hub action.
 function zapSelected() {
   const g = selectedGroup;
@@ -608,6 +661,7 @@ renderer.setAnimationLoop(() => {
   _prevPos.copy(rig.position);
 
   zapFx.update(dt);           // in-world zap bursts (no-op when none are active)
+  commentBoard.update(dt);    // live-feed scroll + sticky top-wall refresh
 
   renderer.render(scene, camera);
 });

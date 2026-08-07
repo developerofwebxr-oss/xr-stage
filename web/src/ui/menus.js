@@ -18,7 +18,7 @@ const $ = (id) => document.getElementById(id);
 const fmt = (n) => Number(n).toLocaleString('en-US');
 const NOT_YET = 'Not available yet';
 
-export function createMenus({ toast, onSignIn, onSwitch, onLogout, onConnectWallet, onBookOpen } = {}) {
+export function createMenus({ toast, onSignIn, onSwitch, onLogout, onConnectWallet, onBookOpen, onActivity } = {}) {
   const el = {
     you: $('you-menu'), youIdentity: $('you-identity'), youWallet: $('you-wallet'), youAccount: $('you-account'),
     stage: $('stage-menu'),
@@ -46,7 +46,7 @@ export function createMenus({ toast, onSignIn, onSwitch, onLogout, onConnectWall
     }
 
     el.youAccount.innerHTML = '';
-    el.youAccount.appendChild(btn('Activity', 'ctl soon', () => dim(), true)); // → future zap-comment history
+    el.youAccount.appendChild(btn('Activity', 'ctl', () => onActivity && onActivity())); // live → my comments
     if (signedIn) {
       el.youAccount.appendChild(btn('Switch account', 'ctl', () => onSwitch && onSwitch()));
       el.youAccount.appendChild(btn('Log out', 'ctl', () => onLogout && onLogout()));

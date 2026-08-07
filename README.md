@@ -134,6 +134,31 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Comment board v1** — two in-world 3D screens + post/boost, mock `board` service, no new deps:
+- **`board` service (`src/board/board.js`)** — the single source of comments, keyed by
+  **sender pubkey**, same mock-first pattern as identity/wallet (real Nostr notes + zap
+  receipts later). `post`/`boost`/`get`/`recent`/`top`/`byPubkey`/`onChange`; ranked by
+  zapped sats; seeded with a little content.
+- **Two flanking screens (`src/room/commentBoard.js`)** — RIGHT = **LIVE** feed (recent
+  comments, continuously scrolling up); LEFT = **TOP ZAPPED** wall (most-zapped, rank
+  badges, sticky ~2 min). In-world so they show in VR. Cheap for Quest 72fps: one
+  canvas-textured plane per card, re-textured only on post/boost; scroll is transform +
+  opacity, ~10 meshes total.
+- **Post a comment** — flips "Zap to comment" **live** in the spend hub → DOM compose
+  form (140-char, editable sats cost). Posting **charges a zap** (to a house pubkey) and
+  records to the board **only on `confirmed`**; carries the sender's identity.
+- **Zap-to-boost** — aim at a comment card and trigger zap through the **one unified
+  raycast** (desktop click · mobile tap · VR controller select): pays the comment's
+  author + raises it on the top wall. Fixed 21-sat boost.
+- **You → Activity** goes **live** — lists the comments you've sent.
+- Also fixed a latent bug: the direct-ray pick paths (VR controller select + boost) now
+  set `raycaster.camera`, so Sprites (name labels, zap bursts) don't throw on raycast.
+- Guardrails: no per-user scrolling yet, no VR text entry yet (compose is flat/mobile
+  DOM), no "coming soon" copy. Verified flat in Chrome: seeded feed + sorted top wall,
+  post charges on confirmed, boost via raycast raises the card, insufficient balance
+  posts nothing, Activity lists mine, no console errors. Screen legibility, continuous
+  scroll feel, and 72fps are **on-device-only**.
+
 **Menu shell — all five homes** — structural UI; every button in its home, live ones
 wired, not-yet ones dimmed (toast "Not available yet", no "coming soon" copy). No new
 backend features, no new deps. Design principle: a button lives where its target is.
