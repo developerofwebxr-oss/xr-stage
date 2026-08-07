@@ -16,6 +16,9 @@ import { createMenus } from './ui/menus.js';
 import { createBoardUI } from './ui/boardUI.js';
 import { board } from './board/board.js';
 import { createCommentBoard } from './room/commentBoard.js';
+import { createMicUI } from './ui/micUI.js';
+import { queue } from './queue/queue.js';
+import { createQueuePanel } from './room/queuePanel.js';
 import { wallet } from './wallet/wallet.js';
 import { createZapEffects } from './room/zapEffect.js';
 import { Voice } from './voice/livekit.js';
@@ -225,7 +228,7 @@ hud.onComfortToggle((key, on) => comfort.set(key, on));
 // Every full-screen surface routes through here so opening one closes the others
 // (the profile card is a corner panel and coexists). menus/zapUI are created in the
 // wallet section below; these coordinators only run on user interaction.
-function closeAllMenus() { hud.showMenu(false); zapUI.closeAll(); menus.closeAll(); boardUI.closeAll(); }
+function closeAllMenus() { hud.showMenu(false); zapUI.closeAll(); menus.closeAll(); boardUI.closeAll(); micUI.close(); }
 function openYou() {
   closeAllMenus();
   const me = identity.current();
@@ -240,7 +243,7 @@ function openYou() {
 function openStage() { closeAllMenus(); menus.openStage(); }
 function openInstructions() { closeAllMenus(); menus.openInstructions(); }
 function openBooking() { closeAllMenus(); menus.openBooking(); }
-function openSpendHub() { closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup() }); }
+function openSpendHub() { closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup(), mic: micState() }); }
 
 // Share the one-link URL to the clipboard. Primary path is the async Clipboard API
 // (works on a real gesture in a secure context); fall back to a hidden-textarea
@@ -450,6 +453,7 @@ const zapUI = createZapUI({
     zapAvatar(id.pubkey, id.name); // for now single-speaker → direct; "which speaker" picker is later
   },
   onZapComment: () => openCompose(),   // spend hub → post a comment (costs a zap)
+  onTakeMic: () => openMicForm(),      // spend hub → join / top up the paid mic queue
   onPickAmount: (pubkey, amountSats) => wallet.zap({ toPubkey: pubkey, amountSats, note: zapNote() }),
 });
 
@@ -537,6 +541,66 @@ async function boostComment(commentId) {
   const res = await wallet.zap({ toPubkey: c.pubkey, amountSats: BOOST_SATS, note: 'boost' });
   if (res.state === 'confirmed') board.boost(commentId, BOOST_SATS);
 }
+
+// ── Mic queue (Phase 3.4, mock) ──────────────────────────────────────────────────
+// The paid "take the mic" queue: pay a zap to line up at the pedestal/floor mic (the
+// questioner spot, NOT the main stage). The `queue` service is the single source of
+// queue state + ordering — Money is implemented; Activity/Manual are recognized
+// parameters for a later Speaker-hub toggle. Charging runs through the wallet
+// (charge-on-confirmed, no refunds). Granting speak rights at the mic is a later slice.
+const queuePanel = createQueuePanel(scene, { queue });
+const micUI = createMicUI({
+  toast: (m) => hud.toast(m),
+  onJoin: (amount, pitch) => joinQueue(amount, pitch),
+  onTopUp: (amount) => topUpQueue(amount),
+});
+
+// A snapshot of my queue standing, for the spend-hub button + the mic form.
+function micState() {
+  const me = identity.current();
+  const e = me ? queue.entry(me.pubkey) : null;
+  return {
+    inQueue: !!e, position: me ? queue.position(me.pubkey) : null,
+    count: queue.count(), total: e?.totalSats || 0, pitch: e?.pitch || '',
+  };
+}
+function openMicForm() {
+  const me = identity.current();
+  if (!me) { hud.toast('Sign in to take the mic'); openYou(); return; }
+  if (!wallet.isConnected()) { hud.toast('Connect a wallet to take the mic'); openYou(); return; }
+  closeAllMenus();
+  micUI.open(micState());
+}
+async function joinQueue(amountSats, pitch) {
+  const me = identity.current();
+  if (!me) { hud.toast('Sign in to take the mic'); openYou(); return; }
+  micUI.close();
+  const res = await queue.join({ pubkey: me.pubkey, amountSats, pitch });
+  if (res.state === 'confirmed') hud.toast(`In the mic queue — you're #${queue.position(me.pubkey)} of ${queue.count()}`);
+  // a 'failed' zap surfaces via the global wallet.onZap toast; nothing joins.
+}
+async function topUpQueue(amountSats) {
+  const me = identity.current();
+  if (!me) return;
+  micUI.close();
+  const res = await queue.topUp({ pubkey: me.pubkey, amountSats });
+  if (res.state === 'confirmed') hud.toast(`Topped up — you're #${queue.position(me.pubkey)} of ${queue.count()}`);
+}
+
+// Live queue updates: the spend-hub button label, the open mic form, and the "you're
+// up" cue (fires when queue.next() advances someone — the pedestal ring is driven by
+// queuePanel; here we add the toast, and a personal one if it's you).
+let _lastUp = null;
+queue.onChange(() => {
+  if (zapUI.isHubOpen()) zapUI.setMic(micState());
+  micUI.setState(micState());
+  const up = queue.current();
+  if (up && up !== _lastUp) {
+    _lastUp = up;
+    const me = identity.current();
+    hud.toast(me && up.pubkey === me.pubkey ? "You're up — head to the mic ⚡" : `@${up.pubkey.slice(0, 8)} is up at the mic`);
+  }
+});
 // Zap whoever is currently selected (ring/card target) — the Y binding + hub action.
 function zapSelected() {
   const g = selectedGroup;
@@ -662,6 +726,7 @@ renderer.setAnimationLoop(() => {
 
   zapFx.update(dt);           // in-world zap bursts (no-op when none are active)
   commentBoard.update(dt);    // live-feed scroll + sticky top-wall refresh
+  queuePanel.update(dt);      // pulse the pedestal "you're up" ring (only when set)
 
   renderer.render(scene, camera);
 });

@@ -134,6 +134,31 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**⚡ Take the mic — paid questioner queue** — flips the last dimmed spend-hub button live; mock `queue` service, no new deps:
+- **`queue` service (`src/queue/queue.js`)** — the single source of queue state + ordering,
+  same mock-first pattern as identity/wallet/board. `join`/`topUp` (charge via `wallet.zap`,
+  **charge-on-confirmed**, amounts **accumulate**), `list`/`position`/`count`/`entry`,
+  `criteria`/`setCriteria`, `remove`/`next`/`current`, `onChange`. Paying to enter is a zap
+  with **no refunds**. Ordering is a **service parameter**: **Money implemented** (highest
+  cumulative zap first, ties → earlier joiner); **Activity/Manual recognized but no-op** for a
+  later Speaker-hub toggle. All queue state lives here — nowhere else.
+- **Join flow** — spend hub → **⚡ Take the mic** (no longer dimmed) opens a form (amount
+  presets + custom, optional ~80-char pitch). Joining charges the zap and adds you on
+  `confirmed`; insufficient balance fails cleanly. Already in the queue → the button reads
+  **"⚡ Mic queue: #N/M"** and the form switches to **Top up** (zap more to climb the ranking),
+  with a live position line.
+- **In-world queue panel (`src/room/queuePanel.js`)** — a small canvas-card panel at the
+  pedestal/mic (VR-visible) showing the next few entrants (keyface + handle + ⚡total, pitch on
+  the top entry). Re-textured on change only (72fps-safe). A **pedestal ring pulses when
+  someone's "up"** (`queue.next()` → `current`), plus a toast (a personal one if it's you).
+  Granting actual speak rights at the mic ties into voice-roles + host controls — a later slice.
+- Guardrails: charging only through `wallet`; identities only through `identity`; no refunds
+  logic; no voice-role changes; no "coming soon" copy (the criteria toggle simply doesn't
+  exist yet). Verified flat in Chrome: join (balance drops on confirmed), position shows,
+  **top-up re-ranks past a lower payer**, insufficient fails, panel updates in-world,
+  `queue.next()` fires the you're-up cue, criteria parameterized. No console errors. Panel
+  legibility / ring pulse / 72fps are **on-device-only**.
+
 **Comment board v1** — two in-world 3D screens + post/boost, mock `board` service, no new deps:
 - **`board` service (`src/board/board.js`)** — the single source of comments, keyed by
   **sender pubkey**, same mock-first pattern as identity/wallet (real Nostr notes + zap

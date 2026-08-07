@@ -16,7 +16,7 @@
 const $ = (id) => document.getElementById(id);
 const NOT_YET = 'Not available yet';
 
-export function createZapUI({ toast, onZapSpeaker, onZapComment, onPickAmount } = {}) {
+export function createZapUI({ toast, onZapSpeaker, onZapComment, onTakeMic, onPickAmount } = {}) {
   const el = {
     hub: $('spend-menu'),
     spZapSpeaker: $('sp-zap-speaker'),
@@ -36,13 +36,18 @@ export function createZapUI({ toast, onZapSpeaker, onZapComment, onPickAmount } 
   const dim = (msg = NOT_YET) => toast && toast(msg);
 
   // ── Spend hub (room actions) ────────────────────────────────────────────────────
-  function openHub({ speakerAvailable: avail = false } = {}) {
+  function openHub({ speakerAvailable: avail = false, mic } = {}) {
     speakerAvailable = avail;
     el.spZapSpeaker.classList.toggle('soon', !avail);
     el.spZapSpeaker.setAttribute('aria-disabled', String(!avail));
+    if (mic) setMic(mic);
     el.hub.hidden = false;
   }
   function closeHub() { el.hub.hidden = true; }
+  // Reflect the mic-queue state on the button ("⚡ Mic queue: #4/23" when you're in it).
+  function setMic({ inQueue, position, count } = {}) {
+    el.spTakeMic.textContent = inQueue ? `⚡ Mic queue: #${position}/${count}` : '⚡ Take the mic';
+  }
 
   el.spClose.addEventListener('click', closeHub);
   el.hub.addEventListener('click', (e) => { if (e.target === el.hub) closeHub(); }); // backdrop
@@ -51,7 +56,7 @@ export function createZapUI({ toast, onZapSpeaker, onZapComment, onPickAmount } 
     onZapSpeaker && onZapSpeaker(); // hub stays open; the picker opens over it
   });
   el.spZapComment.addEventListener('click', () => onZapComment && onZapComment()); // live → compose
-  el.spTakeMic.addEventListener('click', () => dim());    // → future questioner queue
+  el.spTakeMic.addEventListener('click', () => onTakeMic && onTakeMic());           // live → mic form
 
   // ── Amount picker (flat/mobile only) ────────────────────────────────────────────
   function setAmount(v) {
@@ -86,7 +91,8 @@ export function createZapUI({ toast, onZapSpeaker, onZapComment, onPickAmount } 
   });
 
   return {
-    openHub, closeHub, openPicker, closePicker,
+    openHub, closeHub, openPicker, closePicker, setMic,
+    isHubOpen: () => !el.hub.hidden,
     closeAll() { closeHub(); closePicker(); },
     isOpen: () => !el.hub.hidden || !el.picker.hidden,
   };

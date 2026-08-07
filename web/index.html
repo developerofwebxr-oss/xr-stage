@@ -367,7 +367,7 @@
 
       /* ── Modal surfaces: spend hub · amount picker · You · Stage · panels ──────── */
       #spend-menu, #zap-picker, #you-menu, #stage-menu, #instructions, #booking,
-      #compose, #activity {
+      #compose, #activity, #micform {
         position: fixed; inset: 0; z-index: 20; pointer-events: auto;
         display: flex; align-items: center; justify-content: center;
         background: rgba(3, 4, 8, 0.55);
@@ -375,14 +375,19 @@
       }
       #spend-menu[hidden], #zap-picker[hidden], #you-menu[hidden],
       #stage-menu[hidden], #instructions[hidden], #booking[hidden],
-      #compose[hidden], #activity[hidden] { display: none; }
+      #compose[hidden], #activity[hidden], #micform[hidden] { display: none; }
       #spend-panel, #zap-picker-panel, #you-panel, #stage-panel, #instructions-panel,
-      #booking-panel, #compose-panel, #activity-panel {
+      #booking-panel, #compose-panel, #activity-panel, #micform-panel {
         position: relative; flex-direction: column; align-items: stretch; gap: 9px;
         width: min(340px, calc(100vw - 32px)); padding: 18px;
       }
       #spend-panel .ctl, #zap-picker-panel .ctl, #you-panel .ctl,
-      #stage-panel .ctl, #booking-panel .ctl, #compose-panel .ctl { text-align: center; }
+      #stage-panel .ctl, #booking-panel .ctl, #compose-panel .ctl, #micform-panel .ctl { text-align: center; }
+      /* Mic queue: live position line. */
+      #mic-position { font-family: var(--font-mono); font-size: 13px; color: var(--ink-dim); padding: 2px 0 2px; }
+      #mic-position b { color: var(--orange); font-variant-numeric: tabular-nums; }
+      #mic-presets { display: flex; gap: 8px; }
+      #mic-presets .ctl { flex: 1; }
 
       /* Compose form. */
       #compose-text {
@@ -534,7 +539,7 @@
           <div class="pm-section">Room</div>
           <button class="ctl" id="sp-zap-speaker">⚡ Zap the speaker</button>
           <button class="ctl" id="sp-zap-comment">Zap to comment</button>
-          <button class="ctl soon" id="sp-take-mic" aria-disabled="true">⚡ Take the mic</button>
+          <button class="ctl" id="sp-take-mic">⚡ Take the mic</button>
         </div>
       </div>
 
@@ -619,6 +624,26 @@
           <button class="pc-close" id="activity-close" aria-label="Close">✕</button>
           <div class="pm-title">Your comments</div>
           <div id="activity-list"></div>
+        </div>
+      </div>
+
+      <!-- Mic queue form (from the spend hub's "⚡ Take the mic"). Joining costs a zap. -->
+      <div id="micform" hidden>
+        <div id="micform-panel" class="bar" role="dialog" aria-modal="true" aria-label="Take the mic">
+          <button class="pc-close" id="mic-close" aria-label="Close">✕</button>
+          <div class="pm-title">Take the mic</div>
+          <div id="mic-position" hidden></div>
+          <div id="mic-presets">
+            <button class="ctl zp-preset" data-amt="21">21</button>
+            <button class="ctl zp-preset" data-amt="100">100</button>
+            <button class="ctl zp-preset" data-amt="1000">1000</button>
+          </div>
+          <label class="zp-custom">sats <input type="number" id="mic-amount" min="1" step="1" value="21" inputmode="numeric" /></label>
+          <label class="zp-custom">pitch <input type="text" id="mic-pitch" maxlength="80" placeholder="one line — why you (optional)" /></label>
+          <div class="zp-actions">
+            <button class="ctl" id="mic-cancel">Cancel</button>
+            <button class="ctl primary" id="mic-confirm">Join queue ⚡</button>
+          </div>
         </div>
       </div>
 
