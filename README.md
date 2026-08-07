@@ -134,6 +134,24 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Speaker hub v1 (3.6)** — the booked speaker's home fills in; no new deps:
+- **My slot** — your booked slot (time · title) + **Cancel booking** (frees the slot, **no
+  refund**, inline confirm). Cancelling re-dims (closes) the hub.
+- **Mic-queue control** — a **criteria toggle** (Money · Activity · Manual → `queue.setCriteria`),
+  all three now implemented in the `queue` service:
+  - **Money** (default) — highest cumulative zap first.
+  - **Activity** — most board comments first (`board.byPubkey(pubkey).length`, ties → sats → joinedAt).
+  - **Manual** — join order for display; each entry gets a **Pick** → `queue.next(pubkey)` (targeted).
+  Changing criteria re-ranks the in-world pedestal queue panel too (it listens to `queue.onChange`).
+- **Queue list** in the hub — ranked entrants (keyface · name · ⚡total · pitch). **Next questioner**
+  → `queue.next()` (advances by the current criteria) → fires the existing pedestal "you're up" cue.
+- Still **out of scope**: actual voice-role promotion at the pedestal — the cue only (as before).
+- Verified flat in Chrome: with a booking the hub opens; Money→Activity re-ranks (seeded board
+  comments differentiate); Manual shows Pick per entrant and picking fires the cue for that
+  entrant; Next questioner advances; cancel re-dims the hub. No console errors. On-device-only:
+  none new (flat DOM); the pedestal panel's live re-rank is best seen in VR. Rollback tag:
+  `pre-3.6-speakerhub`.
+
 **Book a slot — booking goes real-mock (3.5)** — the Stage home fills in; mock `booking` service, no new deps:
 - **`booking` service (`src/booking/booking.js`)** — the single source of slot state, same
   pattern as the others. `slots` (an upcoming 30-min grid, flat 1,000 sats), `book`

@@ -1,5 +1,6 @@
 import { wallet } from '../wallet/wallet.js';
 import { identity } from '../identity/identity.js';
+import { board } from '../board/board.js';
 
 // queue/queue.js — the ONE source of the paid "take the mic" queue: who's waiting to
 // speak at the pedestal/floor mic (the QUESTIONER spot, not the main stage). MOCK, same
@@ -11,16 +12,17 @@ import { identity } from '../identity/identity.js';
 //   list()                               → ordered entries [{ pubkey, totalSats, pitch, joinedAt }]
 //   position(pubkey)                     → 1-based position | null
 //   count()                              → number waiting
-//   criteria() / setCriteria(c)          → 'money' (implemented) | 'activity' | 'manual'
-//                                          (recognized but not implemented yet)
-//   remove(pubkey) / next()              → host/speaker actions (leave-queue / advance)
+//   criteria() / setCriteria(c)          → 'money' | 'activity' | 'manual' (all implemented)
+//   remove(pubkey) / next(pubkey?)       → host/speaker actions (leave-queue / advance/pick)
 //   current()                            → the entrant most recently advanced ("up")
 //   onChange(cb)                         → fires on any change; returns unsub
 //
 // Locked model: paying to enter is a zap (NO REFUNDS — un-picked entrants keep no mic,
-// their sats stay). Ordering is a SERVICE PARAMETER (the Speaker hub will expose the
-// toggle later); default + only implemented mode is Money = highest cumulative zap first,
-// ties broken by earlier joinedAt. All queue state lives HERE — nowhere else.
+// their sats stay). Ordering is a SERVICE PARAMETER, toggled from the Speaker hub:
+//   money   — highest cumulative zap first (default), ties → earlier joinedAt
+//   activity— most board comments first, ties → sats → joinedAt
+//   manual  — join order for display; the speaker Picks who's next
+// All queue state lives HERE — nowhere else.
 
 const PITCH_MAX = 80;
 const SINK = identity.pubkeyFromSeed('mic-house'); // where queue-entry zaps go (mock house)
@@ -35,10 +37,19 @@ const emit = () => { for (const cb of _subs) cb(); };
 
 function ordered() {
   const arr = [..._entries.values()];
-  // Money: highest cumulative zap first, ties → earlier joiner first. Activity/Manual
-  // are recognized but unimplemented — fall back to arrival order so list() is stable.
-  if (_criteria === 'money') arr.sort((a, b) => b.totalSats - a.totalSats || a.joinedAt - b.joinedAt);
-  else arr.sort((a, b) => a.joinedAt - b.joinedAt);
+  if (_criteria === 'money') {
+    // Highest cumulative zap first; ties → earlier joiner.
+    arr.sort((a, b) => b.totalSats - a.totalSats || a.joinedAt - b.joinedAt);
+  } else if (_criteria === 'activity') {
+    // Most board comments first; ties → sats, then earlier joiner.
+    const acts = new Map(arr.map((e) => [e.pubkey, board.byPubkey(e.pubkey).length]));
+    arr.sort((a, b) => (acts.get(b.pubkey) - acts.get(a.pubkey))
+      || (b.totalSats - a.totalSats)
+      || (a.joinedAt - b.joinedAt));
+  } else {
+    // Manual: keep join order for display — the speaker picks who's next.
+    arr.sort((a, b) => a.joinedAt - b.joinedAt);
+  }
   return arr;
 }
 
@@ -84,11 +95,13 @@ export const queue = {
   criteria() { return _criteria; },
   setCriteria(c) { if (CRITERIA.has(c)) { _criteria = c; emit(); } return _criteria; },
 
-  // Host/speaker actions — wired to a debug path now; the Speaker hub adds the UI later.
+  // Host/speaker actions — driven from the Speaker hub (Manual pick / Next questioner).
   remove(pubkey) { if (_entries.delete(pubkey)) emit(); },
-  next() {
-    const up = ordered()[0] || null;
-    if (up) { _entries.delete(up.pubkey); _current = up; emit(); } // front entrant is now "up"
+  // Advance the queue: no arg → the front entrant by the current criteria; a pubkey →
+  // that specific entrant (Manual "Pick"). The advanced entrant becomes `current` ("up").
+  next(pubkey) {
+    const up = pubkey ? (_entries.get(pubkey) || null) : (ordered()[0] || null);
+    if (up) { _entries.delete(up.pubkey); _current = up; emit(); }
     return up;
   },
   current() { return _current; },

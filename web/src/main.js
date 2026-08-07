@@ -255,10 +255,10 @@ function openBooking() {
   closeAllMenus();
   bookingUI.open({ slots: booking.slots(), myPubkey: me.pubkey });
 }
-function openSpeakerHub() {
+async function openSpeakerHub() {
   if (!booking.mine().length) return; // gated in the Stage menu, but guard anyway
   closeAllMenus();
-  speakerHub.open({ mySlot: booking.mine()[0] });
+  speakerHub.open({ mySlot: booking.mine()[0], entries: await hubEntries(), criteria: queue.criteria() });
 }
 function openSpendHub() { closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup(), mic: micState() }); }
 
@@ -612,6 +612,7 @@ let _lastUp = null;
 queue.onChange(() => {
   if (zapUI.isHubOpen()) zapUI.setMic(micState());
   micUI.setState(micState());
+  refreshHub();                        // keep the Speaker-hub queue list + toggle live
   const up = queue.current();
   if (up && up !== _lastUp) {
     _lastUp = up;
@@ -628,7 +629,30 @@ const bookingUI = createBookingUI({
   toast: (m) => hud.toast(m),
   onBook: (slotId, title) => bookSlot(slotId, title),
 });
-const speakerHub = createSpeakerHub({ toast: (m) => hud.toast(m) });
+const speakerHub = createSpeakerHub({
+  toast: (m) => hud.toast(m),
+  onCancelBooking: (slotId) => cancelBooking(slotId),
+  onSetCriteria: (c) => { queue.setCriteria(c); refreshHub(); }, // re-ranks the pedestal panel too (queue.onChange)
+  onPick: (pubkey) => queue.next(pubkey),                        // Manual: advance THIS entrant → you're-up cue
+  onNext: () => queue.next(),                                    // advance by current criteria → you're-up cue
+});
+
+// Entrant rows for the hub queue list, with names resolved via identity (async).
+async function hubEntries() {
+  return Promise.all(queue.list().map(async (e) => ({
+    pubkey: e.pubkey, totalSats: e.totalSats, pitch: e.pitch,
+    name: (await identity.getProfile(e.pubkey)).name,
+  })));
+}
+async function refreshHub() {
+  if (speakerHub.isOpen()) speakerHub.setQueue({ entries: await hubEntries(), criteria: queue.criteria() });
+}
+function cancelBooking(slotId) {
+  booking.cancel(slotId);                 // frees the slot, NO refund
+  speakerHub.close();                     // the hub re-dims (no booking)
+  hud.toast('Booking cancelled — slot freed (no refund)');
+  if (!document.getElementById('stage-menu').hidden) openStage(); // refresh the Stage menu if open
+}
 
 async function bookSlot(slotId, title) {
   const me = identity.current();
@@ -657,8 +681,12 @@ async function stageData() {
   return { nowNext: { now: await label(now), next: await label(next) }, hasBooking: booking.mine().length > 0 };
 }
 
-// Keep the Stage menu live (schedule + hub gate) when a booking changes while it's open.
-booking.onChange(() => { if (!document.getElementById('stage-menu').hidden) openStage(); });
+// Keep the Stage menu live (schedule + hub gate) when a booking changes while it's open;
+// and if my booking disappears while the Speaker hub is open, re-dim (close) it.
+booking.onChange(() => {
+  if (!document.getElementById('stage-menu').hidden) openStage();
+  if (speakerHub.isOpen() && !booking.mine().length) speakerHub.close();
+});
 // Zap whoever is currently selected (ring/card target) — the Y binding + hub action.
 function zapSelected() {
   const g = selectedGroup;
