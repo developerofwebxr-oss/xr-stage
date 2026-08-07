@@ -1,39 +1,39 @@
-// ui/menus.js — the "home" surfaces added by the menu-shell slice: the YOU menu
-// (identity + wallet), the STAGE menu (schedule + booking seam), plus the shared
-// INSTRUCTIONS and BOOKING panels. Containers only — identity/wallet DATA and the live
-// actions are passed in; a not-yet-live button is simply DIMMED and toasts on tap (no
-// "coming soon" copy, no fake behaviour).
+// ui/menus.js — the "home" surfaces: the YOU menu (identity + wallet), the STAGE menu
+// (live schedule + Book / Speaker-hub buttons), and the shared INSTRUCTIONS panel.
+// Containers only — data + live actions are passed in; a not-yet-live button is DIMMED
+// and toasts on tap (no "coming soon" copy). The Booking surface and Speaker hub are
+// their own modules (bookingUI / speakerHub); the Stage menu just opens them.
 //
-// Each surface is a full-screen modal (invisible in immersive VR — the in-world VR
-// versions are the deferred VR-UI slice). main.js coordinates one-at-a-time behaviour.
-//
-//   createMenus({ toast, onSignIn, onSwitch, onLogout, onConnectWallet, onBookOpen })
+//   createMenus({ toast, onSignIn, onSwitch, onLogout, onConnectWallet, onActivity,
+//                 onBookOpen, onSpeakerHubOpen })
 //     openYou({ signedIn, name, faceUrl, walletConnected, balance }) · closeYou()
-//     openStage() · closeStage()
+//     openStage({ nowNext, hasBooking }) · closeStage()
 //     openInstructions() · closeInstructions()
-//     openBooking() · closeBooking()
 //     closeAll() · isOpen()
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Number(n).toLocaleString('en-US');
 const NOT_YET = 'Not available yet';
 
-export function createMenus({ toast, onSignIn, onSwitch, onLogout, onConnectWallet, onBookOpen, onActivity } = {}) {
+export function createMenus({
+  toast, onSignIn, onSwitch, onLogout, onConnectWallet, onActivity, onBookOpen, onSpeakerHubOpen,
+} = {}) {
   const el = {
     you: $('you-menu'), youIdentity: $('you-identity'), youWallet: $('you-wallet'), youAccount: $('you-account'),
-    stage: $('stage-menu'),
+    stage: $('stage-menu'), stageSched: $('stage-sched'), stageHub: $('stage-speaker-hub'),
     instructions: $('instructions'),
-    booking: $('booking'),
   };
   const dim = (msg = NOT_YET) => toast && toast(msg);
+  let hasBooking = false; // gates the Speaker-hub button
 
   // ── You menu (identity + wallet home) ───────────────────────────────────────────
   function openYou(info = {}) { renderYou(info); el.you.hidden = false; }
   function closeYou() { el.you.hidden = true; }
   function renderYou({ signedIn, name, faceUrl, walletConnected, balance } = {}) {
     el.youIdentity.innerHTML = signedIn
-      ? `<img class="you-face" src="${faceUrl}" alt=""><div class="you-name">${name}</div>`
+      ? `<img class="you-face" src="${faceUrl}" alt=""><div class="you-name"></div>`
       : `<div class="you-name muted">Not signed in</div>`;
+    if (signedIn) el.youIdentity.querySelector('.you-name').textContent = name;
 
     el.youWallet.innerHTML = '';
     if (walletConnected) {
@@ -46,7 +46,7 @@ export function createMenus({ toast, onSignIn, onSwitch, onLogout, onConnectWall
     }
 
     el.youAccount.innerHTML = '';
-    el.youAccount.appendChild(btn('Activity', 'ctl', () => onActivity && onActivity())); // live → my comments
+    el.youAccount.appendChild(btn('Activity', 'ctl', () => onActivity && onActivity()));
     if (signedIn) {
       el.youAccount.appendChild(btn('Switch account', 'ctl', () => onSwitch && onSwitch()));
       el.youAccount.appendChild(btn('Log out', 'ctl', () => onLogout && onLogout()));
@@ -55,24 +55,40 @@ export function createMenus({ toast, onSignIn, onSwitch, onLogout, onConnectWall
     }
   }
 
-  // ── Stage menu (schedule + booking seam) ────────────────────────────────────────
-  function openStage() { el.stage.hidden = false; }
+  // ── Stage menu (live schedule + Book / Speaker-hub) ─────────────────────────────
+  function openStage({ nowNext = { now: null, next: null }, hasBooking: booked = false } = {}) {
+    hasBooking = booked;
+    renderSchedule(nowNext);
+    el.stageHub.classList.toggle('soon', !booked);
+    el.stageHub.setAttribute('aria-disabled', String(!booked));
+    el.stage.hidden = false;
+  }
   function closeStage() { el.stage.hidden = true; }
+  function renderSchedule(nowNext) {
+    if (!nowNext.now && !nowNext.next) {
+      el.stageSched.innerHTML = '<div class="muted">No one booked yet.</div>';
+      return;
+    }
+    el.stageSched.innerHTML = schedLine('Now', nowNext.now) + schedLine('Up next', nowNext.next);
+  }
+  function schedLine(label, s) {
+    if (!s) return `<div>${label}: <b>—</b></div>`;
+    return `<div>${label}: <b>${esc(s.time)}</b> · ${esc(s.name)} — ${esc(s.title)}</div>`;
+  }
 
-  // ── Instructions / Booking panels ───────────────────────────────────────────────
+  // ── Instructions ────────────────────────────────────────────────────────────────
   function openInstructions() { el.instructions.hidden = false; }
   function closeInstructions() { el.instructions.hidden = true; }
-  function openBooking() { el.booking.hidden = false; }
-  function closeBooking() { el.booking.hidden = true; }
 
   // Static buttons declared in index.html.
   wireClose(el.you, 'you-close', closeYou);
   wireClose(el.stage, 'stage-close', closeStage);
   wireClose(el.instructions, 'instructions-close', closeInstructions);
-  wireClose(el.booking, 'booking-close', closeBooking);
-  $('stage-book')?.addEventListener('click', () => onBookOpen && onBookOpen());        // live → booking surface
-  $('stage-speaker-hub')?.addEventListener('click', () => dim());                       // dim → toast (needs a booked slot)
-  $('booking-request')?.addEventListener('click', () => dim());                         // dim → toast (booking not live)
+  $('stage-book')?.addEventListener('click', () => onBookOpen && onBookOpen());          // → booking surface
+  el.stageHub.addEventListener('click', () => {
+    if (hasBooking) onSpeakerHubOpen && onSpeakerHubOpen();
+    else dim('Book a slot to unlock the Speaker hub');
+  });
 
   function wireClose(overlay, closeId, fn) {
     document.getElementById(closeId)?.addEventListener('click', fn);
@@ -80,17 +96,17 @@ export function createMenus({ toast, onSignIn, onSwitch, onLogout, onConnectWall
   }
 
   return {
-    openYou, closeYou, openStage, closeStage,
-    openInstructions, closeInstructions, openBooking, closeBooking,
-    closeAll() { closeYou(); closeStage(); closeInstructions(); closeBooking(); },
-    isOpen: () => [el.you, el.stage, el.instructions, el.booking].some((n) => !n.hidden),
+    openYou, closeYou, openStage, closeStage, openInstructions, closeInstructions,
+    closeAll() { closeYou(); closeStage(); closeInstructions(); },
+    isOpen: () => [el.you, el.stage, el.instructions].some((n) => !n.hidden),
   };
 }
 
-function btn(label, cls, onClick, dimmed = false) {
+function btn(label, cls, onClick) {
   const b = document.createElement('button');
   b.className = cls; b.textContent = label;
-  if (dimmed) b.setAttribute('aria-disabled', 'true');
+  if (cls.includes('soon')) b.setAttribute('aria-disabled', 'true');
   b.addEventListener('click', onClick);
   return b;
 }
+function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }

@@ -19,6 +19,9 @@ import { createCommentBoard } from './room/commentBoard.js';
 import { createMicUI } from './ui/micUI.js';
 import { queue } from './queue/queue.js';
 import { createQueuePanel } from './room/queuePanel.js';
+import { createBookingUI } from './ui/bookingUI.js';
+import { createSpeakerHub } from './ui/speakerHub.js';
+import { booking } from './booking/booking.js';
 import { wallet } from './wallet/wallet.js';
 import { createZapEffects } from './room/zapEffect.js';
 import { Voice } from './voice/livekit.js';
@@ -228,7 +231,10 @@ hud.onComfortToggle((key, on) => comfort.set(key, on));
 // Every full-screen surface routes through here so opening one closes the others
 // (the profile card is a corner panel and coexists). menus/zapUI are created in the
 // wallet section below; these coordinators only run on user interaction.
-function closeAllMenus() { hud.showMenu(false); zapUI.closeAll(); menus.closeAll(); boardUI.closeAll(); micUI.close(); }
+function closeAllMenus() {
+  hud.showMenu(false); zapUI.closeAll(); menus.closeAll();
+  boardUI.closeAll(); micUI.close(); bookingUI.close(); speakerHub.close();
+}
 function openYou() {
   closeAllMenus();
   const me = identity.current();
@@ -240,9 +246,20 @@ function openYou() {
     balance: wallet.getBalance(),
   });
 }
-function openStage() { closeAllMenus(); menus.openStage(); }
+async function openStage() { closeAllMenus(); menus.openStage(await stageData()); }
 function openInstructions() { closeAllMenus(); menus.openInstructions(); }
-function openBooking() { closeAllMenus(); menus.openBooking(); }
+function openBooking() {
+  const me = identity.current();
+  if (!me) { hud.toast('Sign in to book a slot'); openYou(); return; }
+  if (!wallet.isConnected()) { hud.toast('Connect a wallet to book a slot'); openYou(); return; }
+  closeAllMenus();
+  bookingUI.open({ slots: booking.slots(), myPubkey: me.pubkey });
+}
+function openSpeakerHub() {
+  if (!booking.mine().length) return; // gated in the Stage menu, but guard anyway
+  closeAllMenus();
+  speakerHub.open({ mySlot: booking.mine()[0] });
+}
 function openSpendHub() { closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup(), mic: micState() }); }
 
 // Share the one-link URL to the clipboard. Primary path is the async Clipboard API
@@ -495,6 +512,7 @@ const menus = createMenus({
   onLogout: () => { identity.logout(); hud.setSignedIn(null); openYou(); },
   onConnectWallet: () => connectWallet(),
   onBookOpen: () => openBooking(),
+  onSpeakerHubOpen: () => openSpeakerHub(),
   onActivity: () => openActivity(),
 });
 
@@ -601,6 +619,46 @@ queue.onChange(() => {
     hud.toast(me && up.pubkey === me.pubkey ? "You're up — head to the mic ⚡" : `@${up.pubkey.slice(0, 8)} is up at the mic`);
   }
 });
+
+// ── Booking (Phase 3.5, mock) ────────────────────────────────────────────────────
+// Book a stage slot: pay a zap to hold a time to speak. The `booking` service is the
+// single source of slot state; charging runs through the wallet (charge-on-confirmed,
+// NO refunds). A booking unlocks the Speaker hub.
+const bookingUI = createBookingUI({
+  toast: (m) => hud.toast(m),
+  onBook: (slotId, title) => bookSlot(slotId, title),
+});
+const speakerHub = createSpeakerHub({ toast: (m) => hud.toast(m) });
+
+async function bookSlot(slotId, title) {
+  const me = identity.current();
+  if (!me) { hud.toast('Sign in to book a slot'); openYou(); return; }
+  const res = await booking.book({ slotId, title });
+  if (res.state === 'confirmed') {
+    hud.toast('Slot booked ⚡ — Speaker hub unlocked');
+    bookingUI.render({ slots: booking.slots(), myPubkey: me.pubkey }); // reflect "Yours"
+  } else if (res.reason === 'slot taken') {
+    hud.toast('That slot was just taken');
+    bookingUI.render({ slots: booking.slots(), myPubkey: me.pubkey });
+  }
+  // insufficient / other failures surface via the global wallet.onZap toast; nothing books.
+}
+
+// Schedule data for the Stage menu — resolve booker names via identity (async, on demand).
+const fmtClock = (ms) => {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+async function stageData() {
+  const { now, next } = booking.nowAndNext();
+  const label = async (s) => (s
+    ? { time: fmtClock(s.startsAt), title: s.title || 'Untitled talk', name: (await identity.getProfile(s.bookedBy)).name }
+    : null);
+  return { nowNext: { now: await label(now), next: await label(next) }, hasBooking: booking.mine().length > 0 };
+}
+
+// Keep the Stage menu live (schedule + hub gate) when a booking changes while it's open.
+booking.onChange(() => { if (!document.getElementById('stage-menu').hidden) openStage(); });
 // Zap whoever is currently selected (ring/card target) — the Y binding + hub action.
 function zapSelected() {
   const g = selectedGroup;

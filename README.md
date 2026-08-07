@@ -134,6 +134,26 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Book a slot — booking goes real-mock (3.5)** — the Stage home fills in; mock `booking` service, no new deps:
+- **`booking` service (`src/booking/booking.js`)** — the single source of slot state, same
+  pattern as the others. `slots` (an upcoming 30-min grid, flat 1,000 sats), `book`
+  (charge via `wallet.zap`, **charge-on-confirmed**, sets `bookedBy`), `mine`, `cancel`
+  (**no refund**), `nowAndNext`, `onChange`. Requires signed-in identity + connected
+  wallet; a taken slot can't be double-booked; insufficient fails cleanly.
+- **Booking surface (`src/ui/bookingUI.js`)** — replaces the stub with a real slot list
+  (time · price · Free/Taken/Yours); pick a free slot → talk title → **Book & pay**; your
+  slot shows distinctly.
+- **Live Schedule** — the Stage menu's Now / Up next comes from `booking.nowAndNext()`
+  (speaker name via identity + talk title); empty state stays graceful. Re-renders live
+  while open.
+- **Speaker hub gate** — the button **unlocks when you hold a booking** (opens a shell
+  showing your slot, `src/ui/speakerHub.js`); dimmed + toast otherwise. Booking/Speaker-hub
+  moved out of `menus.js` into their own modules.
+- Verified flat in Chrome: book end-to-end (balance drops on confirmed), schedule shows it,
+  **double-book blocked**, insufficient fails cleanly, **cancel frees the slot with no
+  refund**, Speaker-hub button flips enabled. No console errors. On-device-only: none new
+  (all flat DOM). Rollback tag: `pre-3.5-booking`.
+
 **⚡ Take the mic — paid questioner queue** — flips the last dimmed spend-hub button live; mock `queue` service, no new deps:
 - **`queue` service (`src/queue/queue.js`)** — the single source of queue state + ordering,
   same mock-first pattern as identity/wallet/board. `join`/`topUp` (charge via `wallet.zap`,
