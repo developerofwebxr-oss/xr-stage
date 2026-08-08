@@ -1,64 +1,79 @@
 import { identity } from '../identity/identity.js';
 
-// wallet/wallet.js — the ONE source of balance + zaps. It is a MOCK now (no real
-// Lightning), but its surface matches the real shapes (NWC / WebLN + NIP-57 zaps) so
-// the real implementation swaps in behind it without touching a single caller:
+// wallet/wallet.js — the ONE source of balance + zaps. The wallet is a LOCAL VENUE
+// BALANCE tied to your identity (NOT an external wallet connection): you top it up here,
+// spend it here, and it's persisted PER PUBKEY. It stays a MOCK, but the seam matches the
+// real thing — real top-up later = pay a Lightning invoice that credits this balance;
+// the interface below doesn't change.
 //
-//   connect()      async → { balance }   (real: NWC connection string / WebLN enable)
-//   getBalance()   → sats (number)
-//   zap({ toPubkey, amountSats, note }) async → resolves through pending→confirmed|failed
-//   onZap(cb)      → subscribe to zap events (real: kind:9735 zap receipts); returns unsub
-//   disconnect() · isConnected()
+//   activate(pubkey)  → load that identity's persisted balance and make the wallet live
+//   deactivate()      → clear in-memory state (on logout; the persisted balance stays)
+//   isConnected()     → is a wallet active for the signed-in identity?
+//   getBalance()      → sats (number; 0 when inactive)
+//   topUp(amountSats) → credit the local balance (real: pay an invoice to top up), persists
+//   zap({ toPubkey, amountSats, note }) async → pending → confirmed | failed; persists
+//   onZap(cb)         → subscribe to zap events (real: kind:9735 receipts); returns unsub
 //
-// Swap rules baked in (followed exactly):
-//  • zap is ASYNC and moves through pending → confirmed | failed (real invoices have
-//    latency and can fail — the UI must handle the wait AND the failure).
-//  • zap is keyed by recipient pubkey + amountSats + optional note (NIP-57 shape).
-//  • zap reads the recipient's lud16 via identity.getProfile(toPubkey) BEFORE paying —
-//    the mock ignores the value, but real zaps fetch a bolt11 invoice from that
-//    Lightning address, so the plumbing must already be here.
-//  • balance decrements ONLY on `confirmed`; insufficient balance → `failed`.
-//  • the wallet is SEPARATE from identity (signing ≠ paying); it only READS recipient
-//    data through the identity service — it never signs or holds keys.
+// Swap rules baked in: zap is ASYNC (pending→confirmed|failed); keyed by recipient pubkey
+// + amount + optional note (NIP-57); reads the recipient's lud16 via identity BEFORE
+// paying (real: LNURL-pay → bolt11); balance decrements ONLY on confirmed; insufficient →
+// failed. The wallet is SEPARATE from identity (signing ≠ paying) — it only reads
+// recipient data and keys its balance by pubkey; it never signs or holds keys.
 
-const MOCK_BALANCE = 21000;   // sats granted on connect (real: fetched from the wallet)
-const PENDING_MS = 1000;      // simulated invoice latency (deterministic, no randomness)
+export const DEFAULT_TOPUP = 21000; // sats added per mock top-up (real: invoice amount)
+const PENDING_MS = 1000;            // simulated settle latency (deterministic)
 
-let connected = false;
+let activePubkey = null; // the signed-in identity this wallet belongs to
 let balance = 0;
 let seq = 0;
 const subs = new Set();
 const emit = (evt) => { for (const cb of subs) cb(evt); };
 
+const storeKey = (pk) => `xrstage:wallet:${pk}`;
+function loadBalance(pk) {
+  try { return Number(localStorage.getItem(storeKey(pk))) || 0; } catch { return 0; }
+}
+function persist() {
+  if (!activePubkey) return;
+  try { localStorage.setItem(storeKey(activePubkey), String(balance)); } catch { /* private mode */ }
+}
+
 export const wallet = {
-  // REAL: open the NWC connection / WebLN.enable() and read the live balance.
-  async connect() {
-    connected = true;
-    balance = MOCK_BALANCE;
+  DEFAULT_TOPUP,
+
+  // Make the wallet live for a signed-in identity, restoring its persisted balance.
+  activate(pubkey) {
+    activePubkey = pubkey;
+    balance = loadBalance(pubkey);
     return { balance };
   },
-  disconnect() { connected = false; balance = 0; },
-  isConnected() { return connected; },
+  // On logout: drop in-memory state. The persisted per-pubkey balance is untouched.
+  deactivate() { activePubkey = null; balance = 0; },
+  isConnected() { return activePubkey !== null; },
   getBalance() { return balance; },
 
-  // Any zap event (pending/confirmed/failed) for feedback + tallies. REAL: this is fed
-  // by kind:9735 zap receipts observed on relays.
+  // Credit the local balance. MOCK: add a fixed amount. REAL: pay a Lightning invoice to
+  // this venue and credit the settled amount — same call site.
+  topUp(amountSats = DEFAULT_TOPUP) {
+    if (!activePubkey) return { ok: false, reason: 'not signed in' };
+    balance += amountSats;
+    persist();
+    return { ok: true, balance };
+  },
+
   onZap(cb) { subs.add(cb); return () => subs.delete(cb); },
 
-  // Pay a person. Resolves to the FINAL event ({ state:'confirmed'|'failed', … });
-  // intermediate `pending` is delivered via onZap so the UI can show the wait.
   async zap({ toPubkey, amountSats, note } = {}) {
-    if (!connected) throw new Error('wallet not connected');
+    if (!activePubkey) throw new Error('wallet not active');
     const id = `zap-${++seq}`;
     const base = { id, toPubkey, amountSats, note: note || null };
 
-    // Real zaps need the recipient's Lightning address to fetch an invoice; read it
-    // through the identity service now so the shape matches (mock ignores lud16).
+    // Real zaps fetch the recipient's invoice from their Lightning address; read it now.
     const profile = await identity.getProfile(toPubkey);
-    const lud16 = profile?.lud16 || null;           // REAL: LNURL-pay(lud16) → bolt11 → pay
+    const lud16 = profile?.lud16 || null;
 
     emit({ ...base, lud16, state: 'pending' });
-    await delay(PENDING_MS);                         // REAL: awaiting the payment to settle
+    await delay(PENDING_MS);
 
     if (!Number.isFinite(amountSats) || amountSats <= 0) {
       const evt = { ...base, state: 'failed', reason: 'invalid amount' };
@@ -68,7 +83,8 @@ export const wallet = {
       const evt = { ...base, state: 'failed', reason: 'insufficient balance' };
       emit(evt); return evt;
     }
-    balance -= amountSats;                           // decrement ONLY on success
+    balance -= amountSats;   // decrement ONLY on success
+    persist();               // spend persists as it happens
     const evt = { ...base, state: 'confirmed', balance };
     emit(evt); return evt;
   },

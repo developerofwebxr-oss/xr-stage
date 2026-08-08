@@ -124,6 +124,12 @@ export function createLocomotion(camera, domElement, {
   // in `keys`; the verb keys map to the SAME callbacks/actions as the VR buttons so a
   // verb is never improvised per-platform.
   addEventListener('keydown', (e) => {
+    // Never hijack typing: while an editable element has focus (input / textarea /
+    // contenteditable), suppress ALL game/locomotion keys — Space, WASD, E, F, M, Esc-menu
+    // — so a space types a space, not a jump. Guarded centrally here (the one game key
+    // handler) rather than per-field. keyup is NOT guarded, so any key pressed before the
+    // field took focus still clears. (Skill: webxr-threejs input.)
+    if (isEditable(e.target) || isEditable(document.activeElement)) return;
     if (e.code === 'Space') {                      // Jump (parity: A / Space / jump btn)
       e.preventDefault();                          // don't scroll the page
       if (!spaceHeld) { spaceHeld = true; jumpQueued = true; } // edge: one jump per press
@@ -402,6 +408,12 @@ function isARSession(renderer) {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+// True when a text-entry element has focus — game keys must stand down so typing works.
+function isEditable(el) {
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true;
+}
 const clampPitch = (p) => Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, p));
 const shortAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a)); // wrap to [-π, π]
 

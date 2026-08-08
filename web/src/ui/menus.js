@@ -4,9 +4,9 @@
 // and toasts on tap (no "coming soon" copy). The Booking surface and Speaker hub are
 // their own modules (bookingUI / speakerHub); the Stage menu just opens them.
 //
-//   createMenus({ toast, onSignIn, onSwitch, onLogout, onConnectWallet, onActivity,
+//   createMenus({ toast, onSignIn, onSwitch, onLogout, onTopUp, onActivity,
 //                 onBookOpen, onSpeakerHubOpen })
-//     openYou({ signedIn, name, faceUrl, walletConnected, balance }) · closeYou()
+//     openYou({ signedIn, name, faceUrl, balance }) · closeYou()  (balance shown only signed-in)
 //     openStage({ nowNext, hasBooking }) · closeStage()
 //     openInstructions() · closeInstructions()
 //     closeAll() · isOpen()
@@ -16,7 +16,7 @@ const fmt = (n) => Number(n).toLocaleString('en-US');
 const NOT_YET = 'Not available yet';
 
 export function createMenus({
-  toast, onSignIn, onSwitch, onLogout, onConnectWallet, onActivity, onBookOpen, onSpeakerHubOpen,
+  toast, onSignIn, onSwitch, onLogout, onTopUp, onActivity, onBookOpen, onSpeakerHubOpen,
 } = {}) {
   const el = {
     you: $('you-menu'), youIdentity: $('you-identity'), youWallet: $('you-wallet'), youAccount: $('you-account'),
@@ -29,29 +29,36 @@ export function createMenus({
   // ── You menu (identity + wallet home) ───────────────────────────────────────────
   function openYou(info = {}) { renderYou(info); el.you.hidden = false; }
   function closeYou() { el.you.hidden = true; }
-  function renderYou({ signedIn, name, faceUrl, walletConnected, balance } = {}) {
+  function renderYou({ signedIn, name, faceUrl, balance } = {}) {
     el.youIdentity.innerHTML = signedIn
       ? `<img class="you-face" src="${faceUrl}" alt=""><div class="you-name"></div>`
       : `<div class="you-name muted">Not signed in</div>`;
     if (signedIn) el.youIdentity.querySelector('.you-name').textContent = name;
 
+    // Wallet — a LOCAL venue balance tied to your identity. Signed out shows NO balance and
+    // a dimmed "Top up wallet" (toast "Sign in first"); signed in shows the balance + an
+    // active Top up.
     el.youWallet.innerHTML = '';
-    if (walletConnected) {
+    if (signedIn) {
       const b = document.createElement('div');
       b.className = 'you-balance';
       b.innerHTML = `⚡ Balance: <b>${fmt(balance)}</b> sats`;
       el.youWallet.appendChild(b);
+      el.youWallet.appendChild(btn('⚡ Top up wallet', 'ctl primary', () => onTopUp && onTopUp()));
     } else {
-      el.youWallet.appendChild(btn('Connect wallet', 'ctl primary', () => onConnectWallet && onConnectWallet()));
+      el.youWallet.appendChild(btn('⚡ Top up wallet', 'ctl soon', () => toast && toast('Sign in first')));
     }
 
+    // Account. Signed out: Sign in is the highlighted primary; Activity dimmed. Signed in:
+    // Activity live + Switch / Log out.
     el.youAccount.innerHTML = '';
-    el.youAccount.appendChild(btn('Activity', 'ctl', () => onActivity && onActivity()));
     if (signedIn) {
+      el.youAccount.appendChild(btn('Activity', 'ctl', () => onActivity && onActivity()));
       el.youAccount.appendChild(btn('Switch account', 'ctl', () => onSwitch && onSwitch()));
       el.youAccount.appendChild(btn('Log out', 'ctl', () => onLogout && onLogout()));
     } else {
-      el.youAccount.appendChild(btn('Sign in', 'ctl', () => onSignIn && onSignIn()));
+      el.youAccount.appendChild(btn('Sign in', 'ctl primary', () => onSignIn && onSignIn()));
+      el.youAccount.appendChild(btn('Activity', 'ctl soon', () => toast && toast('Sign in first')));
     }
   }
 

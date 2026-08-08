@@ -186,8 +186,19 @@ hud.onFreeLook(async () => {
 const signInMethod = isMobile ? 'generate' : 'nip07';
 async function signInFlow() {
   const me = await identity.signIn(signInMethod);
+  wallet.activate(me.pubkey);     // load THIS identity's persisted local balance
   hud.setSignedIn({ name: me.name, faceUrl: drawKeyface(me.pubkey, 64).toDataURL() });
+  hud.showBalance(true);
+  hud.setBalance(wallet.getBalance());
   return me;
+}
+// Sign-in gate for anything that spends sats or posts content. Signed out → prompt sign
+// in (the You menu, where Sign in is the primary button) and stop.
+function requireSignedIn(what = 'do that') {
+  if (identity.current()) return true;
+  hud.toast(`Sign in first to ${what}`);
+  openYou();
+  return false;
 }
 hud.onSignIn(() => openYou());   // "You" control-bar chip → You menu
 hud.onStage(() => openStage());  // "Stage" control-bar button → Stage menu
@@ -242,18 +253,15 @@ function openYou() {
     signedIn: !!me,
     name: me?.name || null,
     faceUrl: me ? drawKeyface(me.pubkey, 64).toDataURL() : null,
-    walletConnected: wallet.isConnected(),
     balance: wallet.getBalance(),
   });
 }
 async function openStage() { closeAllMenus(); menus.openStage(await stageData()); }
 function openInstructions() { closeAllMenus(); menus.openInstructions(); }
 function openBooking() {
-  const me = identity.current();
-  if (!me) { hud.toast('Sign in to book a slot'); openYou(); return; }
-  if (!wallet.isConnected()) { hud.toast('Connect a wallet to book a slot'); openYou(); return; }
+  if (!requireSignedIn('book a slot')) return;
   closeAllMenus();
-  bookingUI.open({ slots: booking.slots(), myPubkey: me.pubkey });
+  bookingUI.open({ slots: booking.slots(), myPubkey: identity.current().pubkey });
 }
 async function openSpeakerHub() {
   if (!booking.mine().length) return; // gated in the Stage menu, but guard anyway
@@ -474,19 +482,22 @@ const zapUI = createZapUI({
   onPickAmount: (pubkey, amountSats) => wallet.zap({ toPubkey: pubkey, amountSats, note: zapNote() }),
 });
 
-// The You menu is the wallet's home. connect() lives there; the balance also surfaces
-// beside the Zap control (hud.showBalance) as a convenience readout.
-async function connectWallet() {
-  await wallet.connect();                 // REAL: NWC connect / WebLN.enable()
+// The wallet's home is the You menu. Top up = credit the LOCAL per-identity balance
+// (mock: +DEFAULT_TOPUP; real: pay an invoice). The balance also surfaces beside the Zap
+// control (hud.showBalance) as a convenience readout.
+function topUpWallet() {
+  if (!requireSignedIn('top up')) return;
+  wallet.topUp();
   hud.showBalance(true);
   hud.setBalance(wallet.getBalance());
-  openYou();                              // refresh the You menu now that a wallet is connected
+  hud.toast(`Topped up +${wallet.DEFAULT_TOPUP.toLocaleString('en-US')} sats`);
+  openYou();                              // refresh the You menu with the new balance
 }
 
-// The one "zap a person" entry: connect-gated (prompts the You menu), then
-// input-appropriate.
+// The one "zap a person" entry: sign-in-gated (insufficient balance is handled by the
+// zap-failed path, which prompts Top up), then input-appropriate.
 function zapAvatar(pubkey, name) {
-  if (!wallet.isConnected()) { hud.toast('Connect a wallet to zap'); openYou(); return; }
+  if (!requireSignedIn('zap')) return;
   if (renderer.xr.isPresenting) wallet.zap({ toPubkey: pubkey, amountSats: DEFAULT_ZAP, note: zapNote() }); // VR quick-zap
   else zapUI.openPicker({ pubkey, name });                                                                  // flat/mobile picker
 }
@@ -508,9 +519,13 @@ function stageSpeakerGroup() {
 const menus = createMenus({
   toast: (m) => hud.toast(m),
   onSignIn: async () => { await signInFlow(); openYou(); },
-  onSwitch: async () => { identity.logout(); await signInFlow(); openYou(); },
-  onLogout: () => { identity.logout(); hud.setSignedIn(null); openYou(); },
-  onConnectWallet: () => connectWallet(),
+  onSwitch: async () => { identity.logout(); wallet.deactivate(); await signInFlow(); openYou(); },
+  onLogout: () => {
+    identity.logout(); wallet.deactivate();          // clears in-memory balance; persisted store stays
+    hud.setSignedIn(null); hud.showBalance(false);    // no balance shown while signed out
+    openYou();
+  },
+  onTopUp: () => topUpWallet(),
   onBookOpen: () => openBooking(),
   onSpeakerHubOpen: () => openSpeakerHub(),
   onActivity: () => openActivity(),
@@ -529,9 +544,7 @@ const boardUI = createBoardUI({
 });
 
 function openCompose() {
-  const me = identity.current();
-  if (!me) { hud.toast('Sign in to comment'); openYou(); return; }
-  if (!wallet.isConnected()) { hud.toast('Connect a wallet to comment'); openYou(); return; }
+  if (!requireSignedIn('comment')) return;
   closeAllMenus();
   boardUI.openCompose({ cost: BOOST_SATS });
 }
@@ -543,8 +556,8 @@ function openActivity() {
 
 // Post a comment: charge the zap, and only on 'confirmed' record it to the board.
 async function postComment(text, amountSats) {
+  if (!requireSignedIn('comment')) return;
   const me = identity.current();
-  if (!me) { hud.toast('Sign in to comment'); openYou(); return; }
   boardUI.closeCompose();
   const res = await wallet.zap({ toPubkey: BOARD_PUBKEY, amountSats, note: `comment: ${text.slice(0, 40)}` });
   if (res.state === 'confirmed') board.post({ pubkey: me.pubkey, text }); // charge-on-confirmed
@@ -555,7 +568,7 @@ async function postComment(text, amountSats) {
 async function boostComment(commentId) {
   const c = board.get(commentId);
   if (!c) return;
-  if (!wallet.isConnected()) { hud.toast('Connect a wallet to zap'); openYou(); return; }
+  if (!requireSignedIn('zap')) return;
   const res = await wallet.zap({ toPubkey: c.pubkey, amountSats: BOOST_SATS, note: 'boost' });
   if (res.state === 'confirmed') board.boost(commentId, BOOST_SATS);
 }
@@ -583,23 +596,21 @@ function micState() {
   };
 }
 function openMicForm() {
-  const me = identity.current();
-  if (!me) { hud.toast('Sign in to take the mic'); openYou(); return; }
-  if (!wallet.isConnected()) { hud.toast('Connect a wallet to take the mic'); openYou(); return; }
+  if (!requireSignedIn('take the mic')) return;
   closeAllMenus();
   micUI.open(micState());
 }
 async function joinQueue(amountSats, pitch) {
+  if (!requireSignedIn('take the mic')) return;
   const me = identity.current();
-  if (!me) { hud.toast('Sign in to take the mic'); openYou(); return; }
   micUI.close();
   const res = await queue.join({ pubkey: me.pubkey, amountSats, pitch });
   if (res.state === 'confirmed') hud.toast(`In the mic queue — you're #${queue.position(me.pubkey)} of ${queue.count()}`);
   // a 'failed' zap surfaces via the global wallet.onZap toast; nothing joins.
 }
 async function topUpQueue(amountSats) {
+  if (!requireSignedIn('take the mic')) return;
   const me = identity.current();
-  if (!me) return;
   micUI.close();
   const res = await queue.topUp({ pubkey: me.pubkey, amountSats });
   if (res.state === 'confirmed') hud.toast(`Topped up — you're #${queue.position(me.pubkey)} of ${queue.count()}`);
@@ -655,8 +666,8 @@ function cancelBooking(slotId) {
 }
 
 async function bookSlot(slotId, title) {
+  if (!requireSignedIn('book a slot')) return;
   const me = identity.current();
-  if (!me) { hud.toast('Sign in to book a slot'); openYou(); return; }
   const res = await booking.book({ slotId, title });
   if (res.state === 'confirmed') {
     hud.toast('Slot booked ⚡ — Speaker hub unlocked');
@@ -709,7 +720,10 @@ wallet.onZap((e) => {
     zapFx.spawn(groupForPubkey(e.toPubkey), e.amountSats); // ⚡ burst on the zapped avatar
     if (!renderer.xr.isPresenting) hud.toast(`⚡ Sent ${fmtSats(e.amountSats)} sats`);
   } else if (e.state === 'failed') {
-    if (!renderer.xr.isPresenting) hud.toast(`Zap failed — ${e.reason}`);
+    if (!renderer.xr.isPresenting) {
+      if (e.reason === 'insufficient balance') { hud.toast('Not enough sats — top up your wallet'); openYou(); }
+      else hud.toast(`Zap failed — ${e.reason}`);
+    }
   }
 });
 

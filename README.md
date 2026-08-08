@@ -134,6 +134,33 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Queue table style + sign-in gating + typing fix (3.8)** — no new deps:
+- **MIC QUEUE → violet table.** The in-world queue panel is now a single-canvas TABLE
+  (rank · keyface · name · ⚡total, pitch on the top entry) framed in **Nostr-violet**
+  (the reserved identity colour) — violet frame + row separators + title/accents —
+  visually distinct from the orange comment boards. "— empty —" state kept; re-textured
+  on change only.
+- **Sign-in gating + local per-identity wallet.** The wallet is now a **local venue
+  balance tied to your identity**, not an external connection. "Connect wallet" → **"Top
+  up wallet"** (⚡, mock +21,000; the seam stays for a real invoice top-up later). Balance
+  is **persisted per pubkey** in `localStorage` and spends persist as they happen — log out
+  and back in with the same identity → same balance; a different identity → its own (0).
+  Signed **out**: the You menu shows **no balance**, Sign in is the primary button, Top up +
+  Activity are dimmed (toast "Sign in first"). Signed **in**: balance + active Top up +
+  live Activity. Every spend/post (zap, Zap-the-speaker, comment, boost, Take the mic,
+  Book a slot) is **sign-in-gated**; insufficient balance reuses the failure path to prompt
+  Top up. Logout clears the in-memory balance (reloads from the pubkey's store on next
+  sign-in).
+- **Typing fix.** Game/locomotion keys are now suppressed while any editable element has
+  focus (central guard in the shared keydown handler: `input`/`textarea`/`contenteditable`)
+  — Space types a space instead of jumping; WASD/E/F/M/Esc-menu no longer hijack fields.
+  `keyup` isn't guarded, so keys pressed before focus still clear. (Folded into the
+  webxr-threejs skill.)
+- Verified flat in Chrome: violet table with 2 entrants (distinct from the orange boards);
+  signed-out gating (no balance, spends blocked, prompted sign-in); guest sign-in → top up →
+  zap; logout + re-sign-in restores the balance; a second identity has its own; typing
+  "hi everybody gm" with spaces in the compose field (no jump). No console errors.
+
 **Board visibility bug + mic-queue reposition (3.7)** — presentation only, no service/data changes:
 - **Fix: comment-screen rows appeared/vanished with camera pitch.** Root cause was a
   transparent draw-order flip: the near-opaque screen backdrop (`transparent`, 0.92) and
