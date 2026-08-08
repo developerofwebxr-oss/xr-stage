@@ -16,8 +16,11 @@ const ROW_H = 0.5, ROW_GAP = 0.08;
 
 export function createQueuePanel(scene, { queue }) {
   const group = new THREE.Group();
-  group.position.set(2.5, 1.7, -1.7);   // beside the mic, above the platform
-  group.rotation.y = -0.25;             // angled toward the audience
+  // Far-left board slot: outboard of the TOP ZAPPED screen (x=-7), on the same wall, so
+  // it doesn't block the main screen or the speaker from the audience floor. Matches the
+  // boards' inward-facing yaw. (The "you're up" ring below stays at the pedestal.)
+  group.position.set(-10.3, 2.6, -6.0);
+  group.rotation.y = 0.5;               // face the audience/centre, like the left board
   scene.add(group);
 
   const title = billboard('MIC QUEUE', 1.4, 0.34);

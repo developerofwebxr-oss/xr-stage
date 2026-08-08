@@ -134,6 +134,24 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Board visibility bug + mic-queue reposition (3.7)** — presentation only, no service/data changes:
+- **Fix: comment-screen rows appeared/vanished with camera pitch.** Root cause was a
+  transparent draw-order flip: the near-opaque screen backdrop (`transparent`, 0.92) and
+  the card planes were all in the transparent pass with equal `renderOrder`, so the
+  renderer ordered them by camera distance — as you pitched, top-vs-bottom rows sorted
+  before/after the backdrop and the backdrop painted over whichever sorted first, so rows
+  dropped looking up/down. Fixed by pinning `renderOrder` (backdrop 0 · frame 1 · cards 2 ·
+  title 3) and setting the backdrop `depthWrite:false`, so the stack paints deterministically
+  regardless of view angle. No camera-dependent row visibility remains (the LIVE feed's
+  edge fade is scroll-based, not view-based). Avatars stay opaque and still occlude cards.
+- **Move: MIC QUEUE panel → far left.** It sat centre-right, blocking the main screen /
+  speaker; now on the far-left board wall (x≈-10.3, outboard of TOP ZAPPED at x-7, matching
+  the inward yaw), so the centre is unobstructed from the audience floor. The pedestal
+  "you're up" ring stays at the pedestal (location-bound).
+- Re-texture-on-change unchanged (no per-frame canvas work); 72fps budget untouched.
+  Verified in Chrome from level + steep-up angles: all four TOP ZAPPED rows stay visible at
+  every pitch; scene-graph inspection confirms the render-order/position; no console errors.
+
 **Speaker hub v1 (3.6)** — the booked speaker's home fills in; no new deps:
 - **My slot** — your booked slot (time · title) + **Cancel booking** (frees the slot, **no
   refund**, inline confirm). Cancelling re-dims (closes) the hub.

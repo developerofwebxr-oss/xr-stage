@@ -106,13 +106,21 @@ export function createCommentBoard(scene, { board }) {
 }
 
 // ── One screen: dark glass backdrop + orange frame + a title plate ────────────────
+// Draw order is pinned with renderOrder (backdrop → frame → cards → title) so the
+// stack is painted back-to-front DETERMINISTICALLY, independent of camera angle. The
+// backdrop is transparent (0.92) AND depthWrite:false; without a fixed renderOrder the
+// transparent sort would order the near-opaque backdrop vs the card planes by camera
+// distance, which flips as you pitch — painting the backdrop over some rows so they
+// vanish looking up/down. Cards get renderOrder 2 (in makeCard) so they always draw
+// after the backdrop; avatars stay opaque and still occlude cards via depthTest.
 function makeScreen(title, bg, accent) {
   const group = new THREE.Group();
 
   const backdrop = new THREE.Mesh(
     new THREE.PlaneGeometry(SCREEN_W, SCREEN_H),
-    new THREE.MeshBasicMaterial({ color: bg, transparent: true, opacity: 0.92 }),
+    new THREE.MeshBasicMaterial({ color: bg, transparent: true, opacity: 0.92, depthWrite: false }),
   );
+  backdrop.renderOrder = 0;
   group.add(backdrop);
 
   const frame = new THREE.LineSegments(
@@ -120,6 +128,7 @@ function makeScreen(title, bg, accent) {
     new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: 0.6 }),
   );
   frame.position.z = 0.01;
+  frame.renderOrder = 1;
   group.add(frame);
 
   // Title plate at the top of the screen.
@@ -130,6 +139,7 @@ function makeScreen(title, bg, accent) {
     new THREE.MeshBasicMaterial({ map: titleTex, transparent: true, depthWrite: false }),
   );
   titleMesh.position.set(0, SCREEN_H / 2 + 0.34, 0.02);
+  titleMesh.renderOrder = 3;
   group.add(titleMesh);
 
   const content = new THREE.Group();
@@ -147,7 +157,8 @@ function makeCard(comment, { rank } = {}) {
     new THREE.PlaneGeometry(CARD_W, CARD_H),
     new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }),
   );
-  mesh.userData.commentId = comment.id; // raycast target for zap-to-boost
+  mesh.renderOrder = 2;                  // always paint after the screen backdrop (0), any camera angle
+  mesh.userData.commentId = comment.id;  // raycast target for zap-to-boost
   return mesh;
 }
 
