@@ -106,19 +106,20 @@ export function createCommentBoard(scene, { board }) {
 }
 
 // ── One screen: dark glass backdrop + orange frame + a title plate ────────────────
-// Draw order is pinned with renderOrder (backdrop → frame → cards → title) so the
-// stack is painted back-to-front DETERMINISTICALLY, independent of camera angle. The
-// backdrop is transparent (0.92) AND depthWrite:false; without a fixed renderOrder the
-// transparent sort would order the near-opaque backdrop vs the card planes by camera
-// distance, which flips as you pitch — painting the backdrop over some rows so they
-// vanish looking up/down. Cards get renderOrder 2 (in makeCard) so they always draw
-// after the backdrop; avatars stay opaque and still occlude cards via depthTest.
+// Panels are SOLID: the backdrop is OPAQUE (writes depth), so the depth buffer handles
+// cross-panel occlusion at any angle — one panel's cards can never bleed through another
+// panel's backdrop (the 3.11 fix). renderOrder still pins the WITHIN-panel back-to-front
+// order (backdrop → frame → cards → title): the opaque backdrop draws in the opaque pass
+// first, then cards (transparent, renderOrder 2) draw over it and depth-test against
+// everything solid. Row visibility stays view-angle-independent (the 3.7 fix) because
+// there's no more camera-distance sort between the backdrop and its cards. Avatars are
+// opaque and still occlude cards via depthTest.
 function makeScreen(title, bg, accent) {
   const group = new THREE.Group();
 
   const backdrop = new THREE.Mesh(
     new THREE.PlaneGeometry(SCREEN_W, SCREEN_H),
-    new THREE.MeshBasicMaterial({ color: bg, transparent: true, opacity: 0.92, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: bg }), // opaque (transparent:false, depthWrite:true)
   );
   backdrop.renderOrder = 0;
   group.add(backdrop);

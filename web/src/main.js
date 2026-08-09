@@ -397,7 +397,7 @@ function pickFromRaycaster() {
   for (const h of hits) {
     let o = h.object;
     while (o) {
-      if (o.userData && o.userData.commentId) { boostComment(o.userData.commentId); return; }
+      if (o.userData && o.userData.commentId) { boostComment(o.userData.commentId, h.point.clone()); return; }
       if (o.userData && o.userData.identity) {
         if (o === selectedGroup) deselect();                 // same avatar → close
         else selectAvatar(o, o.userData.identity);           // replaces any open card
@@ -463,7 +463,8 @@ function pickFromRaycaster() {
 // opens the amount picker, VR quick-zaps a default. Real Lightning (NWC/LNbits) swaps
 // in behind wallet.js without touching any caller here.
 const DEFAULT_ZAP = 21; // sats — the VR quick-zap amount (no DOM picker in immersive)
-const zapFx = createZapEffects();
+const zapFx = createZapEffects(scene);   // scene = where world-space comment flings are added
+const BOARD_TOP_Y = 2.7 + 3.6 / 2;       // world Y of a board's top edge (centre 2.7, height 3.6)
 const fmtSats = (n) => n.toLocaleString('en-US');
 const zapNote = () => `Zap from ${identity.current()?.name || 'anon'}`;
 
@@ -564,13 +565,20 @@ async function postComment(text, amountSats) {
   // a 'failed' zap surfaces via the global wallet.onZap toast; nothing is posted.
 }
 
-// Zap-to-boost: zapping a comment pays its author AND raises it on the top wall.
-async function boostComment(commentId) {
+// Zap-to-boost: zapping a comment pays its author AND raises it on the top wall. The ⚡
+// burst is flung off the card itself (worldPoint from the raycast hit) — out toward the
+// panel's near side (left panel → left, right panel → right) then up over the top.
+async function boostComment(commentId, worldPoint) {
   const c = board.get(commentId);
   if (!c) return;
   if (!requireSignedIn('zap')) return;
   const res = await wallet.zap({ toPubkey: c.pubkey, amountSats: BOOST_SATS, note: 'boost' });
-  if (res.state === 'confirmed') board.boost(commentId, BOOST_SATS);
+  if (res.state === 'confirmed') {
+    board.boost(commentId, BOOST_SATS);
+    if (worldPoint) {
+      zapFx.fling({ position: worldPoint, side: worldPoint.x < 0 ? 'left' : 'right', topY: BOARD_TOP_Y, amount: BOOST_SATS });
+    }
+  }
 }
 
 // ── Mic queue (Phase 3.4, mock) ──────────────────────────────────────────────────
@@ -717,7 +725,7 @@ wallet.onZap((e) => {
     if (!renderer.xr.isPresenting) hud.toast(`Zapping ${fmtSats(e.amountSats)} sats…`);
   } else if (e.state === 'confirmed') {
     hud.setBalance(wallet.getBalance());
-    zapFx.spawn(groupForPubkey(e.toPubkey), e.amountSats); // ⚡ burst on the zapped avatar
+    if (e.note !== 'boost') zapFx.spawn(groupForPubkey(e.toPubkey), e.amountSats); // avatar zap → burst at the person; boosts fling from the card instead
     if (!renderer.xr.isPresenting) hud.toast(`⚡ Sent ${fmtSats(e.amountSats)} sats`);
   } else if (e.state === 'failed') {
     if (!renderer.xr.isPresenting) {

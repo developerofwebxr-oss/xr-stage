@@ -134,6 +134,30 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Queue alignment + solid panels + boost fling (3.11)** — panels/effects only, no services touched:
+- **MIC QUEUE aligned with TOP ZAPPED.** The queue table now shares the boards' vertical
+  extent (same bottom + top edge, height 3.6, centre y2.7, z-6.2) on the far left,
+  **slightly narrower** (3.0 vs 4.0 — it's a table, not a feed); typography scaled up for
+  the taller canvas. Violet style unchanged; re-texture on change only.
+- **Panels are SOLID.** All panel backdrops are now **opaque** (`transparent:false`,
+  `depthWrite:true`) — the depth buffer handles cross-panel occlusion at any angle, fixing
+  the bleed where one panel's cards showed through another's backdrop. The 3.7 within-panel
+  `renderOrder` layering (backdrop → frame → cards → title) is kept and still valid (the
+  opaque backdrop draws first and writes depth), so **row visibility stays view-angle-
+  independent** (no 3.7 regression). The main screen was already opaque (MeshStandard) — no
+  change. The queue panel is a single opaque mesh.
+- **Comment-boost fling.** Boosting a comment now flings a **⚡+amount off that card**: it
+  originates at the card (raycast hit point), slides out toward the panel's near side (left
+  panel → left, right → right), arcs upward and fades above the screen top (~1.1–1.5s, per-
+  burst randomness). Spamming boosts reads as an **upward rain**; each burst is one Sprite,
+  spawned on the event and disposed on fade, **capped at 20** (oldest culled) — no per-frame
+  canvas work. `prefers-reduced-motion` → a brief static fade at the card. **Avatar zaps
+  unchanged** (burst at the person).
+- Verified in Chrome: backdrops opaque + queue aligned (3.0×3.6, y2.7/z-6.2) via scene-graph
+  inspection; siblings render bottoms/tops aligned, violet vs orange, no bleed at overlap;
+  fling spawns at the card, slides outward + rises + disposes, cap holds at 20; no console
+  errors. Full orbit/pitch + on-device recheck is the owner's.
+
 **Queue table style + sign-in gating + typing fix (3.8)** — no new deps:
 - **MIC QUEUE → violet table.** The in-world queue panel is now a single-canvas TABLE
   (rank · keyface · name · ⚡total, pitch on the top entry) framed in **Nostr-violet**
