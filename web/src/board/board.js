@@ -57,8 +57,16 @@ export const board = {
     return c || null;
   },
   get(id) { return _comments.get(id) || null; },
+  count() { return _comments.size; },
   list() { return [..._comments.values()].sort((a, b) => a.createdAt - b.createdAt); }, // oldest→newest
-  recent(n = 8) { return this.list().slice(-n); },
+  // A window of n comments, `offset` steps back from the newest (0 = live/newest). Only
+  // exposes older comments for windowed rendering — the shared data is unchanged; the
+  // scroll offset itself lives in the client (never here, never broadcast).
+  recent(n = 8, offset = 0) {
+    const l = this.list();
+    const end = Math.max(0, l.length - Math.max(0, offset));
+    return l.slice(Math.max(0, end - n), end);
+  },
   top(n = 5) {
     return [..._comments.values()]
       .filter((c) => c.sats > 0)

@@ -19,9 +19,10 @@ const BITCOIN = 0xf7931a;
 const SCREEN_W = 4.0, SCREEN_H = 3.6;
 const CARD_W = 3.5, CARD_H = 0.8, DY = CARD_H + 0.16;
 const FEED_N = 6, WALL_N = 4;
-const SCROLL_SPEED = 0.22;                 // m/s upward drift of the live feed
+const SCROLL_SPEED = 0.22;                 // m/s upward drift of the live feed (when live)
 const TOP_EDGE = SCREEN_H / 2 - 0.18;      // fade/recycle bound inside the frame
 const WALL_STICKY_MS = 120_000;            // top wall holds its ranking ~2 min
+const IDLE_SNAP_MS = 10_000;               // scrolled-back view snaps to live after ~10s idle
 
 export function createCommentBoard(scene, { board }) {
   const feed = makeScreen('LIVE', 0x0a0e18, BITCOIN);
@@ -39,15 +40,29 @@ export function createCommentBoard(scene, { board }) {
   let lastWallBuild = -Infinity;
   let nowMs = 0; // advanced by update(dt); avoids Date.now for determinism
 
+  // Per-viewer LIVE scroll — CLIENT-LOCAL state (never broadcast, never in the board).
+  // feedOffset counts comments back from live (0 = live); a float so gestures can nudge
+  // sub-comment amounts, rounded for the rendered window. paused while scrolled back.
+  let feedOffset = 0, idleMs = 0;
+  const feedInt = () => Math.round(feedOffset);
+  const paused = () => feedInt() > 0;
+
+  // The "● LIVE" affordance — a chip on YOUR view of the panel, shown only when scrolled
+  // back. Tapping it (or ~10s idle) snaps to the live flow. Raycast target (liveChip).
+  const liveChip = makeLiveChip();
+  liveChip.visible = false;
+  feed.group.add(liveChip);
+
   function rebuildFeed() {
     disposeCards(feed.content, feedCards);
-    feedCards = board.recent(FEED_N).map((c, i) => {
+    feedCards = board.recent(FEED_N, feedInt()).map((c, i) => {
       const mesh = makeCard(c);
-      // Stack newest at the bottom; the ticker scrolls the column upward.
+      // Stack newest at the bottom; live ticker scrolls the column upward.
       mesh.position.set(0, -((FEED_N - 1) / 2) * DY + i * DY, 0.03);
       feed.content.add(mesh);
       return { mesh, id: c.id };
     });
+    liveChip.visible = paused();
   }
 
   function rebuildWall() {
@@ -62,32 +77,38 @@ export function createCommentBoard(scene, { board }) {
     lastWallBuild = nowMs;
   }
 
-  // The live feed re-renders immediately (new comment / new boost total). The top
-  // wall is "sticky": it re-ranks at most every ~2 min so entries don't churn.
+  // Live feed re-renders on change ONLY while live — a scrolled-back view is frozen so
+  // new arrivals don't shift what you're reading (they keep landing in the shared data).
   function onBoardChange() {
-    rebuildFeed();
+    if (!paused()) rebuildFeed();
     if (nowMs - lastWallBuild >= WALL_STICKY_MS) rebuildWall();
   }
   const unsub = board.onChange(onBoardChange);
   rebuildFeed();
   rebuildWall();
 
+  const edgeFade = (mesh) => { mesh.material.opacity = THREE.MathUtils.clamp((TOP_EDGE + 0.2 - Math.abs(mesh.position.y)) / 0.5, 0, 1); };
+
   function update(dt) {
     nowMs += dt * 1000;
-    // Scroll the live feed upward; recycle a card to the bottom when it clears the top,
-    // and fade cards near the vertical edges so the overflow dissolves (no clipping).
     if (feedCards.length) {
-      for (const { mesh } of feedCards) mesh.position.y += SCROLL_SPEED * dt;
-      for (const { mesh } of feedCards) {
-        if (mesh.position.y > TOP_EDGE + CARD_H) {
-          const minY = Math.min(...feedCards.map((c) => c.mesh.position.y));
-          mesh.position.y = minY - DY;
+      if (!paused()) {
+        // LIVE: scroll upward, recycle a card past the top, fade the vertical overflow.
+        for (const { mesh } of feedCards) mesh.position.y += SCROLL_SPEED * dt;
+        for (const { mesh } of feedCards) {
+          if (mesh.position.y > TOP_EDGE + CARD_H) {
+            const minY = Math.min(...feedCards.map((c) => c.mesh.position.y));
+            mesh.position.y = minY - DY;
+          }
+          edgeFade(mesh);
         }
-        const fade = THREE.MathUtils.clamp((TOP_EDGE + 0.2 - Math.abs(mesh.position.y)) / 0.5, 0, 1);
-        mesh.material.opacity = fade;
+      } else {
+        // SCROLLED BACK: static window; fade overflow; snap to live after idle.
+        for (const { mesh } of feedCards) edgeFade(mesh);
+        idleMs += dt * 1000;
+        if (idleMs >= IDLE_SNAP_MS) snapLive();
       }
     }
-    // Refresh the sticky wall if its hold has elapsed since the last board change.
     if (nowMs - lastWallBuild >= WALL_STICKY_MS && wallDiffersFromTop()) rebuildWall();
   }
 
@@ -96,13 +117,58 @@ export function createCommentBoard(scene, { board }) {
     return top !== wallCards.map((c) => c.id).join(',');
   }
 
+  // Client-local scroll of MY live view. deltaComments may be fractional (gesture nudge);
+  // re-textures only when the rounded window changes (never per frame).
+  function scrollFeed(deltaComments) {
+    const max = Math.max(0, board.count() - FEED_N);
+    const next = THREE.MathUtils.clamp(feedOffset + deltaComments, 0, max);
+    if (next === feedOffset) return;
+    const wasInt = feedInt();
+    feedOffset = next;
+    idleMs = 0;
+    if (feedInt() !== wasInt) rebuildFeed();
+  }
+  function snapLive() {
+    idleMs = 0;
+    if (feedOffset === 0) return;
+    feedOffset = 0;
+    rebuildFeed();
+  }
+
   return {
     update,
     // Card meshes for the unified zap raycast (both screens).
     pickables: () => feedCards.concat(wallCards).map((c) => c.mesh),
+    // LIVE-panel raycast targets for the scroll gesture (backdrop + cards + the live chip).
+    liveTargets: () => [feed.backdrop].concat(feedCards.map((c) => c.mesh), liveChip.visible ? [liveChip] : []),
+    isLiveChip: (obj) => obj === liveChip,
+    isLivePaused: paused,
+    scrollFeed, snapLive,
     refresh: onBoardChange,
     dispose() { unsub(); },
   };
+}
+
+// The "● LIVE" chip shown on the feed panel while scrolled back (tap → snap to live).
+function makeLiveChip() {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 96;
+  const g = cv.getContext('2d');
+  roundRect(g, 4, 4, 248, 88, 44);
+  g.fillStyle = 'rgba(12,14,19,0.92)'; g.fill();
+  g.strokeStyle = 'rgba(247,147,26,0.7)'; g.lineWidth = 3; g.stroke();
+  g.fillStyle = '#f7931a'; g.beginPath(); g.arc(70, 48, 14, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#eceef5'; g.font = '700 40px ui-monospace, Menlo, monospace';
+  g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText('LIVE', 100, 50);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  const chip = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.9, 0.34),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }),
+  );
+  chip.position.set(0, SCREEN_H / 2 - 0.28, 0.06);
+  chip.renderOrder = 4; // above cards
+  chip.userData.liveChip = true;
+  return chip;
 }
 
 // ── One screen: dark glass backdrop + orange frame + a title plate ────────────────
@@ -147,7 +213,7 @@ function makeScreen(title, bg, accent) {
   content.position.z = 0.02;
   group.add(content);
 
-  return { group, content };
+  return { group, content, backdrop };
 }
 
 // ── One comment card: keyface + name + wrapped text + ⚡ zapped total ──────────────

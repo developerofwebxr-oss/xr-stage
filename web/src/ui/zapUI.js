@@ -16,12 +16,13 @@
 const $ = (id) => document.getElementById(id);
 const NOT_YET = 'Not available yet';
 
-export function createZapUI({ toast, onZapSpeaker, onZapComment, onTakeMic, onPickAmount } = {}) {
+export function createZapUI({ toast, onZapSpeaker, onZapComment, onTakeMic, onToggleBoost, onPickAmount } = {}) {
   const el = {
     hub: $('spend-menu'),
     spZapSpeaker: $('sp-zap-speaker'),
     spZapComment: $('sp-zap-comment'),
     spTakeMic: $('sp-take-mic'),
+    spBoost: $('sp-boost'),
     spClose: $('spend-close'),
     picker: $('zap-picker'),
     pName: $('zp-name'),
@@ -36,11 +37,12 @@ export function createZapUI({ toast, onZapSpeaker, onZapComment, onTakeMic, onPi
   const dim = (msg = NOT_YET) => toast && toast(msg);
 
   // ── Spend hub (room actions) ────────────────────────────────────────────────────
-  function openHub({ speakerAvailable: avail = false, mic } = {}) {
+  function openHub({ speakerAvailable: avail = false, mic, boostByTap } = {}) {
     speakerAvailable = avail;
     el.spZapSpeaker.classList.toggle('soon', !avail);
     el.spZapSpeaker.setAttribute('aria-disabled', String(!avail));
     if (mic) setMic(mic);
+    if (boostByTap !== undefined) setBoost(boostByTap);
     el.hub.hidden = false;
   }
   function closeHub() { el.hub.hidden = true; }
@@ -48,6 +50,8 @@ export function createZapUI({ toast, onZapSpeaker, onZapComment, onTakeMic, onPi
   function setMic({ inQueue, position, count } = {}) {
     el.spTakeMic.textContent = inQueue ? `⚡ Mic queue: #${position}/${count}` : '⚡ Take the mic';
   }
+  // Accidental-zap protection toggle: reflect on/off on the button.
+  function setBoost(on) { el.spBoost.textContent = `Boost posts by tap: ${on ? 'on' : 'off'}`; }
 
   el.spClose.addEventListener('click', closeHub);
   el.hub.addEventListener('click', (e) => { if (e.target === el.hub) closeHub(); }); // backdrop
@@ -57,6 +61,7 @@ export function createZapUI({ toast, onZapSpeaker, onZapComment, onTakeMic, onPi
   });
   el.spZapComment.addEventListener('click', () => onZapComment && onZapComment()); // live → compose
   el.spTakeMic.addEventListener('click', () => onTakeMic && onTakeMic());           // live → mic form
+  el.spBoost.addEventListener('click', () => onToggleBoost && onToggleBoost());     // flip boost-by-tap
 
   // ── Amount picker (flat/mobile only) ────────────────────────────────────────────
   function setAmount(v) {
@@ -91,7 +96,7 @@ export function createZapUI({ toast, onZapSpeaker, onZapComment, onTakeMic, onPi
   });
 
   return {
-    openHub, closeHub, openPicker, closePicker, setMic,
+    openHub, closeHub, openPicker, closePicker, setMic, setBoost,
     isHubOpen: () => !el.hub.hidden,
     closeAll() { closeHub(); closePicker(); },
     isOpen: () => !el.hub.hidden || !el.picker.hidden,

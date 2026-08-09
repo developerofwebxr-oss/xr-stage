@@ -134,6 +134,34 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Boost-by-tap toggle + per-user LIVE scrolling (3.12)** — no new deps:
+- **"Boost posts by tap" toggle** (accidental-zap protection) in the spend hub — default
+  **ON**, **persisted per pubkey** when signed in (else a device default). OFF → aiming/
+  tapping a comment card is **inert** (no zap, no error) across desktop click · mobile tap ·
+  VR select. Applies only to board-comment boosting; avatar zaps unchanged.
+- **Per-user LIVE-board scrolling** — the scroll offset is **client-local** (never broadcast,
+  never in the board; two tabs scroll independently, signed-out ghosts can scroll too). The
+  board stays the single shared source; `board.recent(n, offset)` just exposes older windows.
+  - **Flat/mobile:** mouse-wheel over the LIVE panel, or a vertical hold-drag on it (a pointer
+    that *starts* on the panel is owned by the scroll handler — capture phase — so it scrolls
+    instead of rotating the camera). **Drag threshold 8px** disambiguates scroll from tap: a
+    clean tap = boost (toggle-gated); a drag = scroll (never boosts).
+  - **VR (chosen input): aim the right controller at the LIVE panel + push the right stick
+    UP/DOWN (axis Y) to scroll.** Turn is the stick's X axis, so it's unaffected — no
+    suppression needed, and right-stick-Y is otherwise unused. (Grip-drag was the alternative;
+    this is lighter and reuses a free axis. Device-only.)
+  - Scrolling back **pauses** the auto-scroll and shows older comments + a **"● live" chip**;
+    tapping the chip or ~**10s** idle snaps back to live. New comments keep arriving in the data.
+    Re-textures on scroll-step only (no per-frame canvas work). TOP ZAPPED / MIC QUEUE unchanged.
+- Fixed a real hit-testing bug found while verifying: the "● live" chip could sort *behind*
+  cards at grazing angles, so the scroll handler now scans all ray hits and lets the chip win
+  when the ray passes through it (else tapping it would have boosted a card).
+- Verified flat in Chrome: toggle default ON / OFF inert / persists; windowed `recent(n,offset)`;
+  wheel-over-panel pauses (off-panel ignored); drag scrolls without boosting; clean tap boosts
+  (+21) and stays paused; scrolled window shows older; snap + clamps; chip appears when paused
+  and chip-tap snaps to live; signed-out can scroll but can't boost; board holds no scroll state.
+  No console errors. VR scroll + scroll *feel* are on-device (owner tests).
+
 **Queue alignment + solid panels + boost fling (3.11)** — panels/effects only, no services touched:
 - **MIC QUEUE aligned with TOP ZAPPED.** The queue table now shares the boards' vertical
   extent (same bottom + top edge, height 3.6, centre y2.7, z-6.2) on the far left,

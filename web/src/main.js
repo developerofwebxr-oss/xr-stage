@@ -203,6 +203,29 @@ function requireSignedIn(what = 'do that') {
 hud.onSignIn(() => openYou());   // "You" control-bar chip → You menu
 hud.onStage(() => openStage());  // "Stage" control-bar button → Stage menu
 
+// Accidental-zap protection: "Boost posts by tap" preference (default ON). Persisted PER
+// PUBKEY when signed in, else a device-level default. Applies ONLY to board-comment
+// tap-boost; avatar zaps and everything else are unaffected.
+const BOOST_PREF = (pk) => `xrstage:boostByTap:${pk || '_device'}`;
+function boostByTap() {
+  const pk = identity.current()?.pubkey;
+  try {
+    const v = localStorage.getItem(BOOST_PREF(pk));
+    if (v !== null) return v === '1';
+    const dev = localStorage.getItem(BOOST_PREF(null));
+    return dev !== null ? dev === '1' : true; // default ON
+  } catch { return true; }
+}
+function setBoostByTap(on) {
+  try { localStorage.setItem(BOOST_PREF(identity.current()?.pubkey), on ? '1' : '0'); } catch { /* private mode */ }
+}
+// The single gated tap→boost entry (desktop click · mobile tap · VR select all funnel
+// here). OFF = inert: no zap, no error.
+function tapBoost(commentId, worldPoint) {
+  if (!boostByTap()) return;
+  boostComment(commentId, worldPoint);
+}
+
 // ── WebXR sessions + mode cluster (B2) ──────────────────────────────────────────
 // Screen is active by default; VR/AR enable + wire once feature-detection resolves.
 let xrCtl = null; // the session controller; exposes enter('screen'|'vr'|'ar')
@@ -268,7 +291,7 @@ async function openSpeakerHub() {
   closeAllMenus();
   speakerHub.open({ mySlot: booking.mine()[0], entries: await hubEntries(), criteria: queue.criteria() });
 }
-function openSpendHub() { closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup(), mic: micState() }); }
+function openSpendHub() { closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup(), mic: micState(), boostByTap: boostByTap() }); }
 
 // Share the one-link URL to the clipboard. Primary path is the async Clipboard API
 // (works on a real gesture in a secure context); fall back to a hidden-textarea
@@ -397,7 +420,7 @@ function pickFromRaycaster() {
   for (const h of hits) {
     let o = h.object;
     while (o) {
-      if (o.userData && o.userData.commentId) { boostComment(o.userData.commentId, h.point.clone()); return; }
+      if (o.userData && o.userData.commentId) { tapBoost(o.userData.commentId, h.point.clone()); return; }
       if (o.userData && o.userData.identity) {
         if (o === selectedGroup) deselect();                 // same avatar → close
         else selectAvatar(o, o.userData.identity);           // replaces any open card
@@ -426,14 +449,81 @@ function pickFromRaycaster() {
   });
 }
 
+// Per-viewer LIVE-board scrolling (flat + mobile). CLIENT-LOCAL — never shared, available
+// to everyone incl. signed-out viewers. A pointer that STARTS on the LIVE panel is owned
+// here (capture phase + stopImmediatePropagation), so it scrolls the feed instead of
+// rotating the camera. Vertical drag past DRAG_THRESH_PX = scroll (no boost); a clean tap
+// = boost (via the boost-by-tap gate) or the "● live" chip = snap to live. Mouse wheel
+// over the panel also scrolls. Non-panel pointers fall through to look / tap-pick as before.
+{
+  const dom = renderer.domElement;
+  const _sv = new THREE.Vector2();
+  const DRAG_THRESH_PX = 8;   // beyond this a pointer is a scroll, not a tap
+  const STEP_PX = 55;         // px of vertical drag per one comment scrolled
+  let drag = null;
+
+  // Parse a pointer against the LIVE panel → { chip, cardId, point } or null. The "● live"
+  // chip WINS when the ray passes through it (it's the small explicit affordance on top),
+  // even at grazing angles where a card can sort nearer; otherwise the first card wins.
+  const rayParse = (e) => {
+    const r = dom.getBoundingClientRect();
+    _sv.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    raycaster.setFromCamera(_sv, camera);
+    const hits = raycaster.intersectObjects(commentBoard.liveTargets(), true);
+    if (!hits.length) return null;                 // not the LIVE panel
+    let chip = false, cardId = null, point = hits[0].point.clone();
+    for (const h of hits) {
+      if (h.object.userData?.liveChip) { chip = true; point = h.point.clone(); break; }
+      if (h.object.userData?.commentId && !cardId) { cardId = h.object.userData.commentId; point = h.point.clone(); }
+    }
+    return { chip, cardId, point };
+  };
+
+  dom.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || document.pointerLockElement === dom) return;
+    const p = rayParse(e);
+    if (!p) return;                                // not the LIVE panel → normal handlers
+    e.stopImmediatePropagation();                  // own it: no camera look, no tap-pick
+    drag = { id: e.pointerId, startY: e.clientY, lastY: e.clientY, moved: false, chip: p.chip, cardId: p.cardId, point: p.point };
+  }, true);
+
+  dom.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    e.stopImmediatePropagation();
+    if (Math.abs(e.clientY - drag.startY) > DRAG_THRESH_PX) drag.moved = true;
+    if (drag.moved) commentBoard.scrollFeed((e.clientY - drag.lastY) / STEP_PX); // drag down → older
+    drag.lastY = e.clientY;
+  }, true);
+
+  const endDrag = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    e.stopImmediatePropagation();
+    if (!drag.moved) {                             // a clean tap
+      if (drag.chip) commentBoard.snapLive();
+      else if (drag.cardId) tapBoost(drag.cardId, drag.point);
+    }
+    drag = null;
+  };
+  dom.addEventListener('pointerup', endDrag, true);
+  dom.addEventListener('pointercancel', endDrag, true);
+
+  dom.addEventListener('wheel', (e) => {
+    if (!rayParse(e)) return;
+    e.preventDefault();
+    commentBoard.scrollFeed(e.deltaY < 0 ? 1 : -1); // wheel up → older
+  }, { passive: false });
+}
+
 // XR: the controller (or AR screen-tap) select ray feeds the SAME pickFromRaycaster
 // as the desktop click — one "select avatar" path for every input. Each controller
 // gets a visible aiming ray so the user can point.
+const xrControllers = []; // for the VR board-scroll (frame loop reads the right stick)
 {
   const _m = new THREE.Matrix4();
   for (let i = 0; i < 2; i++) {
     const controller = renderer.xr.getController(i); // target-ray space
     rig.add(controller); // controllers live in the rig's (reference) space
+    xrControllers.push(controller);
 
     // Aiming ray — hidden until a controller connects in an XR session (so it never
     // shows as a stray line in flat mode, and is skipped for AR's screen-tap input).
@@ -443,8 +533,12 @@ function pickFromRaycaster() {
     );
     ray.visible = false;
     controller.add(ray);
-    controller.addEventListener('connected', (e) => { ray.visible = e.data?.targetRayMode !== 'screen'; });
-    controller.addEventListener('disconnected', () => { ray.visible = false; });
+    controller.addEventListener('connected', (e) => {
+      ray.visible = e.data?.targetRayMode !== 'screen';
+      controller.userData.handedness = e.data?.handedness;   // for the VR scroll
+      controller.userData.inputSource = e.data;
+    });
+    controller.addEventListener('disconnected', () => { ray.visible = false; controller.userData.inputSource = null; });
 
     controller.addEventListener('select', () => {
       _m.identity().extractRotation(controller.matrixWorld);
@@ -480,6 +574,7 @@ const zapUI = createZapUI({
   },
   onZapComment: () => openCompose(),   // spend hub → post a comment (costs a zap)
   onTakeMic: () => openMicForm(),      // spend hub → join / top up the paid mic queue
+  onToggleBoost: () => { setBoostByTap(!boostByTap()); zapUI.setBoost(boostByTap()); }, // accidental-zap toggle
   onPickAmount: (pubkey, amountSats) => wallet.zap({ toPubkey: pubkey, amountSats, note: zapNote() }),
 });
 
@@ -806,6 +901,28 @@ if (vv) {
 }
 syncViewport(); // initial
 
+// VR board scroll (the chosen VR input): aim the RIGHT controller at the LIVE panel and
+// push the right stick UP/DOWN (axis Y) to scroll. Turn is the right stick's X axis, so
+// it's unaffected — no turn-suppression needed, and right-stick Y is otherwise unused in
+// this game. Device-only (headless can't enter immersive). Grip-drag was the alternative;
+// this is lighter and reuses a free axis.
+const _vrM = new THREE.Matrix4();
+function updateVRBoardScroll(dt) {
+  if (!renderer.xr.isPresenting) return;
+  for (const ctrl of xrControllers) {
+    if (ctrl.userData.handedness !== 'right') continue;
+    const y = ctrl.userData.inputSource?.gamepad?.axes?.[3] ?? 0;
+    if (Math.abs(y) < 0.2) continue;                 // deadzone
+    _vrM.identity().extractRotation(ctrl.matrixWorld);
+    raycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
+    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(_vrM).normalize();
+    raycaster.camera = camera;
+    if (raycaster.intersectObjects(commentBoard.liveTargets(), true).length) {
+      commentBoard.scrollFeed(-y * 4 * dt);          // stick up (y<0) → older comments
+    }
+  }
+}
+
 // ── Frame loop ──────────────────────────────────────────────────────────────────
 const clock = new THREE.Clock();
 const _prevPos = new THREE.Vector3().copy(rig.position); // for the movement vignette
@@ -835,6 +952,7 @@ renderer.setAnimationLoop(() => {
   zapFx.update(dt);           // in-world zap bursts (no-op when none are active)
   commentBoard.update(dt);    // live-feed scroll + sticky top-wall refresh
   queuePanel.update(dt);      // pulse the pedestal "you're up" ring (only when set)
+  updateVRBoardScroll(dt);    // VR: aim right controller at LIVE + right-stick Y scrolls
 
   renderer.render(scene, camera);
 });
