@@ -1,54 +1,56 @@
 import * as THREE from 'three';
 import { STAGE_POS } from '../room/zones.js';
 
-// zones/zones.js — the SOCIAL zones as DISTANT DESTINATION BUILDINGS across the plaza behind
-// the audience (a real courtyard walk from the stage), plus the detection SEAM the ticketing/
-// audio slices will consume. Facades + shells only — interiors are a later slice.
+// zones/zones.js — the SOCIAL zones as ENCLOSED destination buildings across the plaza
+// behind the audience, plus the detection SEAM later slices consume. Facades + shells only;
+// interiors are dark, texture-ready, and empty until the decoration/prop slice.
 //
-// NB: distinct from room/zones.js (stage LAYOUT + movement clamp). Here we add diegetic
-// props — a curved Networking hall with a doorway, a Smoking park-gate + treeline — and a
-// cheap point-in-zone test whose bound is now "inside the building / past the gate":
+// NB: distinct from room/zones.js (stage LAYOUT + movement clamp). Here:
+//   • Networking — a curved-facade HALL, fully enclosed (side + back walls + ceiling), so the
+//     plaza sees only the facade + a dark doorway; inside is a real room.
+//   • Smoking — a park GATE opening into an enclosed CLEARING (hedge perimeter + dense trees),
+//     so the plaza sees only the gate opening; trees recede to the horizon as backdrop.
 //
 //   zones.current()        → the zone the local rig is in, or null
 //   zones.onChange(cb)     → subscribe to enter/leave; returns unsub  (cb(zone|null))
 //   zones.update(x, z)     → recompute from the rig's XZ; emits only when the zone changes
-//   buildZoneScenery(scene)→ adds the buildings/gate/trees/plaques (call once)
+//   buildZoneScenery(scene)→ adds the buildings/gate/clearing/trees/plaques (call once)
+//   zoneAnchors            → named refs into each interior for the future decoration slice
 //
-// Placement is authored for a player on the audience floor FACING the stage (stage at −Z, so
-// "behind" is +Z, "left" is −X). The facades are ARCS concentric with the stage (same centre
-// as the radiating floor rings), so the buildings sit on the venue's own geometry.
+// ─── AUDIO-EXCLUSIVITY SEAM (later slice — do NOT wire here) ────────────────────────────
+// The enter/leave events from `zones.onChange` are the hook the AUDIO-ZONE slice will use to
+// drive audio ISOLATION: while inside a zone, occupants hear each other but NOT the plaza,
+// and the plaza does NOT hear them (and vice versa) — e.g. by moving the participant to a
+// per-zone LiveKit audio group / muting cross-zone tracks on enter, restoring on leave. This
+// module stays presentation-only; nothing here touches voice/LiveKit.
+// ────────────────────────────────────────────────────────────────────────────────────────
 
 const EMBER = 0xff6a2c;   // Smoking — warm ember
 const TEAL  = 0x27c6c6;   // Networking — cool teal
 const C = STAGE_POS;      // arc centre = stage centre (0,0,−7)
 
-// A point on the arc of `radius` at bearing `a` (three's cylinder convention: x=R·sinθ,
-// z=R·cosθ, θ from +Z toward +X), in WORLD space.
 const onArc = (radius, a) => new THREE.Vector3(C.x + radius * Math.sin(a), 0, C.z + radius * Math.cos(a));
 const bearing = (x, z) => Math.atan2(x - C.x, z - C.z);
 const radiusOf = (x, z) => Math.hypot(x - C.x, z - C.z);
 
-// Each zone: an ENTRANCE front-centre point (fx,fz) on its arc, and a DETECTION circle sitting
-// just inside (past the door/gate) so the HUD pill fires on actually entering. Networking is
-// the deeper, larger destination.
 export const ZONE_DEFS = [
   {
     id: 'smoking', name: 'Smoking Area', emoji: '🚬', hue: EMBER,
-    fx: -13, fz: 19,            // park gate, back-left
-    cx: -14.1, cz: 21.2, r: 3.2, // detection: past the gate
+    fx: -13, fz: 19,             // park gate, back-left
+    cx: -14.1, cz: 21.2, r: 3.2, // detection: inside the clearing (past the gate)
     lettersText: 'SMOKING AREA', lettersH: 2.0,
-    plaque: 'Permissionless talk. The closer you stand, the better you hear. Entry: ticket + mic permission — your mic is ON in here. Every smoker gets a lit cigarette. 🚬',
+    plaque: 'Permissionless talk. The closer you stand, the better you hear. Entry: ticket + mic permission — your mic is ON in here.',
   },
   {
     id: 'networking', name: 'Networking', emoji: '🤝', hue: TEAL,
-    fx: 6, fz: 24,             // hall doorway, back centre/right ("opposite the stage")
+    fx: 6, fz: 24,               // hall doorway, back centre/right
     cx: 6.48, cz: 26.46, r: 3.4, // detection: inside the hall
     lettersText: 'NETWORKING', lettersH: 2.6,
     plaque: 'Meet people. Ask to talk — mic by mutual permission. Entry with ticket.',
   },
 ];
 
-// ── Detection seam (API unchanged from 3.13 — only the bounds moved) ────────────────
+// ── Detection seam (API unchanged — only the bounds/enclosure moved) ────────────────
 const _subs = new Set();
 let _current = null;
 let _lastX = Infinity, _lastZ = Infinity;
@@ -76,53 +78,75 @@ export const zones = {
   },
 };
 
-// ── Shared materials (cheap: a handful, reused across all meshes; emissive-via-MeshBasic,
-// no lights, no shadows, fog-aware so distance fades to the sky for free) ────────────────
+// ── Decoration seam ─────────────────────────────────────────────────────────────────
+// Named references INTO each enclosed interior, so a later slice (or the owner's generated
+// wall textures / GLB props: tables, sofas, cigar bar, benches) can attach without hunting
+// the scene graph. Populated by buildZoneScenery(). Shapes:
+//   zoneAnchors.networking = { walls:[back,left,right], floor, ceiling, propSpawns:[Object3D…] }
+//   zoneAnchors.smoking    = { ground, perimeter:[back,left,right,frontL,frontR], propSpawns:[…] }
+// `propSpawns` are empty Object3D transforms parked at interior spots (world-correct via their
+// parent group) — read `.matrixWorld` / parent them to drop furniture at the right place.
+export const zoneAnchors = { networking: null, smoking: null };
+
+// ── Shared materials (cheap: a handful, reused; emissive-via-MeshBasic, no lights/shadows,
+// fog-aware; interior surfaces are flat dark TEXTURE-READY canvases) ─────────────────────
 const M = {
-  wall:  new THREE.MeshBasicMaterial({ color: 0x0b111c, side: THREE.DoubleSide }), // dark building shell
-  floorDark: new THREE.MeshBasicMaterial({ color: 0x05080e, side: THREE.DoubleSide, transparent: true, opacity: 0.92 }),
-  post:  new THREE.MeshBasicMaterial({ color: 0x11151f }),
-  teal:  new THREE.MeshBasicMaterial({ color: TEAL, transparent: true, opacity: 0.9 }),  // emissive trim
-  ember: new THREE.MeshBasicMaterial({ color: EMBER, transparent: true, opacity: 0.9 }),
-  tealLine: new THREE.MeshBasicMaterial({ color: TEAL, transparent: true, opacity: 0.5, depthWrite: false }),
-  tree:  new THREE.MeshBasicMaterial({ color: 0x231206 }), // dark ember-tinted silhouette (fog fades depth)
+  wall:     new THREE.MeshBasicMaterial({ color: 0x0b111c, side: THREE.DoubleSide }), // facade
+  interior: new THREE.MeshBasicMaterial({ color: 0x0a0e16, side: THREE.DoubleSide }), // hall walls/ceiling
+  floorNet: new THREE.MeshBasicMaterial({ color: 0x0a1218, side: THREE.DoubleSide }), // hall floor
+  hedge:    new THREE.MeshBasicMaterial({ color: 0x0a1108, side: THREE.DoubleSide }), // clearing perimeter
+  groundSmk:new THREE.MeshBasicMaterial({ color: 0x100b07, side: THREE.DoubleSide }), // clearing ground
+  post:     new THREE.MeshBasicMaterial({ color: 0x11151f }),
+  teal:     new THREE.MeshBasicMaterial({ color: TEAL, transparent: true, opacity: 0.9 }),
+  ember:    new THREE.MeshBasicMaterial({ color: EMBER, transparent: true, opacity: 0.9 }),
+  tree:     new THREE.MeshBasicMaterial({ color: 0x231206 }), // dark ember-tinted silhouette
 };
-const trimMat = (hue) => (hue === TEAL ? M.teal : M.ember);
 
-// ── Scenery ─────────────────────────────────────────────────────────────────────────
-export function buildZoneScenery(scene) {
-  const group = new THREE.Group();
-  group.name = 'zoneScenery';
-  group.add(buildNetworking(ZONE_DEFS[1]));
-  group.add(buildSmoking(ZONE_DEFS[0]));
-  scene.add(group);
-  return group;
-}
-
-// A group anchored on the arc at (radius, angle) with local +Z pointing OUTWARD (deeper into
-// the building) and +X tangent — so children can be authored in simple local space.
+const plane = (w, h, mat) => new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+const hedge = (w, h) => new THREE.Mesh(new THREE.PlaneGeometry(w, h), M.hedge);
+// A group on the arc at (radius, angle): local +Z points OUTWARD (deeper), +X tangent.
 function radialGroup(radius, a) {
   const g = new THREE.Group();
   g.position.copy(onArc(radius, a));
   g.rotation.y = a;
   return g;
 }
+// An empty prop-spawn transform at interior-local (x,z), added to `group` and named.
+function addAnchor(group, x, z, name) {
+  const o = new THREE.Object3D();
+  o.position.set(x, 0, z);
+  o.name = name;
+  group.add(o);
+  return o;
+}
 
-// NETWORKING — a tall curved front wall (arc concentric with the stage) with a doorway gap,
-// a teal lintel trim, big letters above, and a simple deep shell receding into the dark.
+// ── Scenery ─────────────────────────────────────────────────────────────────────────
+export function buildZoneScenery(scene) {
+  const group = new THREE.Group();
+  group.name = 'zoneScenery';
+  const net = buildNetworking(ZONE_DEFS[1]);
+  const smk = buildSmoking(ZONE_DEFS[0]);
+  group.add(net.group, smk.group);
+  zoneAnchors.networking = net.anchors;
+  zoneAnchors.smoking = smk.anchors;
+  scene.add(group);
+  return group;
+}
+
+// NETWORKING — curved front facade with a doorway, fully enclosed by side + back walls and a
+// ceiling → from the plaza you see only the facade and a dark doorway; nothing inside.
 function buildNetworking(zn) {
   const g = new THREE.Group();
-  const R = radiusOf(zn.fx, zn.fz);       // facade radius (fits its position on the venue arc)
+  const R = radiusOf(zn.fx, zn.fz);
   const th = bearing(zn.fx, zn.fz);
-  const H = 5.4;                          // wall height
-  const wallHalf = 0.22;                  // arc half-width (each side of centre)
-  const doorHalf = 0.055;                 // doorway half-width (a walk-through gap)
-  const INTERIOR_DEPTH = 9;               // shell length — SEAM: occupancy scales this later (10 vs 300 ppl); static now
+  const H = 5.4;                    // wall/ceiling height (generous — people + future furniture)
+  const wallHalf = 0.22, doorHalf = 0.055;
+  const D = 9;                      // INTERIOR_DEPTH — SEAM: occupancy scales this later; static now
+  const HW = R * Math.sin(wallHalf) + 0.05; // interior half-width ≈ facade half-chord (~6.9)
 
-  // Two dark wall arcs flanking the doorway (openEnded cylinder segments = curved walls).
+  // Curved dark facade: two wall arcs flanking the doorway + teal lintel + door jambs.
   g.add(arcWall(R, H, th - wallHalf, wallHalf - doorHalf, M.wall));
-  g.add(arcWall(R, H, th + doorHalf,  wallHalf - doorHalf, M.wall));
-  // Teal lintel trim across the full span (bridges the doorway top) + door-jamb glow strips.
+  g.add(arcWall(R, H, th + doorHalf, wallHalf - doorHalf, M.wall));
   g.add(arcWall(R + 0.02, 0.22, th - wallHalf, wallHalf * 2, M.teal, { y: H - 0.11 }));
   for (const s of [-1, 1]) {
     const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.12, H, 0.12), M.teal);
@@ -130,66 +154,83 @@ function buildNetworking(zn) {
     g.add(jamb);
   }
 
-  // Deep shell behind the doorway: dark floor + back wall (fog fades it) + two receding teal
-  // edge-glow lines suggesting depth. All authored in a radial group (local +Z = outward).
-  const shell = radialGroup(R, th);
-  const arcW = 2 * wallHalf * R;                        // interior width ≈ facade width
-  const floorPln = new THREE.Mesh(new THREE.PlaneGeometry(arcW, INTERIOR_DEPTH), M.floorDark);
-  floorPln.rotation.x = -Math.PI / 2; floorPln.position.set(0, 0.02, INTERIOR_DEPTH / 2);
-  shell.add(floorPln);
-  const back = new THREE.Mesh(new THREE.PlaneGeometry(arcW, H), M.wall);
-  back.position.set(0, H / 2, INTERIOR_DEPTH); shell.add(back);
-  for (const s of [-1, 1]) {
-    const line = new THREE.Mesh(new THREE.PlaneGeometry(0.08, INTERIOR_DEPTH), M.tealLine);
-    line.rotation.x = -Math.PI / 2; line.position.set(s * (arcW / 2 - 0.2), 0.04, INTERIOR_DEPTH / 2);
-    shell.add(line);
-  }
-  g.add(shell);
+  // Enclosure — clean dark texture-ready planes. Planes span local z ∈ [−1, D] so their front
+  // edge tucks behind the (slightly bowed) facade ends → no corner gaps to see through.
+  const room = radialGroup(R, th);
+  const zc = (D - 1) / 2;
+  const floor = plane(2 * HW, D + 1, M.floorNet);  floor.rotation.x = -Math.PI / 2; floor.position.set(0, 0.02, zc);
+  const ceiling = plane(2 * HW, D + 1, M.interior); ceiling.rotation.x = Math.PI / 2; ceiling.position.set(0, H, zc);
+  const back = plane(2 * HW, H, M.interior);        back.position.set(0, H / 2, D);
+  const left = plane(D + 1, H, M.interior);         left.rotation.y = Math.PI / 2;  left.position.set(-HW, H / 2, zc);
+  const right = plane(D + 1, H, M.interior);        right.rotation.y = -Math.PI / 2; right.position.set(HW, H / 2, zc);
+  room.add(floor, ceiling, back, left, right);
+  const propSpawns = [
+    addAnchor(room, 0, 3.5, 'net-centre'),
+    addAnchor(room, -4, 5, 'net-sofa-L'),
+    addAnchor(room, 4, 5, 'net-sofa-R'),
+    addAnchor(room, 0, 7.5, 'net-back'),
+  ];
+  g.add(room);
 
-  // Big wayfinding letters above the doorway, facing the audience (inward).
-  g.add(placeLetters(zn, R + 0.1, th, H + 1.3));
-  // Plaque beside the entrance.
-  g.add(placePlaque(zn, R, th + wallHalf + 0.06));
-  return g;
+  g.add(placeLetters(zn, R + 0.1, th, H + 1.3));          // wayfinding name above the facade
+  g.add(placePlaque(zn, R, th + wallHalf + 0.06));        // plaque beside the entrance
+
+  return { group: g, anchors: { walls: [back, left, right], floor, ceiling, propSpawns } };
 }
 
-// SMOKING — a park gate (two posts + arch beam), the name over the arch, and a receding
-// treeline screening the (empty for now) interior.
+// SMOKING — a park gate opening into an ENCLOSED clearing: distinct ground + a closed hedge
+// perimeter (back + sides + gate-flanking fronts) so the plaza sees only the gate opening;
+// dense trees screen + a receding treeline forms the horizon backdrop.
 function buildSmoking(zn) {
   const g = new THREE.Group();
   const R = radiusOf(zn.fx, zn.fz);
   const th = bearing(zn.fx, zn.fz);
-  const postH = 3.6, gateHalf = 0.07;     // ~4 m opening
+  const postH = 3.6, gateHalf = 0.07;
+  const CW = 11, CD = 10, HH = 3.0; // clearing width/depth, hedge height
 
+  // Gate: posts + ember caps + arch beam + sign frame.
   for (const s of [-1, 1]) {
     const a = th + s * gateHalf;
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.36, postH, 0.36), M.post);
-    post.position.copy(onArc(R, a)); post.position.y = postH / 2; post.rotation.y = a;
-    g.add(post);
+    post.position.copy(onArc(R, a)); post.position.y = postH / 2; post.rotation.y = a; g.add(post);
     const cap = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.5), M.ember);
-    cap.position.copy(onArc(R, a)); cap.position.y = postH; cap.rotation.y = a;
-    g.add(cap);
+    cap.position.copy(onArc(R, a)); cap.position.y = postH; cap.rotation.y = a; g.add(cap);
   }
-  // Arch beam across the top + an ember sign frame the letters sit over.
   const beamG = radialGroup(R, th);
   const beamW = 2 * gateHalf * R + 0.8;
-  const beam = new THREE.Mesh(new THREE.BoxGeometry(beamW, 0.34, 0.3), M.post);
-  beam.position.y = postH + 0.05; beamG.add(beam);
-  const frame = new THREE.Mesh(new THREE.BoxGeometry(beamW, 0.08, 0.34), M.ember);
-  frame.position.y = postH + 0.24; beamG.add(frame);
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(beamW, 0.34, 0.3), M.post); beam.position.y = postH + 0.05; beamG.add(beam);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(beamW, 0.08, 0.34), M.ember); frame.position.y = postH + 0.24; beamG.add(frame);
   g.add(beamG);
 
-  // Name over the arch, facing the audience.
+  // Enclosed clearing: distinct ground + closed hedge perimeter (only the gate opening is a gap).
+  const yard = radialGroup(R, th);
+  const gapHalf = R * Math.sin(gateHalf) + 0.2;   // half the gate opening, local x (~2.2)
+  const zc = CD / 2;
+  const ground = plane(CW, CD, M.groundSmk); ground.rotation.x = -Math.PI / 2; ground.position.set(0, 0.02, zc);
+  const back = hedge(CW, HH); back.position.set(0, HH / 2, CD);
+  const leftH = hedge(CD, HH); leftH.rotation.y = Math.PI / 2; leftH.position.set(-CW / 2, HH / 2, zc);
+  const rightH = hedge(CD, HH); rightH.rotation.y = -Math.PI / 2; rightH.position.set(CW / 2, HH / 2, zc);
+  const frontW = CW / 2 - gapHalf;                // width of each gate-flanking front hedge
+  const frontL = hedge(frontW, HH); frontL.position.set(-(gapHalf + frontW / 2), HH / 2, 0);
+  const frontR = hedge(frontW, HH); frontR.position.set(gapHalf + frontW / 2, HH / 2, 0);
+  yard.add(ground, back, leftH, rightH, frontL, frontR);
+  const propSpawns = [
+    addAnchor(yard, 0, 8, 'smk-cigar-bar'),
+    addAnchor(yard, -3, 4.5, 'smk-bench-L'),
+    addAnchor(yard, 3, 4.5, 'smk-bench-R'),
+    addAnchor(yard, 0, 5, 'smk-heater'),
+  ];
+  g.add(yard);
+
   g.add(placeLetters(zn, R + 0.05, th, postH + 1.15));
-  // Treeline screening the interior (instanced, one draw call).
-  g.add(buildTreeline(R, th));
-  // Plaque beside the gate.
+  g.add(buildTreeline(R, th));                    // dense screen around the clearing + horizon backdrop
   g.add(placePlaque(zn, R, th + gateHalf + 0.12));
-  return g;
+
+  return { group: g, anchors: { ground, perimeter: [back, leftH, rightH, frontL, frontR], propSpawns } };
 }
 
 // A curved wall arc = an open-ended cylinder segment centred on the stage. `opt.y` overrides
-// the vertical centre (used for the thin lintel trim).
+// the vertical centre (thin lintel trim).
 function arcWall(radius, height, thetaStart, thetaLength, mat, opt = {}) {
   const segs = Math.max(6, Math.round((thetaLength / (Math.PI * 2)) * 220));
   const geo = new THREE.CylinderGeometry(radius, radius, height, segs, 1, true, thetaStart, thetaLength);
@@ -198,24 +239,25 @@ function arcWall(radius, height, thetaStart, thetaLength, mat, opt = {}) {
   return mesh;
 }
 
-// A receding row of cheap cone "trees" fanning out behind the gate, deterministic so they
-// don't jitter between loads. One InstancedMesh (shared geo+material); fog fades the far ones.
+// A dense tree screen wrapping the clearing (closes any hedge gaps to the eye) plus rows
+// receding to the horizon as backdrop. One InstancedMesh; deterministic; fog fades the far
+// ones. Trees start BEHIND the gate line so they never block the gate opening.
 function buildTreeline(R, th) {
-  const ROWS = 5, COLS = 7, N = ROWS * COLS;
-  const inst = new THREE.InstancedMesh(new THREE.ConeGeometry(0.55, 2.4, 7), M.tree, N);
+  const RINGS = 7, COLS = 9, N = RINGS * COLS;
+  const inst = new THREE.InstancedMesh(new THREE.ConeGeometry(0.6, 2.6, 7), M.tree, N);
   inst.frustumCulled = false;
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3();
-  const hash = (i) => { const x = Math.sin(i * 12.9898) * 43758.5453; return x - Math.floor(x); }; // deterministic
+  const hash = (i) => { const x = Math.sin(i * 12.9898) * 43758.5453; return x - Math.floor(x); };
   let i = 0;
-  for (let row = 0; row < ROWS; row++) {
+  for (let ring = 0; ring < RINGS; ring++) {
     for (let col = 0; col < COLS; col++) {
       const h1 = hash(i * 2 + 1), h2 = hash(i * 2 + 7);
-      const rr = R + 2.2 + row * 2.3 + (h1 - 0.5) * 1.2;          // deeper each row
-      const spread = 0.075 + row * 0.02;                          // fan wider with depth → a screen
+      const rr = R + 1.8 + ring * 2.1 + (h1 - 0.5) * 1.1;      // deeper each ring
+      const spread = 0.12 + ring * 0.02;                       // fan wider → wraps the sides, then recedes
       const aa = th + (col - (COLS - 1) / 2) * spread + (h2 - 0.5) * 0.03;
-      const scale = 1.1 + h1 * 0.7;
+      const scale = 1.15 + h1 * 0.8;
       const pos = onArc(rr, aa);
-      p.set(pos.x, 1.2 * scale, pos.z);
+      p.set(pos.x, 1.3 * scale, pos.z);
       inst.setMatrixAt(i, m.compose(p, q, s.set(scale, scale, scale)));
       i++;
     }
@@ -225,8 +267,6 @@ function buildTreeline(R, th) {
 }
 
 // ── Letters + plaque (canvas textures, built once) ──────────────────────────────────
-// Place big glowing name letters at (radius, angle), raised to `y`, facing the audience
-// (inward, −Z in the radial frame → same un-mirrored trick as 3.13).
 function placeLetters(zn, radius, a, y) {
   const g = radialGroup(radius, a);
   const mesh = makeLettersPlane(zn.lettersText, zn.hue, zn.lettersH);
@@ -262,8 +302,6 @@ function makeLettersPlane(text, color, worldH) {
   return mesh;
 }
 
-// A short stand + a SOLID plaque panel (opaque, per the 3.11 rules) beside the entrance,
-// facing the audience.
 function placePlaque(zn, radius, a) {
   const g = radialGroup(radius, a);
   const postH = 1.02, panelW = 1.5, panelH = 0.92;

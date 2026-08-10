@@ -134,6 +134,43 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Enclose the zones + decoration seams (3.13c)** — no new deps, no services touched:
+- Made both zones **enclosed, exclusive interiors** — not visible into from the plaza, ready
+  for future textures/props. The `zones` seam + all existing behavior are unchanged.
+- **Networking = full enclosure:** the curved facade now closes into a real room — **side
+  walls + back wall + a ceiling** joined to it (clean, flat, dark **texture-ready** planes,
+  generously sized, no decorative geometry). From the plaza you see only the facade + a **dark
+  doorway**; orbiting the sides shows a solid dark box; inside, the plaza is only visible back
+  through the doorway. Interior height 5.4 m; depth keeps the 3.13b `INTERIOR_DEPTH = 9`
+  parameter (occupancy-scaling seam still noted, still static).
+- **Smoking = enclosed clearing:** behind the gate, a distinct **texture-ready ground** walled
+  by a **closed hedge perimeter** (back + sides + two gate-flanking fronts) so the **gate is
+  the only opening**; a denser tree screen wraps it and the treeline recedes to the horizon as
+  backdrop (fog fades it). Open-air (no roof) — night sky above the hedges, as a park.
+- **Decoration registry** (`zoneAnchors`, exported from the zones module) — named refs so a
+  later slice / the owner's generated textures + GLB props attach without hunting the scene
+  graph:
+  - `zoneAnchors.networking = { walls:[back,left,right], floor, ceiling, propSpawns:[…] }`
+  - `zoneAnchors.smoking    = { ground, perimeter:[back,left,right,frontL,frontR], propSpawns:[…] }`
+  - `propSpawns` are empty `Object3D` transforms parked at interior spots (world-correct via
+    their parent), named — e.g. `net-centre`, `net-sofa-L/R`, `net-back`; `smk-cigar-bar`,
+    `smk-bench-L/R`, `smk-heater`. Verified present at the right world positions.
+- **Audio-exclusivity SEAM (note only, no behavior):** a clear code comment on the zones seam
+  states that `onChange` enter/leave will drive audio **isolation** later (zone occupants hear
+  each other, the plaza doesn't hear them, and vice versa) in the audio-zone slice. Nothing
+  here touches voice/LiveKit.
+- **Plaque copy edit:** Smoking Area loses the cigarette line → "Permissionless talk. The
+  closer you stand, the better you hear. Entry: ticket + mic permission — your mic is ON in
+  here." (The cigarette is an entry surprise, not signage.)
+- **Perf:** enclosure = ~30 large flat static meshes + **1** instanced tree mesh across both
+  zones; shared materials, emissive accents only, no lights/shadows/per-frame work; interiors
+  dark until decorated. AR: still freestanding diegetic props.
+- **Verified** in Chrome (orbited the plaza with manual renders): interiors are **not visible
+  from outside** — Networking is a closed dark box with a dark doorway; the Smoking clearing is
+  screened by hedges + trees with the gate the only opening. The enter/leave seam still fires
+  (inside hall → teal pill, past the gate → ember pill). No console errors. (Owner device-tests
+  enclosure feel + doorway scale in VR.)
+
 **Zone buildings — push-back + facades (3.13b)** — no new deps, no services touched:
 - The 3.13 zones read as floor decals right next to the crowd. Reworked into **distant
   destination buildings across a plaza** — a real courtyard walk — with real entrances.
