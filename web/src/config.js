@@ -17,6 +17,11 @@ export const config = {
   // caused a /token/token 404). No silent localhost fallback: blank → clear error.
   tokenUrl: (import.meta.env.VITE_TOKEN_URL || '').trim(),
 
+  // Server ORIGIN, derived from the token URL by stripping the trailing "/token" — so the
+  // headset-login endpoints (/session-code, /session-redeem) hit the SAME backend without a
+  // new env var. Blank when VITE_TOKEN_URL is unset (login UI then surfaces "not configured").
+  serverBase: (import.meta.env.VITE_TOKEN_URL || '').trim().replace(/\/token\/?$/, ''),
+
   // Which stage room to join. Lets several independent rooms share one deployment.
   room: params.get('room') || 'main-stage',
 

@@ -17,6 +17,7 @@ const NOT_YET = 'Not available yet';
 
 export function createMenus({
   toast, onSignIn, onSwitch, onLogout, onTopUp, onActivity, onBookOpen, onSpeakerHubOpen,
+  onLoginHeadset, onEnterCode,
 } = {}) {
   const el = {
     you: $('you-menu'), youIdentity: $('you-identity'), youWallet: $('you-wallet'), youAccount: $('you-account'),
@@ -54,10 +55,14 @@ export function createMenus({
     el.youAccount.innerHTML = '';
     if (signedIn) {
       el.youAccount.appendChild(btn('Activity', 'ctl', () => onActivity && onActivity()));
+      // Cross-device: hand THIS identity to a headset via a one-time code.
+      el.youAccount.appendChild(btn('📟 Log in on headset', 'ctl', () => onLoginHeadset && onLoginHeadset()));
       el.youAccount.appendChild(btn('Switch account', 'ctl', () => onSwitch && onSwitch()));
       el.youAccount.appendChild(btn('Log out', 'ctl', () => onLogout && onLogout()));
     } else {
       el.youAccount.appendChild(btn('Sign in', 'ctl primary', () => onSignIn && onSignIn()));
+      // The redeem path IS a sign-in: type a code minted on another device.
+      el.youAccount.appendChild(btn('📟 Enter code', 'ctl', () => onEnterCode && onEnterCode()));
       el.youAccount.appendChild(btn('Activity', 'ctl soon', () => toast && toast('Sign in first')));
     }
   }

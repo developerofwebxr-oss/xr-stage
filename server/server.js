@@ -8,8 +8,10 @@
 // grants match the role.
 //
 // Endpoints:
-//   GET  /health   → { ok: true }
-//   POST /token    → { token, identity, role, room }   (see token.js)
+//   GET  /health          → { ok: true }
+//   POST /token           → { token, identity, role, room }   (see token.js)
+//   POST /session-code    → { code, expiresAt }               (see session.js)
+//   POST /session-redeem  → { pubkey, name, … }               (see session.js)
 //
 // Deploys to Railway (start: `node server.js`; Railway injects PORT). CORS is
 // locked to the client origin(s) via ALLOWED_ORIGIN.
@@ -18,6 +20,7 @@
 import express from 'express';
 import cors from 'cors';
 import { tokenHandler } from './token.js';
+import { sessionCodeHandler, sessionRedeemHandler } from './session.js';
 
 // ── Config (all from env) ───────────────────────────────────────────────────────
 const PORT = process.env.PORT || 8080;
@@ -29,6 +32,7 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || 'https://localhost:5173')
 
 // ── App ──────────────────────────────────────────────────────────────────────
 const app = express();
+app.set('trust proxy', true); // behind Railway's proxy — req.ip reflects X-Forwarded-For (redeem rate limit)
 app.use(express.json());
 app.use(cors({
   origin(origin, cb) {
@@ -43,5 +47,11 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // POST /token { room, identity, role } → { token, identity, role, room }
 app.post('/token', tokenHandler);
+
+// Cross-device "log in on your headset" pairing (public identity only; see session.js).
+// POST /session-code   { pubkey, name, picture?, nip05?, lud16? } → { code, expiresAt }
+// POST /session-redeem { code }                                   → { pubkey, name, … }
+app.post('/session-code', sessionCodeHandler);
+app.post('/session-redeem', sessionRedeemHandler);
 
 app.listen(PORT, () => console.log(`XR Stage token server listening on :${PORT}`));

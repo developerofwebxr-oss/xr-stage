@@ -381,7 +381,7 @@
 
       /* ── Modal surfaces: spend hub · amount picker · You · Stage · panels ──────── */
       #spend-menu, #zap-picker, #you-menu, #stage-menu, #instructions, #booking,
-      #compose, #activity, #micform, #speaker-hub {
+      #compose, #activity, #micform, #speaker-hub, #session-code, #session-redeem {
         position: fixed; inset: 0; z-index: 20; pointer-events: auto;
         display: flex; align-items: center; justify-content: center;
         background: rgba(3, 4, 8, 0.55);
@@ -389,12 +389,32 @@
       }
       #spend-menu[hidden], #zap-picker[hidden], #you-menu[hidden],
       #stage-menu[hidden], #instructions[hidden], #booking[hidden],
-      #compose[hidden], #activity[hidden], #micform[hidden], #speaker-hub[hidden] { display: none; }
+      #compose[hidden], #activity[hidden], #micform[hidden], #speaker-hub[hidden],
+      #session-code[hidden], #session-redeem[hidden] { display: none; }
       #spend-panel, #zap-picker-panel, #you-panel, #stage-panel, #instructions-panel,
-      #booking-panel, #compose-panel, #activity-panel, #micform-panel, #speaker-hub-panel {
+      #booking-panel, #compose-panel, #activity-panel, #micform-panel, #speaker-hub-panel,
+      #session-code-panel, #session-redeem-panel {
         position: relative; flex-direction: column; align-items: stretch; gap: 9px;
         width: min(340px, calc(100vw - 32px)); padding: 18px;
       }
+
+      /* Headset-login: big monospace code + countdown (mint), and the 6-digit input (redeem). */
+      .sc-code {
+        font-family: var(--font-mono); font-weight: 700; font-size: 44px; letter-spacing: 0.18em;
+        text-align: center; color: var(--orange-bright); text-shadow: var(--glow-orange);
+        padding: 6px 0 2px; user-select: all;
+      }
+      .sc-count { text-align: center; font-family: var(--font-mono); font-size: 13px; color: var(--ink-dim); }
+      .sc-count.expired { color: #ffb0ac; }
+      .sc-hint { font-size: 12px; color: var(--ink-faint); line-height: 1.4; }
+      .sc-hint b { color: var(--ink-dim); font-weight: 600; }
+      .sr-input {
+        font-family: var(--font-mono); font-weight: 700; font-size: 34px; letter-spacing: 0.35em;
+        text-align: center; color: var(--ink); background: var(--fill);
+        border: 1px solid var(--hairline); border-radius: var(--r-sm); padding: 10px 8px; width: 100%;
+      }
+      .sr-input:focus { outline: none; border-color: var(--orange); box-shadow: var(--glow-orange); }
+      .sr-error { font-size: 13px; color: #ffb0ac; text-align: center; }
 
       /* Booking slot list + speaker hub. */
       #booking-slots { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
@@ -612,6 +632,37 @@
           <div id="you-wallet"></div>
           <div class="pm-section">Account</div>
           <div id="you-account"></div>
+        </div>
+      </div>
+
+      <!-- Headset login — MINT side (signed-in phone/desktop): a one-time code to type on
+           the headset. Public identity only; no keys leave this device. -->
+      <div id="session-code" hidden>
+        <div id="session-code-panel" class="bar" role="dialog" aria-modal="true" aria-label="Log in on headset">
+          <button class="pc-close" id="sc-close" aria-label="Close">✕</button>
+          <div class="pm-title">Log in on headset</div>
+          <div class="pm-section">Your one-time code</div>
+          <div id="sc-code" class="sc-code">••••••</div>
+          <div id="sc-count" class="sc-count">expires in 5:00</div>
+          <div class="sc-hint">On your headset: <b>You → Sign in → Enter code</b></div>
+          <button class="ctl" id="sc-regen">Regenerate</button>
+        </div>
+      </div>
+
+      <!-- Headset login — REDEEM side (headset / any device, on the sign-in surface): type
+           the code to adopt that identity + its venue balance. -->
+      <div id="session-redeem" hidden>
+        <div id="session-redeem-panel" class="bar" role="dialog" aria-modal="true" aria-label="Enter code">
+          <button class="pc-close" id="sr-close" aria-label="Close">✕</button>
+          <div class="pm-title">Enter code</div>
+          <input id="sr-input" class="sr-input" type="text" inputmode="numeric" autocomplete="one-time-code"
+                 maxlength="6" placeholder="000000" aria-label="6-digit code" />
+          <div id="sr-error" class="sr-error" hidden></div>
+          <div class="sc-hint">From your phone/desktop: <b>You → Log in on headset</b>. In VR/AR, enter it here in flat mode first, then put on your headset.</div>
+          <div class="zp-actions">
+            <button class="ctl" id="sr-cancel">Cancel</button>
+            <button class="ctl primary" id="sr-submit">Log in ⚡</button>
+          </div>
         </div>
       </div>
 

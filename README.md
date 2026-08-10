@@ -134,6 +134,39 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Headset session code — log in your identity on VR/AR (3.9)** — one small backend
+addition, no new deps, no new env:
+- **Cross-device pairing pointed at LOGIN.** A signed-in phone/desktop mints a **6-digit,
+  one-time, ~5-min code** bound to its **public** identity profile; the headset (or any
+  device) redeems it and **adopts** that identity, so it can zap/post/queue **as that
+  person** in VR/AR. Balance follows via the existing per-pubkey wallet persistence.
+- **Server (`server/session.js`, beside `/token`):** `POST /session-code` → `{ code,
+  expiresAt }`; `POST /session-redeem` → the public profile (or `400/404/410/429`).
+  In-memory store (no DB). **No secrets ever accepted or stored** — public display fields
+  only, unknown fields dropped, no nsec touches the server (real signing stays on the origin
+  device; the headset session is a reader/spender of the venue balance). Codes are single-use
+  (deleted on first redeem), TTL-purged, and redeem is **rate-limited 10/min per IP**
+  (`trust proxy` for the real client IP). CORS reuses the existing `ALLOWED_ORIGIN`.
+- **Client:** server base is **derived from `VITE_TOKEN_URL`** (strip `/token`) — no new env.
+  - **Mint (You → “📟 Log in on headset”, signed-in):** big monospace code + live countdown
+    (“expires in 4:59”) + Regenerate + hint.
+  - **Redeem (You → “📟 Enter code”, on the sign-in surface):** 6-digit input → adopts the
+    identity (same shape as sign-in; `identity.adopt(profile)` — additive, interfaces
+    unchanged). Errors surface cleanly (“Code invalid or expired” / “Too many attempts”).
+  - **VR/AR v1:** the DOM sign-in is invisible in immersive mode, so redeem in **flat mode
+    first, then enter VR** (stated in the redeem hint). **SEAM noted in code:** the natural
+    first in-world-UI piece is a 6-digit VR keypad on the sign-in surface (far simpler than a
+    text keyboard), feeding the same `redeemCode()`/`adoptFlow()` path — not built here.
+- **Verified** (two origins = two separate localStorage stores = phone + headset): mint on
+  A (*Nova Willow*) → redeem on B → **B adopts Nova Willow**; second redeem of the same code →
+  “Code invalid or expired”; expired code → 410; bad/short codes → 400; **rate limit** → 429
+  after 10/min; the injected `secret` field was **dropped** by the server. Adopted identity
+  spends/persists under the correct pubkey (top-up on B saved 21 000 sats under her key). No
+  console errors. **Known mock limitation:** balance lives in per-browser localStorage, so it
+  does not literally sync across devices yet — resolved when the wallet goes server-side; the
+  identity adoption is the feature here. **Railway:** same service, two new routes, no new env
+  — deploy is a push (`ALLOWED_ORIGIN` already set).
+
 **Scroll feel + in-world scrollbar (3.12c)** — no new deps, no services touched:
 - **Retuned scroll to read like reading, not paging.** All input (wheel · drag · thumb · VR
   stick) now funnels through a single **target** offset; the rendered offset **eases** toward it

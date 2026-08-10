@@ -96,6 +96,24 @@ export const identity = {
   current() { return _current; },
   logout() { _current = null; },
 
+  // Become an identity handed over from ANOTHER device (headset-login redeem). The profile
+  // is PUBLIC only (pubkey + display fields) — no keys cross the wire; signing (real NIP-07)
+  // stays on the origin device, this session is a reader/spender of the venue balance. Same
+  // resulting shape as signIn(), so every caller (HUD, wallet-by-pubkey, zaps) is unchanged.
+  adopt({ pubkey, name, picture = null, nip05, lud16 } = {}) {
+    if (!/^[0-9a-f]{64}$/i.test(pubkey || '')) throw new Error('adopt: pubkey must be 64-hex');
+    const p = buildProfile(pubkey); // fill any missing display fields deterministically
+    _current = {
+      pubkey: pubkey.toLowerCase(),
+      npub: npubFromPubkey(pubkey),
+      name: name || p.name,
+      picture: picture ?? p.picture,
+      nip05: nip05 || p.nip05,
+      lud16: lud16 || p.lud16,
+    };
+    return _current;
+  },
+
   // Follow list — session-persistent mock. REAL: publish a kind:3 contact list.
   isFollowing(pubkey) { return _following.has(pubkey); },
   toggleFollow(pubkey) {

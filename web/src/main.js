@@ -13,6 +13,8 @@ import { createJoystick } from './ui/joystick.js';
 import { createProfileCard } from './ui/profileCard.js';
 import { createZapUI } from './ui/zapUI.js';
 import { createMenus } from './ui/menus.js';
+import { createSessionUI } from './ui/sessionUI.js';
+import { mintCode, redeemCode } from './session/session.js';
 import { createBoardUI } from './ui/boardUI.js';
 import { board } from './board/board.js';
 import { createCommentBoard } from './room/commentBoard.js';
@@ -186,6 +188,18 @@ hud.onFreeLook(async () => {
 const signInMethod = isMobile ? 'generate' : 'nip07';
 async function signInFlow() {
   const me = await identity.signIn(signInMethod);
+  return afterSignedIn(me);
+}
+// Headset login: adopt an identity handed over from another device (redeemed code). Same
+// post-sign-in effect as signInFlow — the wallet loads THIS pubkey's persisted balance, so
+// the headset can zap/post/queue as that person. (Balance itself is per-browser localStorage
+// today; true cross-device balance sync arrives when the wallet goes real server-side.)
+function adoptFlow(profile) {
+  const me = identity.adopt(profile);
+  return afterSignedIn(me);
+}
+// Shared "we are now signed in as `me`" side-effects (HUD chip + wallet activation).
+function afterSignedIn(me) {
   wallet.activate(me.pubkey);     // load THIS identity's persisted local balance
   hud.setSignedIn({ name: me.name, faceUrl: drawKeyface(me.pubkey, 64).toDataURL() });
   hud.showBalance(true);
@@ -268,6 +282,7 @@ hud.onComfortToggle((key, on) => comfort.set(key, on));
 function closeAllMenus() {
   hud.showMenu(false); zapUI.closeAll(); menus.closeAll();
   boardUI.closeAll(); micUI.close(); bookingUI.close(); speakerHub.close();
+  sessionUI.closeAll();
 }
 function openYou() {
   closeAllMenus();
@@ -634,6 +649,19 @@ function stageSpeakerGroup() {
   return null;
 }
 
+// Cross-device headset login (mint on phone/desktop, redeem on the headset). The redeem
+// path adopts the identity via adoptFlow — just another way to arrive at "signed in".
+// SEAM: in immersive mode the DOM is invisible, so v1 is "redeem in flat mode, then enter
+// VR" (noted in the redeem hint). The natural first IN-WORLD-UI piece is a 6-digit VR keypad
+// on the sign-in surface (a numeric pad is far simpler than a full text keyboard) — feeding
+// this same redeemCode()/adoptFlow() path. Not built in this slice.
+const sessionUI = createSessionUI({
+  toast: (m) => hud.toast(m),
+  onMint: () => mintCode(identity.current()),        // public profile → { code, expiresAt }
+  onRedeem: (code) => redeemCode(code),              // code → public profile (throws on bad)
+  onAdopted: (profile) => { adoptFlow(profile); openYou(); }, // become them; refresh the You menu
+});
+
 // The You / Stage / Instructions / Booking homes. Live actions route to the identity +
 // wallet services; not-yet buttons dim + toast inside menus.js (no fake behaviour).
 const menus = createMenus({
@@ -646,6 +674,8 @@ const menus = createMenus({
     openYou();
   },
   onTopUp: () => topUpWallet(),
+  onLoginHeadset: () => { menus.closeYou(); sessionUI.openMint(); },  // signed-in → mint a code
+  onEnterCode: () => { menus.closeYou(); sessionUI.openRedeem(); },   // signed-out → redeem a code
   onBookOpen: () => openBooking(),
   onSpeakerHubOpen: () => openSpeakerHub(),
   onActivity: () => openActivity(),
