@@ -23,6 +23,15 @@ const SCROLL_SPEED = 0.22;                 // m/s upward drift of the live feed 
 const TOP_EDGE = SCREEN_H / 2 - 0.18;      // fade/recycle bound inside the frame
 const WALL_STICKY_MS = 120_000;            // top wall holds its ranking ~2 min
 const IDLE_SNAP_MS = 10_000;               // scrolled-back view snaps to live after ~10s idle
+const SCROLL_SMOOTH_HZ = 16;               // easing rate: offset chases its target (higher = snappier, ~0.1s settle)
+
+// Slim in-world scrollbar down the LIVE panel's right edge (Live-Console: dark track,
+// subtle orange thumb). Thumb height ∝ window/history; position ∝ offset. Bottom = live.
+const SB_W = 0.06;                         // thumb width (m)
+const SB_TOP = SCREEN_H / 2 - 0.16, SB_BOTTOM = -SCREEN_H / 2 + 0.16;
+const SB_TRACK_H = SB_TOP - SB_BOTTOM;     // usable travel span
+const SB_X = SCREEN_W / 2 - 0.14;          // just inside the right frame, clear of the cards
+const SB_MIN_THUMB = 0.4;                  // shortest thumb (m) — stays grabbable with deep history
 
 export function createCommentBoard(scene, { board }) {
   const feed = makeScreen('LIVE', 0x0a0e18, BITCOIN);
@@ -41,17 +50,24 @@ export function createCommentBoard(scene, { board }) {
   let nowMs = 0; // advanced by update(dt); avoids Date.now for determinism
 
   // Per-viewer LIVE scroll — CLIENT-LOCAL state (never broadcast, never in the board).
-  // feedOffset counts comments back from live (0 = live); a float so gestures can nudge
-  // sub-comment amounts, rounded for the rendered window. paused while scrolled back.
-  let feedOffset = 0, idleMs = 0;
+  // feedOffset counts comments back from live (0 = live). It EASES toward feedTarget so a
+  // gesture reads like scrolling, not paging: input nudges the target, the rendered offset
+  // catches up over ~0.1s (reduced-motion → instant). Rounded for the rendered window.
+  let feedOffset = 0, feedTarget = 0, idleMs = 0, builtOffset = -1;
   const feedInt = () => Math.round(feedOffset);
-  const paused = () => feedInt() > 0;
+  const maxOffset = () => Math.max(0, board.count() - FEED_N);
+  const paused = () => feedTarget > 0.01 || feedOffset > 0.01;
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
   // The "● LIVE" affordance — a chip on YOUR view of the panel, shown only when scrolled
   // back. Tapping it (or ~10s idle) snaps to the live flow. Raycast target (liveChip).
   const liveChip = makeLiveChip();
   liveChip.visible = false;
   feed.group.add(liveChip);
+
+  // Slim scrollbar (track + thumb) down the right edge — a real grabbable window scrollbar.
+  const scrollbar = makeScrollbar();
+  feed.group.add(scrollbar.group);
 
   function rebuildFeed() {
     disposeCards(feed.content, feedCards);
@@ -62,7 +78,20 @@ export function createCommentBoard(scene, { board }) {
       feed.content.add(mesh);
       return { mesh, id: c.id };
     });
-    liveChip.visible = paused();
+    builtOffset = feedInt();
+  }
+
+  // Reposition/resize the scrollbar thumb from the current offset. Cheap: one mesh moved +
+  // Y-scaled, no canvas work. Hidden when there's nothing to scroll (history ≤ window).
+  function updateScrollbar() {
+    const max = maxOffset();
+    scrollbar.group.visible = max > 0;
+    if (max <= 0) return;
+    const thumbH = Math.max(SB_MIN_THUMB, (FEED_N / board.count()) * SB_TRACK_H);
+    const travel = SB_TRACK_H - thumbH;
+    const posFrac = THREE.MathUtils.clamp(feedOffset / max, 0, 1); // 0 = live (bottom)
+    scrollbar.thumb.scale.y = thumbH;
+    scrollbar.thumb.position.y = SB_BOTTOM + thumbH / 2 + posFrac * travel;
   }
 
   function rebuildWall() {
@@ -86,11 +115,26 @@ export function createCommentBoard(scene, { board }) {
   const unsub = board.onChange(onBoardChange);
   rebuildFeed();
   rebuildWall();
+  updateScrollbar();
 
   const edgeFade = (mesh) => { mesh.material.opacity = THREE.MathUtils.clamp((TOP_EDGE + 0.2 - Math.abs(mesh.position.y)) / 0.5, 0, 1); };
 
   function update(dt) {
     nowMs += dt * 1000;
+
+    // Ease the rendered offset toward the target (or snap, for reduced-motion). Rebuild the
+    // window only when the ROUNDED offset crosses an integer — so a multi-step scroll glides
+    // through every comment (each rendered for a frame or two, readable) instead of jumping.
+    if (reduceMotion.matches) {
+      feedOffset = feedTarget;
+    } else if (feedOffset !== feedTarget) {
+      feedOffset += (feedTarget - feedOffset) * (1 - Math.exp(-SCROLL_SMOOTH_HZ * dt));
+      if (Math.abs(feedTarget - feedOffset) < 0.002) feedOffset = feedTarget;
+    }
+    if (feedInt() !== builtOffset) rebuildFeed();
+    liveChip.visible = paused();   // may flip without a rebuild (e.g. easing back to live)
+    updateScrollbar();
+
     if (feedCards.length) {
       if (!paused()) {
         // LIVE: scroll upward, recycle a card past the top, fade the vertical overflow.
@@ -117,23 +161,36 @@ export function createCommentBoard(scene, { board }) {
     return top !== wallCards.map((c) => c.id).join(',');
   }
 
-  // Client-local scroll of MY live view. deltaComments may be fractional (gesture nudge);
-  // re-textures only when the rounded window changes (never per frame).
-  function scrollFeed(deltaComments) {
-    const max = Math.max(0, board.count() - FEED_N);
-    const next = THREE.MathUtils.clamp(feedOffset + deltaComments, 0, max);
-    if (next === feedOffset) return;
-    const wasInt = feedInt();
-    feedOffset = next;
+  // Client-local scroll of MY live view — all input funnels through the TARGET; the render
+  // eases to it (update). deltaComments may be fractional (wheel step, drag nudge, VR stick).
+  function scrollBy(deltaComments) {
+    feedTarget = THREE.MathUtils.clamp(feedTarget + deltaComments, 0, maxOffset());
     idleMs = 0;
-    if (feedInt() !== wasInt) rebuildFeed();
   }
-  function snapLive() {
+  function pageBy(dir) { scrollBy(dir * FEED_N); } // one window up/down (track-tap)
+
+  // Scrollbar-thumb scrub: map a world point on the panel to an offset and jump there
+  // DIRECTLY (no easing) so the thumb tracks the finger 1:1. `point` is any ray hit on the
+  // panel (thumb, track, or backdrop) — we only use its vertical position along the track.
+  const _lp = new THREE.Vector3();
+  function scrubToWorld(point) {
+    const max = maxOffset();
+    if (max <= 0) return;
+    feed.group.worldToLocal(_lp.copy(point));
+    const thumbH = Math.max(SB_MIN_THUMB, (FEED_N / board.count()) * SB_TRACK_H);
+    const travel = SB_TRACK_H - thumbH;
+    const centerMin = SB_BOTTOM + thumbH / 2;
+    const posFrac = travel > 0 ? THREE.MathUtils.clamp((_lp.y - centerMin) / travel, 0, 1) : 0;
+    feedTarget = feedOffset = posFrac * max;
     idleMs = 0;
-    if (feedOffset === 0) return;
-    feedOffset = 0;
-    rebuildFeed();
   }
+  // Track-tap above/below the thumb pages one window toward older/newer.
+  function pageAtWorld(point) {
+    if (maxOffset() <= 0) return;
+    feed.group.worldToLocal(_lp.copy(point));
+    pageBy(_lp.y > scrollbar.thumb.position.y ? 1 : -1); // above thumb (higher) → older
+  }
+  function snapLive() { feedTarget = 0; idleMs = 0; } // eases to live; thumb → bottom
 
   return {
     update,
@@ -141,9 +198,12 @@ export function createCommentBoard(scene, { board }) {
     pickables: () => feedCards.concat(wallCards).map((c) => c.mesh),
     // LIVE-panel raycast targets for the scroll gesture (backdrop + cards + the live chip).
     liveTargets: () => [feed.backdrop].concat(feedCards.map((c) => c.mesh), liveChip.visible ? [liveChip] : []),
+    // Scrollbar raycast targets (track + thumb) — only while there's history to scroll.
+    scrollTargets: () => (scrollbar.group.visible ? [scrollbar.track, scrollbar.thumb] : []),
     isLiveChip: (obj) => obj === liveChip,
     isLivePaused: paused,
-    scrollFeed, snapLive,
+    scrollBy, scrollToOffset: (v) => { feedTarget = THREE.MathUtils.clamp(v, 0, maxOffset()); idleMs = 0; },
+    scrubToWorld, pageAtWorld, snapLive,
     refresh: onBoardChange,
     dispose() { unsub(); },
   };
@@ -169,6 +229,34 @@ function makeLiveChip() {
   chip.renderOrder = 4; // above cards
   chip.userData.liveChip = true;
   return chip;
+}
+
+// The slim window scrollbar: a dark track quad + a subtle-orange thumb quad on the panel's
+// right edge (Live-Console styling). The thumb is a UNIT-height plane repositioned/​Y-scaled
+// each change — no per-frame canvas work. Both are raycast targets (grab / track-tap).
+function makeScrollbar() {
+  const group = new THREE.Group();
+  group.position.z = 0.045; // above the backdrop, clear of the cards' right edge
+
+  const track = new THREE.Mesh(
+    new THREE.PlaneGeometry(SB_W * 0.55, SB_TRACK_H + SB_W),
+    new THREE.MeshBasicMaterial({ color: 0x0c111b, transparent: true, opacity: 0.6, depthWrite: false }),
+  );
+  track.position.set(SB_X, 0, 0);
+  track.renderOrder = 3;
+  track.userData.scrollTrack = true;
+  group.add(track);
+
+  const thumb = new THREE.Mesh(
+    new THREE.PlaneGeometry(SB_W, 1), // unit height; scaled in Y to the window/history ratio
+    new THREE.MeshBasicMaterial({ color: 0xf7931a, transparent: true, opacity: 0.55, depthWrite: false }),
+  );
+  thumb.position.set(SB_X, 0, 0.01);
+  thumb.renderOrder = 4;
+  thumb.userData.scrollThumb = true;
+  group.add(thumb);
+
+  return { group, track, thumb };
 }
 
 // ── One screen: dark glass backdrop + orange frame + a title plate ────────────────

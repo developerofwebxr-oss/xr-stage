@@ -459,24 +459,28 @@ function pickFromRaycaster() {
   const dom = renderer.domElement;
   const _sv = new THREE.Vector2();
   const DRAG_THRESH_PX = 8;   // beyond this a pointer is a scroll, not a tap
-  const STEP_PX = 55;         // px of vertical drag per one comment scrolled
-  let drag = null;
+  const STEP_PX = 64;         // px of vertical finger/mouse travel per one comment (≈ a card's on-screen height → ~1:1)
+  const WHEEL_STEP_PX = 100;  // px of wheel travel per one comment (≈ one classic mouse notch)
+  const WHEEL_LINE_PX = 33;   // deltaMode=1 (lines) → px (~3 lines per notch ≈ one comment)
+  let drag = null, wheelAccum = 0;
 
-  // Parse a pointer against the LIVE panel → { chip, cardId, point } or null. The "● live"
-  // chip WINS when the ray passes through it (it's the small explicit affordance on top),
-  // even at grazing angles where a card can sort nearer; otherwise the first card wins.
+  // Parse a pointer against the LIVE panel → { kind, cardId, point } or null. Priority when a
+  // ray passes through several targets (they can sort out of visual order at grazing angles):
+  // scrollbar THUMB > "● live" CHIP > scrollbar TRACK > comment CARD > bare panel backdrop.
   const rayParse = (e) => {
     const r = dom.getBoundingClientRect();
     _sv.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     raycaster.setFromCamera(_sv, camera);
-    const hits = raycaster.intersectObjects(commentBoard.liveTargets(), true);
+    const hits = raycaster.intersectObjects(commentBoard.liveTargets().concat(commentBoard.scrollTargets()), true);
     if (!hits.length) return null;                 // not the LIVE panel
-    let chip = false, cardId = null, point = hits[0].point.clone();
-    for (const h of hits) {
-      if (h.object.userData?.liveChip) { chip = true; point = h.point.clone(); break; }
-      if (h.object.userData?.commentId && !cardId) { cardId = h.object.userData.commentId; point = h.point.clone(); }
+    for (const h of hits) {                         // explicit controls win over cards/backdrop
+      const u = h.object.userData || {};
+      if (u.scrollThumb) return { kind: 'thumb', cardId: null, point: h.point.clone() };
+      if (u.liveChip)    return { kind: 'chip',  cardId: null, point: h.point.clone() };
+      if (u.scrollTrack) return { kind: 'track', cardId: null, point: h.point.clone() };
     }
-    return { chip, cardId, point };
+    for (const h of hits) if (h.object.userData?.commentId) return { kind: 'card', cardId: h.object.userData.commentId, point: h.point.clone() };
+    return { kind: 'panel', cardId: null, point: hits[0].point.clone() };
   };
 
   dom.addEventListener('pointerdown', (e) => {
@@ -484,33 +488,50 @@ function pickFromRaycaster() {
     const p = rayParse(e);
     if (!p) return;                                // not the LIVE panel → normal handlers
     e.stopImmediatePropagation();                  // own it: no camera look, no tap-pick
-    drag = { id: e.pointerId, startY: e.clientY, lastY: e.clientY, moved: false, chip: p.chip, cardId: p.cardId, point: p.point };
+    drag = { id: e.pointerId, startY: e.clientY, lastY: e.clientY, moved: false, kind: p.kind, cardId: p.cardId, point: p.point };
   }, true);
 
   dom.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.id) return;
     e.stopImmediatePropagation();
     if (Math.abs(e.clientY - drag.startY) > DRAG_THRESH_PX) drag.moved = true;
-    if (drag.moved) commentBoard.scrollFeed((e.clientY - drag.lastY) / STEP_PX); // drag down → older
+    if (drag.kind === 'thumb' || drag.kind === 'track') {
+      if (drag.moved) { const p = rayParse(e); if (p) commentBoard.scrubToWorld(p.point); } // grab & slide, 1:1
+    } else if (drag.moved) {
+      commentBoard.scrollBy((e.clientY - drag.lastY) / STEP_PX); // drag down → older (~card-height per comment)
+    }
     drag.lastY = e.clientY;
   }, true);
 
   const endDrag = (e) => {
     if (!drag || e.pointerId !== drag.id) return;
     e.stopImmediatePropagation();
-    if (!drag.moved) {                             // a clean tap
-      if (drag.chip) commentBoard.snapLive();
-      else if (drag.cardId) tapBoost(drag.cardId, drag.point);
+    if (!drag.moved) {                             // a clean tap (no drag travel)
+      if (drag.kind === 'chip') commentBoard.snapLive();
+      else if (drag.kind === 'track') commentBoard.pageAtWorld(drag.point); // page one window toward the tap
+      else if (drag.kind === 'card' && drag.cardId) tapBoost(drag.cardId, drag.point);
     }
     drag = null;
   };
   dom.addEventListener('pointerup', endDrag, true);
   dom.addEventListener('pointercancel', endDrag, true);
 
+  // Wheel: normalize deltaMode (pixels/lines/pages), accumulate, and emit AT MOST one comment
+  // per event — so a mouse notch = one comment and a trackpad's flood of large deltas (or an
+  // inertial fling) can't blow through the whole history in a frame.
   dom.addEventListener('wheel', (e) => {
     if (!rayParse(e)) return;
     e.preventDefault();
-    commentBoard.scrollFeed(e.deltaY < 0 ? 1 : -1); // wheel up → older
+    let dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= WHEEL_LINE_PX;         // lines → px
+    else if (e.deltaMode === 2) dy *= dom.clientHeight; // pages → px
+    if (Math.sign(dy) !== Math.sign(wheelAccum)) wheelAccum = 0; // direction reversal → drop stale accum
+    wheelAccum += dy;
+    let steps = Math.trunc(wheelAccum / WHEEL_STEP_PX);
+    if (!steps) return;
+    wheelAccum -= steps * WHEEL_STEP_PX;                // consume (overflow beyond the clamp is dropped, not queued)
+    steps = Math.max(-1, Math.min(1, steps));           // ≤ 1 comment per wheel event
+    commentBoard.scrollBy(-steps);                       // wheel up (dy<0) → older (offset+)
   }, { passive: false });
 }
 
@@ -539,6 +560,9 @@ const xrControllers = []; // for the VR board-scroll (frame loop reads the right
       controller.userData.inputSource = e.data;
     });
     controller.addEventListener('disconnected', () => { ray.visible = false; controller.userData.inputSource = null; });
+    // Grip held = scrub the scrollbar thumb (VR thumb-drag); tracked for updateVRBoardScroll.
+    controller.addEventListener('squeezestart', () => { controller.userData.gripping = true; });
+    controller.addEventListener('squeezeend', () => { controller.userData.gripping = false; });
 
     controller.addEventListener('select', () => {
       _m.identity().extractRotation(controller.matrixWorld);
@@ -907,18 +931,28 @@ syncViewport(); // initial
 // this game. Device-only (headless can't enter immersive). Grip-drag was the alternative;
 // this is lighter and reuses a free axis.
 const _vrM = new THREE.Matrix4();
+const VR_SCROLL_RATE = 5; // comments/sec at full stick deflection (eased target, device feel)
 function updateVRBoardScroll(dt) {
   if (!renderer.xr.isPresenting) return;
   for (const ctrl of xrControllers) {
     if (ctrl.userData.handedness !== 'right') continue;
-    const y = ctrl.userData.inputSource?.gamepad?.axes?.[3] ?? 0;
-    if (Math.abs(y) < 0.2) continue;                 // deadzone
     _vrM.identity().extractRotation(ctrl.matrixWorld);
     raycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
     raycaster.ray.direction.set(0, 0, -1).applyMatrix4(_vrM).normalize();
     raycaster.camera = camera;
+
+    // Grip held + aim at the thumb (or track) = scrub the scrollbar to that point (1:1).
+    if (ctrl.userData.gripping) {
+      const hit = raycaster.intersectObjects(commentBoard.scrollTargets(), true)[0]
+               || raycaster.intersectObjects(commentBoard.liveTargets(), true)[0];
+      if (hit) commentBoard.scrubToWorld(hit.point);
+      continue;                                        // grip owns the input; skip stick scroll
+    }
+    // Otherwise: aim at the LIVE panel + right-stick Y scrolls (eased).
+    const y = ctrl.userData.inputSource?.gamepad?.axes?.[3] ?? 0;
+    if (Math.abs(y) < 0.2) continue;                   // deadzone
     if (raycaster.intersectObjects(commentBoard.liveTargets(), true).length) {
-      commentBoard.scrollFeed(-y * 4 * dt);          // stick up (y<0) → older comments
+      commentBoard.scrollBy(-y * VR_SCROLL_RATE * dt); // stick up (y<0) → older comments
     }
   }
 }

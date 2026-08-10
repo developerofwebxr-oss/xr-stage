@@ -134,6 +134,39 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Scroll feel + in-world scrollbar (3.12c)** — no new deps, no services touched:
+- **Retuned scroll to read like reading, not paging.** All input (wheel · drag · thumb · VR
+  stick) now funnels through a single **target** offset; the rendered offset **eases** toward it
+  (`SCROLL_SMOOTH_HZ = 16` → ~0.25 s settle), gliding through **every** intermediate comment
+  (each rendered a frame or two, readable) instead of snapping multiple rows. `prefers-reduced-
+  motion` → instant steps, no easing.
+  - **Wheel:** `deltaMode` normalized (lines ×`WHEEL_LINE_PX = 33`, pages × panel px), deltas
+    **accumulated** per `WHEEL_STEP_PX = 100` (≈ one classic notch), and **clamped to ≤ 1 comment
+    per event** — so one notch = one comment and a trackpad's flood of large/inertial deltas can't
+    blow through the whole history. (Verified: 1 notch → 1; a single `deltaY 5000` → 1; 200 px of
+    tiny trackpad deltas → 2.)
+  - **Drag:** `STEP_PX = 64` px of finger/mouse travel per comment (≈ a card's on-screen height →
+    ~1:1). The old per-move delta was already once-per-gesture, but the target+ease model kills any
+    residual multi-row jump.
+  - **VR:** right-stick-Y routes through the same eased target (`VR_SCROLL_RATE = 5` comments/s at
+    full deflection). Device feel is owner-tested.
+- **Slim in-world scrollbar** down the LIVE panel's right edge (Live-Console: dark track, subtle
+  orange thumb — one quad, Y-scaled + repositioned on change, **no per-frame canvas**):
+  - Thumb height ∝ window/history (`FEED_N / count`, floored at `SB_MIN_THUMB = 0.4 m` so it stays
+    grabbable); position ∝ offset. **Bottom = live**; hidden when history ≤ the window.
+  - **Draggable** (mouse · touch · VR aim+grip): grab the thumb (or the track) and slide — maps the
+    ray's panel-Y to an offset **1:1** and jumps there directly (thumb tracks the finger). Dragging
+    the thumb **never boosts** (it's classified above cards in the raycast).
+  - **Track-tap** above / below the thumb **pages** one window toward older / newer.
+  - Raycast priority (targets can sort out of visual order at grazing angles): **thumb > "● live"
+    chip > track > card > backdrop.** The chip + ~10 s idle snap-back are unchanged (thumb → bottom
+    = live). Tap-boost + the boost-by-tap toggle rules are intact.
+- Verified in Chrome with real event dispatch + deterministic frame-stepping (a background tab
+  throttles rAF): wheel step/clamp/normalize; easing curve visits every integer window; thumb size
+  + position + movement; scrub maps top→oldest, bottom→live, mid→mid; track-tap pages; a real touch
+  hold-drag scrolls end-to-end. No console errors; no debug handles shipped. VR grip-scrub is
+  on-device.
+
 **Scroll polish + toggle-switch UI (3.12b)** — no new deps, no services touched:
 - **"Boost posts by tap" is now a real pill switch** (Live-Console style — orange when ON, gray
   when OFF, knob slides) instead of reading as plain text. Same behavior/persistence as 3.12; the
