@@ -29,10 +29,11 @@ export const MIC_PLATFORM_DEPTH = 3.0;   // forward reach from the stage front �
 export const STAND_CLEARANCE    = 1.3;   // standing room in front of the mic
 const PLATFORM_OVERLAP = 0.8;            // how far the platform tucks under the stage (joins them)
 
-// Outer edge of the audience floor (soft world bound). Sized so the social zones behind
-// the audience (Smoking Area / Networking — see zones/zones.js) are comfortably reachable;
-// this is the ONE clamp radius everything else (floor rings, scene) derives from.
-export const AUDIENCE_RADIUS = 24;
+// Outer edge of the audience floor (soft world bound). Sized so the social-zone BUILDINGS
+// deep behind the audience (Smoking park-gate / Networking hall — see zones/zones.js) are
+// comfortably reachable — a real courtyard walk from the stage. This is the ONE clamp radius
+// everything else (floor disc + rings, scene) derives from.
+export const AUDIENCE_RADIUS = 38;
 
 // The avatar's body radius. Clamps offset edges by THIS so a capsule (radius ~0.28)
 // stops flush against a wall/edge and never overlaps the mesh — a small epsilon

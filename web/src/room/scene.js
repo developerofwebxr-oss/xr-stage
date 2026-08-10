@@ -92,14 +92,17 @@ export function buildScene() {
   scene.add(beam);
 
   // ── Floor ───────────────────────────────────────────────────────────────────
+  // Sized off the ONE clamp radius (+margin) so the plaza always covers where players can
+  // walk — out to the zone buildings — with dark void beyond.
+  const FLOOR_R = AUDIENCE_RADIUS + 10;
   const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(34, 64),
+    new THREE.CircleGeometry(FLOOR_R, 64),
     new THREE.MeshStandardMaterial({ color: 0x070910, roughness: 1, metalness: 0 }),
   );
   floor.rotation.x = -Math.PI / 2;
   scene.add(floor);
 
-  const grid = new THREE.GridHelper(68, 68, 0x1a1f33, 0x0c0f1a);
+  const grid = new THREE.GridHelper(FLOOR_R * 2, Math.round(FLOOR_R * 2), 0x1a1f33, 0x0c0f1a);
   grid.position.y = 0.01;
   grid.material.transparent = true;
   grid.material.opacity = 0.5;

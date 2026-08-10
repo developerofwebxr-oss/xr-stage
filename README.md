@@ -134,6 +134,40 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Zone buildings — push-back + facades (3.13b)** — no new deps, no services touched:
+- The 3.13 zones read as floor decals right next to the crowd. Reworked into **distant
+  destination buildings across a plaza** — a real courtyard walk — with real entrances.
+  Facades + shells only (interiors are a later slice). The `zones` seam API is unchanged;
+  only the bounds moved/reshaped.
+- **Pushed way back** (~3× the old distance — ~18 m from the audience spawn, vs ~5–8 m):
+  - **🚬 Smoking Area** — park gate, front-centre `(−13, 19)`, back-**left**.
+  - **🤝 Networking** — hall doorway, front-centre `(6, 24)`, back centre/right.
+  - The facades are **arcs concentric with the stage** (centre `(0,−7)`, same as the radiating
+    floor rings): Networking wall radius **≈ 31.6 m**, Smoking gate radius **≈ 29.1 m**.
+  - **Clamp** `AUDIENCE_RADIUS` **24 → 38 m** (the ONE clamp source in `room/zones.js`); the
+    floor disc + grid now derive from it (`AUDIENCE_RADIUS + 10`) and the rings reach `+3`, so
+    the plaza covers the whole walk with dark void beyond.
+- **Networking = curved hall:** a tall dark curved front wall (two open-ended cylinder-arc
+  segments) with a **doorway gap** in the middle (walk-through, teal jamb glow + lintel trim),
+  and a **deep shell** behind it — dark floor + back wall + two receding teal edge-lines fading
+  into the dark (fog does the fade). **Shell length is a parameter** (`INTERIOR_DEPTH = 9`) —
+  seam noted in code: occupancy will scale it later (10 vs 300 people); NOT dynamic now. Teal.
+- **Smoking = park entrance:** a **gate** (two posts + ember cap + arch beam/sign frame, name
+  over the arch) and a **receding treeline** — one `InstancedMesh` of ~35 cone silhouettes
+  (dark ember, deterministic placement) fanning back and fading into fog. Interior left empty
+  (later slice). Ember.
+- **Bounds** are now "inside the building / past the gate": detection circles sit just past
+  each entrance — Networking `(6.48, 26.46) r 3.4`, Smoking `(−14.1, 21.2) r 3.2` — so the HUD
+  pill fires on actually entering. **Plaques** moved to stand beside each entrance (same copy).
+- **Perf:** ~20 static meshes + 1 instanced tree mesh across both zones; shared materials,
+  emissive-via-MeshBasic, no lights/shadows/per-frame work. AR: buildings/gate/trees are
+  freestanding diegetic props (no room shell involved) → visible in AR.
+- **Verified** in Chrome: the enter/leave seam still fires at the new bounds (inside Networking
+  → teal pill, past the Smoking gate → ember pill, plaza/spawn → hidden); the curved facade +
+  walk-through doorway + receding dark shell, the gate + fog-fading treeline, big wayfinding
+  letters, and the beside-entrance plaques all render correctly. No console errors. (Owner
+  device-tests scale/walk feel — building height + letter size at head height in VR.)
+
 **Zone shells — Smoking Area + Networking (3.13)** — no new deps, no services touched:
 - Two social zones behind the audience as visible, named PLACES, plus the detection **seam**
   the ticketing/audio slices will consume. No entry gating, no mic/audio, no props-on-people
