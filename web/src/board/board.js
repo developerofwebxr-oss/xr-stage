@@ -29,17 +29,29 @@ function add(pubkey, text, sats, count, createdAt) {
   return _comments.get(id);
 }
 
-// Seed a little content so the screens aren't empty on load. Keyed to the seeded
-// avatars' pubkeys (so boosting a comment sparkles the right body). MOCK only.
+// Seed enough content that the LIVE feed is SCROLLABLE out of the box — more than the
+// feed's visible window (FEED_N in commentBoard) so there's older history to scroll back
+// to; otherwise scrolling silently no-ops on a fresh page. Keyed to the seeded avatars'
+// pubkeys (so boosting a comment sparkles the right body). MOCK only.
 (function seed() {
-  const S = (i) => identity.pubkeyFromSeed(`seed-${i}`);
+  const S = (i) => identity.pubkeyFromSeed(`seed-${i % 3}`);
   const now = 1_700_000_000_000; // fixed base (deterministic ordering; not Date.now)
-  add(S(0), 'gm — pumped for this talk ⚡',            120, 6, now - 60_000);
-  add(S(1), 'what wallet are you running on stage?',    340, 12, now - 50_000);
-  add(S(2), 'zapped! great point on self-custody',       21, 1, now - 40_000);
-  add(S(0), 'can you compare NWC vs LNbits?',           520, 18, now - 30_000);
-  add(S(1), '+1, audio is crisp in here',                 0, 0, now - 20_000);
-  add(S(2), 'first time in VR for a meetup, love it',    63, 3, now - 10_000);
+  const lines = [
+    ['gm everyone 👋',                               8,  1],
+    ['excited for this one',                         0,  0],
+    ['is this being recorded?',                     21,  1],
+    ['love the spatial setup',                      42,  2],
+    ['zapping from Tokyo 🗾',                        99,  4],
+    ['what relay are you on?',                       12,  1],
+    ['first meetup in VR, wild',                    150,  6],
+    ['gm — pumped for this talk ⚡',                 120,  6],
+    ['what wallet are you running on stage?',       340, 12],
+    ['zapped! great point on self-custody',          21,  1],
+    ['can you compare NWC vs LNbits?',              520, 18],
+    ['+1, audio is crisp in here',                    0,  0],
+    ['first time in VR for a meetup, love it',       63,  3],
+  ];
+  lines.forEach(([text, sats, count], i) => add(S(i), text, sats, count, now - (lines.length - i) * 10_000));
 })();
 
 let _clock = 1_700_000_100_000; // monotonic stamp for new posts (no Date.now dependency)

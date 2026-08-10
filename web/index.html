@@ -365,6 +365,20 @@
       }
       .pm-toggle input { width: 16px; height: 16px; accent-color: var(--orange); cursor: pointer; }
 
+      /* Pill toggle switch (Live Console): orange when on, gray when off. */
+      .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; }
+      .toggle-row .switch {
+        position: relative; flex: 0 0 auto; width: 42px; height: 24px; border-radius: 12px;
+        background: rgba(255, 255, 255, 0.18); border: 1px solid var(--hairline);
+        transition: background var(--t), border-color var(--t);
+      }
+      .toggle-row[aria-checked="true"] .switch { background: var(--orange); border-color: var(--orange); box-shadow: var(--glow-orange); }
+      .toggle-row .knob {
+        position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%;
+        background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); transition: transform var(--t);
+      }
+      .toggle-row[aria-checked="true"] .knob { transform: translateX(18px); }
+
       /* ── Modal surfaces: spend hub · amount picker · You · Stage · panels ──────── */
       #spend-menu, #zap-picker, #you-menu, #stage-menu, #instructions, #booking,
       #compose, #activity, #micform, #speaker-hub {
@@ -581,7 +595,10 @@
           <button class="ctl" id="sp-zap-comment">Zap to comment</button>
           <button class="ctl" id="sp-take-mic">⚡ Take the mic</button>
           <div class="pm-section">Settings</div>
-          <button class="ctl" id="sp-boost">Boost posts by tap: on</button>
+          <button class="ctl toggle-row" id="sp-boost" role="switch" aria-checked="true">
+            <span>Boost posts by tap</span>
+            <span class="switch"><span class="knob"></span></span>
+          </button>
         </div>
       </div>
 

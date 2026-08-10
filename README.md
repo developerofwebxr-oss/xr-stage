@@ -134,6 +134,24 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Scroll polish + toggle-switch UI (3.12b)** — no new deps, no services touched:
+- **"Boost posts by tap" is now a real pill switch** (Live-Console style — orange when ON, gray
+  when OFF, knob slides) instead of reading as plain text. Same behavior/persistence as 3.12; the
+  switch reflects state via `aria-checked` (kept separate from the `.ctl.on` full-orange button
+  style to avoid the whole row going orange).
+- **Root cause of "board scrolling doesn't work on desktop":** the default seed held exactly
+  `FEED_N` (6) comments, so `maxOffset = count − FEED_N = 0` — there was **nothing older to scroll
+  to** and both the wheel and the hold-drag silently no-op'd. The *handlers were correct all along.*
+  Fix: **seed scroll headroom** (13 seeded comments > the 6-row window) so the LIVE feed is
+  scrollable out of the box. (A second gotcha for testers: the drag direction is *drag-down → older*;
+  dragging up at the live edge is a no-op by design. Wheel-up → older.)
+- **Every mode re-verified with real event dispatch** (not just synthetic asserts): desktop
+  **wheel** pauses; a **touch-type PointerEvent** hold-drag (the mobile path) pauses — Pointer
+  Events unify mouse + touch so no separate touch handlers are needed, and the canvas keeps
+  `touch-action: none`; the **"● live" chip** renders when paused; the toggle flips ON↔OFF and
+  persists. VR (right-stick-Y) and phone-AR touch reuse the same `scrollFeed`/handlers — on-device
+  owner tests. No console errors; no debug handles shipped.
+
 **Boost-by-tap toggle + per-user LIVE scrolling (3.12)** — no new deps:
 - **"Boost posts by tap" toggle** (accidental-zap protection) in the spend hub — default
   **ON**, **persisted per pubkey** when signed in (else a device default). OFF → aiming/

@@ -50,8 +50,11 @@ export function createZapUI({ toast, onZapSpeaker, onZapComment, onTakeMic, onTo
   function setMic({ inQueue, position, count } = {}) {
     el.spTakeMic.textContent = inQueue ? `⚡ Mic queue: #${position}/${count}` : '⚡ Take the mic';
   }
-  // Accidental-zap protection toggle: reflect on/off on the button.
-  function setBoost(on) { el.spBoost.textContent = `Boost posts by tap: ${on ? 'on' : 'off'}`; }
+  // Accidental-zap protection toggle: reflect on/off on the pill switch (keeps the
+  // label + switch markup; just flips the visual state + aria).
+  function setBoost(on) {
+    el.spBoost.setAttribute('aria-checked', String(!!on)); // CSS drives the pill off [aria-checked]
+  }
 
   el.spClose.addEventListener('click', closeHub);
   el.hub.addEventListener('click', (e) => { if (e.target === el.hub) closeHub(); }); // backdrop
