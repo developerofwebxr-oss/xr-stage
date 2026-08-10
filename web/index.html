@@ -267,6 +267,19 @@
       #freelook-hint b { color: var(--orange-bright); font-weight: 700; letter-spacing: 0.04em; }
       #freelook-hint[hidden] { display: none; }
 
+      /* Locality indicator — bottom-centre pill, shown only while inside a social zone. Its
+         accent hue is set inline per zone (--zone-hue). */
+      #locality {
+        position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 9;
+        pointer-events: none; white-space: nowrap;
+        font-family: var(--font-mono); font-size: 13px; font-weight: 600; letter-spacing: 0.03em;
+        color: var(--ink);
+        background: var(--panel); border: 1px solid var(--zone-hue, var(--hairline)); border-radius: 999px;
+        padding: 7px 15px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        box-shadow: var(--shadow), 0 0 16px -3px var(--zone-hue, transparent);
+      }
+      #locality[hidden] { display: none; }
+
       /* ── Mobile movement joystick: bottom-left, low, clear of the bar ──────────── */
       #joystick {
         position: fixed; left: calc(env(safe-area-inset-left) + 16px);
@@ -807,6 +820,8 @@
 
     <div id="lock-hint" hidden>hold-drag to look · WASD move · Shift run · Space jump · Esc menu</div>
     <div id="freelook-hint" hidden>Free look on — press <b>ESC</b> to exit</div>
+    <!-- Locality indicator — shows the social zone you're standing in (Smoking / Networking). -->
+    <div id="locality" hidden></div>
 
     <script type="module" src="/src/main.js"></script>
   </body>

@@ -46,6 +46,7 @@ export function createHud() {
     toast: $('toast'),
     lockHint: $('lock-hint'),
     freelookHint: $('freelook-hint'),
+    locality: $('locality'),
   };
   // comfort key → its checkbox, for the menu's persisted toggles.
   const comfortBoxes = { vignette: el.pmVignette, snapTurn: el.pmSnapTurn, haptics: el.pmHaptics };
@@ -121,6 +122,15 @@ export function createHud() {
       el.toast.classList.add('show');
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => el.toast.classList.remove('show'), 2200);
+    },
+
+    // Locality indicator — show "🚬 Smoking Area" / "🤝 Networking" while inside a social
+    // zone, hidden otherwise. zone = { name, emoji, hue } | null. Just a label (no gating).
+    setZone(zone) {
+      if (!zone) { el.locality.hidden = true; return; }
+      el.locality.textContent = `${zone.emoji} ${zone.name}`;
+      el.locality.style.setProperty('--zone-hue', `#${zone.hue.toString(16).padStart(6, '0')}`);
+      el.locality.hidden = false;
     },
 
     flashLockHint, hideLockHint,                       // transient controls hint

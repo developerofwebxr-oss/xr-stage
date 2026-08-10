@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { config } from './config.js';
 import { buildScene } from './room/scene.js';
+import { zones, buildZoneScenery } from './zones/zones.js';
 import { STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
 import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP } from './room/avatars.js';
 import { identity } from './identity/identity.js';
@@ -43,6 +44,9 @@ document.getElementById('app').appendChild(renderer.domElement);
 
 // ── Scene + people ──────────────────────────────────────────────────────────────
 const { scene, setARMode, update: updateScene } = buildScene();
+// Social zones behind the audience (Smoking Area + Networking): floor markings, glowing
+// signage, and plaques. Freestanding props → they stay visible in AR (not part of the shell).
+buildZoneScenery(scene);
 // Static ambiance capsules; positions feed avatar separation; groups get identities.
 const seeded = seedPlaceholders(scene);
 const staticBodies = seeded.map((s) => s.position);
@@ -132,6 +136,10 @@ rig.add(createPlayerBody(who.role === 'speaker' ? 0xf7931a : 0x4cc2ff));
 const hud = createHud();
 hud.setRoom(config.room);
 stageState.role = config.role;
+
+// Social-zone SEAM → HUD locality indicator. This is the ONLY consumer for now; the
+// ticketing + audio-zone slices will subscribe here too (mic on entering Smoking, etc.).
+zones.onChange((zone) => hud.setZone(zone));
 
 // Desktop hint (fine pointer only): default look is hold-drag. Show it briefly,
 // then fade after a few seconds OR on the first look/move input, whichever's first.
@@ -1012,6 +1020,7 @@ renderer.setAnimationLoop(() => {
     hud.setVignetteLevel(rig.position.distanceTo(_prevPos) > dt * 0.2 ? 1 : 0);
   }
   _prevPos.copy(rig.position);
+  zones.update(rig.position.x, rig.position.z); // social-zone enter/leave seam (self-gates on movement)
 
   zapFx.update(dt);           // in-world zap bursts (no-op when none are active)
   commentBoard.update(dt);    // live-feed scroll + sticky top-wall refresh

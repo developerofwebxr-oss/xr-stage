@@ -134,6 +134,38 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Zone shells — Smoking Area + Networking (3.13)** — no new deps, no services touched:
+- Two social zones behind the audience as visible, named PLACES, plus the detection **seam**
+  the ticketing/audio slices will consume. No entry gating, no mic/audio, no props-on-people
+  yet (those need the ticketing slice) — this is world-building + the enter/leave events.
+- **Placement** (standing on the audience floor FACING the stage → stage is −Z, so "behind"
+  is +Z, "left" is −X). Circles, metres, world space:
+  - **🚬 Smoking Area** — back-LEFT, centre `(−7.5, 9)`, **r = 3** (ember `#ff6a2c`).
+  - **🤝 Networking** — back centre/right ("opposite the stage"), centre `(3, 11.5)`, **r =
+    4.5** — noticeably larger (~2.25× the area) (teal `#27c6c6`).
+  - Both sit well clear of the stage/boards. The audience clamp (`AUDIENCE_RADIUS`, the ONE
+    clamp source in `room/zones.js`) went **20 → 24 m** so the back zones are comfortably
+    reachable; the floor rings derive from the same constant.
+- **Signage:** large glowing 3D name letters (canvas-texture planes, emissive-via-MeshBasic
+  for bloom, no per-frame redraw) standing over each zone, facing the audience (Networking
+  larger). **Floor treatment:** a translucent hue disc + a brighter edge-glow ring marking
+  each bound. **Plaques:** a short stand at each entrance edge holding a SOLID canvas panel
+  (opaque backdrop per the 3.11 rules) with the zone copy, readable up close.
+- **Seam** (`zones/zones.js`, distinct from `room/zones.js` which owns layout/clamp):
+  `zones.current()` · `zones.onChange(cb)` · `zones.update(x, z)` — cheap squared-distance
+  circle checks, self-gated so it only works when the rig moves and only emits on an actual
+  enter/leave. The frame loop polls it; the sole consumer for now is a HUD **locality
+  indicator** — a small "🚬 Smoking Area" / "🤝 Networking" pill (in the zone's hue) shown
+  only while inside, nothing more (no gating, no "coming soon").
+- **AR:** zones are floor markings + freestanding props (letters/plaques) added straight to
+  the scene, NOT part of the room shell AR hides → they stay visible (diegetic). Quest-friendly:
+  emissive over lights, no shadow maps, no per-frame canvas.
+- **Verified** in Chrome: the enter/leave seam fires and the HUD indicator toggles — enter
+  Networking → "🤝 Networking" (teal), enter Smoking → "🚬 Smoking Area" (ember), leaving
+  hides it; moving within a zone does not re-emit. Signage + plaques + floor tints render with
+  correct placement/hues and un-mirrored letters. No console errors. (Owner device-tests the
+  walk + look; the immersive VR/AR path can't be entered from desktop Chrome.)
+
 **Headset session code — log in your identity on VR/AR (3.9)** — one small backend
 addition, no new deps, no new env:
 - **Cross-device pairing pointed at LOGIN.** A signed-in phone/desktop mints a **6-digit,
