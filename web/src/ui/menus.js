@@ -22,16 +22,17 @@ export function createMenus({
   const el = {
     you: $('you-menu'), youIdentity: $('you-identity'), youWallet: $('you-wallet'), youAccount: $('you-account'),
     youTicket: $('you-ticket'), youTicketSec: $('you-ticket-sec'), youWalletSec: $('you-wallet-sec'),
-    stage: $('stage-menu'), stageSched: $('stage-sched'), stageHub: $('stage-speaker-hub'),
+    stage: $('stage-menu'), stageSched: $('stage-sched'), stageHub: $('stage-speaker-hub'), stagePool: $('stage-pool'),
     instructions: $('instructions'),
   };
+  const fmtN = (n) => Number(n || 0).toLocaleString('en-US');
   const dim = (msg = NOT_YET) => toast && toast(msg);
   let hasBooking = false; // gates the Speaker-hub button
 
   // ── You menu (identity + wallet home) ───────────────────────────────────────────
   function openYou(info = {}) { renderYou(info); el.you.hidden = false; }
   function closeYou() { el.you.hidden = true; }
-  function renderYou({ signedIn, name, faceUrl, balance, tier = 'ghost', tierLabel, visible = false, badge } = {}) {
+  function renderYou({ signedIn, name, faceUrl, balance, tier = 'ghost', tierLabel, visible = false, badge, lastSplit } = {}) {
     const paid = signedIn && tier !== 'ghost';
     el.youIdentity.innerHTML = signedIn
       ? `<img class="you-face" src="${faceUrl}" alt=""><div class="you-name"></div>`
@@ -54,6 +55,14 @@ export function createMenus({
         status.innerHTML = `<span class="muted">👻 Ghost — listening only. Get a ticket to be seen, zap, post &amp; enter zones.</span>`;
       }
       el.youTicket.appendChild(status);
+      // "Where your sats went" — the transparent split of your last purchase (migration-safe:
+      // old records have no split → default the fields to 0).
+      if (paid && lastSplit) {
+        const w = document.createElement('div');
+        w.className = 'you-split';
+        w.innerHTML = `venue <b>${fmtN(lastSplit.venue)}</b> · speakers <b>${fmtN(lastSplit.speakers)}</b> · credits <b>${fmtN(lastSplit.credits)}</b>`;
+        el.youTicket.appendChild(w);
+      }
       if (paid) {
         el.youTicket.appendChild(btn(visible ? '👻 Go invisible' : '👁 Go visible', 'ctl', () => onToggleVisible && onToggleVisible()));
         el.youTicket.appendChild(btn('🎟 Change tier', 'ctl', () => onGetTicket && onGetTicket()));
@@ -92,12 +101,19 @@ export function createMenus({
   }
 
   // ── Stage menu (live schedule + Book / Speaker-hub) ─────────────────────────────
-  function openStage({ nowNext = { now: null, next: null }, hasBooking: booked = false } = {}) {
+  function openStage({ nowNext = { now: null, next: null }, hasBooking: booked = false, speakerPool = 0 } = {}) {
     hasBooking = booked;
     renderSchedule(nowNext);
+    setSpeakerPool(speakerPool);
     el.stageHub.classList.toggle('soon', !booked);
     el.stageHub.setAttribute('aria-disabled', String(!booked));
     el.stage.hidden = false;
+  }
+  // The public speaker-pool number — the growing pot that recruits speakers. Updates live
+  // (main calls this on pool growth) whether or not the Stage menu is open.
+  function setSpeakerPool(sats) {
+    el.stagePool.innerHTML = `⚡ Speaker pool: <b>${fmtN(sats)}</b> sats<span class="sub">10–30% of every ticket goes to the speakers</span>`;
+    el.stagePool.hidden = false;
   }
   function closeStage() { el.stage.hidden = true; }
   function renderSchedule(nowNext) {
@@ -132,7 +148,7 @@ export function createMenus({
   }
 
   return {
-    openYou, closeYou, openStage, closeStage, openInstructions, closeInstructions,
+    openYou, closeYou, openStage, closeStage, setSpeakerPool, openInstructions, closeInstructions,
     closeAll() { closeYou(); closeStage(); closeInstructions(); },
     isOpen: () => [el.you, el.stage, el.instructions].some((n) => !n.hidden),
   };

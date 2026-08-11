@@ -263,7 +263,7 @@ function refreshEmbodiment() {
   refreshCounts();
 }
 // Tier/embodiment can change from anywhere (buy, toggle, access) — reflect it once, here.
-tickets.onChange(() => { refreshEmbodiment(); hud.setBalance(wallet.getBalance()); });
+tickets.onChange(() => { refreshEmbodiment(); hud.setBalance(wallet.getBalance()); menus.setSpeakerPool(tickets.speakerPool()); });
 refreshEmbodiment(); // initial: signed-out visitor is a ghost (no body, listener count)
 // Sign-in gate for anything that spends sats or posts content. Signed out → prompt sign
 // in (the You menu, where Sign in is the primary button) and stop.
@@ -364,6 +364,7 @@ function openYou() {
     tierLabel: tickets.TIERS[tickets.tier()]?.label,
     visible: tickets.visible(),
     badge: tickets.flags().badge,
+    lastSplit: tickets.lastSplit(),       // "where your sats went" (null for pre-3.14 records)
   });
 }
 async function openStage() { closeAllMenus(); menus.openStage(await stageData()); }
@@ -376,7 +377,7 @@ function openBooking() {
 async function openSpeakerHub() {
   if (!booking.mine().length) return; // gated in the Stage menu, but guard anyway
   closeAllMenus();
-  speakerHub.open({ mySlot: booking.mine()[0], entries: await hubEntries(), criteria: queue.criteria() });
+  speakerHub.open({ mySlot: booking.mine()[0], entries: await hubEntries(), criteria: queue.criteria(), speakerPool: tickets.speakerPool() });
 }
 function openSpendHub() { if (!requireTicket('spend sats')) return; closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup(), mic: micState(), boostByTap: boostByTap() }); }
 
@@ -741,6 +742,7 @@ const sessionUI = createSessionUI({
 const ticketUI = createTicketUI({
   toast: (m) => hud.toast(m),
   tiers: tickets.TIERS,
+  split: (t) => tickets.split(t),
   currentTier: () => tickets.tier(),
   getBalance: () => wallet.getBalance(),
   onBuy: async (tier) => {
@@ -952,7 +954,7 @@ async function stageData() {
   const label = async (s) => (s
     ? { time: fmtClock(s.startsAt), title: s.title || 'Untitled talk', name: (await identity.getProfile(s.bookedBy)).name }
     : null);
-  return { nowNext: { now: await label(now), next: await label(next) }, hasBooking: booking.mine().length > 0 };
+  return { nowNext: { now: await label(now), next: await label(next) }, hasBooking: booking.mine().length > 0, speakerPool: tickets.speakerPool() };
 }
 
 // Keep the Stage menu live (schedule + hub gate) when a booking changes while it's open;

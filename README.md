@@ -134,6 +134,39 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Ticket economics v2 — flat venue fee + progressive speaker pool (3.14)** — no new deps:
+- **New split, same custody-free flow.** Every tier: **flat 10% venue fee**, a **progressive
+  speaker share (10 / 20 / 30%)**, and **credits = the remainder**. Prices keep the 21-motif:
+
+  | Tier | Price | Venue (10%) | Speakers | Credits |
+  |---|---|---|---|---|
+  | Basic | 2,100 | 210 | 210 (10%) | **1,680** |
+  | Supporter | 10,000 | 1,000 | 2,000 (20%) | **7,000** |
+  | Patron | 21,000 | 2,100 | 6,300 (30%) | **12,600** |
+
+  `VENUE_FEE` + `SPEAKER_SHARE` are named config; `tickets.split(tier)` derives the exact
+  `{ price, venue, speakers, credits }` (remainder = price − shares, always reconciles). `buy()`
+  is unchanged in flow — mock external entry payment → credits the wallet the post-split amount —
+  and now stores the split on the purchase record.
+- **Speaker pool accumulator:** `tickets.speakerPool()` — one **venue-global** pot (persisted)
+  that grows by each ticket's speaker share; `onChange` fires on growth. **Distribution is a
+  deliberate SEAM** (code note): at go-real the pot is split **among booked slot-holders by stage
+  time** (booking knows the slots) and paid over Lightning — NOT built here; `booking` untouched.
+- **The pool is public (it's marketing):** shown as **"⚡ Speaker pool: N sats"** on the **Stage
+  Schedule panel** (updates live on growth) and as **"⚡ Pool (all speakers): N sats · split by
+  stage time at payout"** in the **Speaker hub** (per-speaker share is a noted seam, not computed).
+- **Tier cards** now show the full transparent split — e.g. Patron `→ 12,600 credits · ⚡2,100
+  venue · ⚡6,300 to speakers` — and frame the speaker share positively as a perk line
+  (Basic "10% supports the speakers" … Patron "30% to the speakers — patron of the event").
+- **You menu**, after purchase: a small **"where your sats went"** line under the tier status —
+  `venue 2,100 · speakers 6,300 · credits 12,600`.
+- **Migration:** old persisted purchases (pre-3.14, no split) load fine — `lastSplit` defaults to
+  null and the split line simply isn't drawn. No re-crediting.
+- **Verified** in Chrome: each tier credits the exact table amounts (only the credits, not from
+  local balance); the pool accrues exactly the speaker share per purchase (fresh pool 0 → Patron
+  → 6,300) and shows on Schedule + You menu + Speaker hub; old records render safely. No console
+  errors.
+
 **Ticketing + embodiment — ghost mode & tiers (3.10)** — no new deps; the business model:
 - **Free = ghost, paid = embodiment.** A signed-out/un-ticketed visitor is a **ghost**: listens
   + moves, but has **no body/name-label**, doesn't broadcast presence (peers render nothing for

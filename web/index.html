@@ -436,8 +436,10 @@
       .tier.supporter .tier-name { color: #7fe3e3; }
       .tier.patron .tier-name { color: #ffd97a; }
       .tier-price { font-family: var(--font-mono); font-size: 13px; color: var(--ink); }
-      .tier-credits { font-family: var(--font-mono); font-size: 12px; color: var(--ink-dim); }
+      .tier-credits { font-family: var(--font-mono); font-size: 12px; color: var(--ink-dim); line-height: 1.5; }
+      .tier-credits b { color: var(--ink); }
       .tier-credits .fee { color: var(--ink-faint); }
+      .tier-credits .spk { color: #7fe3e3; }
       .tier-perks { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
       .tier-perks li { font-size: 12px; color: var(--ink-dim); }
       .tier-perks li::before { content: "✓ "; color: var(--orange); }
@@ -445,6 +447,16 @@
       .tier .ctl[disabled] { opacity: 0.5; pointer-events: none; }
       .access-body { font-size: 13px; color: var(--ink-dim); line-height: 1.5; }
       .access-body b { color: var(--ink); }
+
+      /* Speaker pool — the growing pot that recruits speakers (Schedule + Speaker hub). */
+      .stage-pool {
+        font-family: var(--font-mono); font-size: 13px; color: var(--ink);
+        padding: 8px 11px; margin: 2px 0; border-radius: var(--r-sm);
+        background: rgba(247, 147, 26, 0.09); border: 1px solid rgba(247, 147, 26, 0.35);
+      }
+      .stage-pool b { color: var(--orange-bright); font-variant-numeric: tabular-nums; }
+      .stage-pool .sub { display: block; margin-top: 2px; font-size: 11px; color: var(--ink-faint); }
+      .stage-pool[hidden] { display: none; }
 
       /* Headset-login: big monospace code + countdown (mint), and the 6-digit input (redeem). */
       .sc-code {
@@ -537,6 +549,8 @@
       .you-balance b { color: var(--orange); font-variant-numeric: tabular-nums; }
       .you-tier { font-family: var(--font-mono); font-size: 13px; color: var(--ink); line-height: 1.45; }
       .you-tier b { color: var(--orange-bright); }
+      .you-split { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); margin-top: 2px; }
+      .you-split b { color: var(--ink-dim); }
       #you-ticket[hidden], #you-ticket-sec[hidden], #you-wallet[hidden], #you-wallet-sec[hidden] { display: none; }
 
       /* Stage menu — schedule block. */
@@ -750,6 +764,7 @@
           <div class="pm-title">Stage</div>
           <div class="pm-section">Schedule</div>
           <div class="stage-sched" id="stage-sched"></div>
+          <div id="stage-pool" class="stage-pool" hidden></div>
           <button class="ctl" id="stage-book">Book a slot</button>
           <button class="ctl soon" id="stage-speaker-hub" aria-disabled="true">Speaker hub</button>
         </div>
@@ -790,6 +805,7 @@
         <div id="speaker-hub-panel" class="bar" role="dialog" aria-modal="true" aria-label="Speaker hub">
           <button class="pc-close" id="hub-close" aria-label="Close">✕</button>
           <div class="pm-title">Speaker hub</div>
+          <div id="hub-pool" class="stage-pool"></div>
           <div class="pm-section">My slot</div>
           <div id="hub-slot"></div>
           <div id="hub-cancel"></div>

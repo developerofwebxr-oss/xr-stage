@@ -6,31 +6,55 @@ import { wallet } from '../wallet/wallet.js';
 //
 //   tier()              → 'ghost' | 'basic' | 'supporter' | 'patron'
 //   buy(tier) async     → pending→confirmed|failed; on confirmed sets tier + credits the wallet
+//   split(tier)         → { price, venue, speakers, credits } — the transparent per-tier math
 //   flags()             → { badge, networkingPriority, networkingAccess, smokingAccess, frontRow, sponsorSpot }
 //   visible()/setVisible(bool) → paid-only embodiment toggle (ghosts are always invisible)
 //   purchaseAccess(kind)→ micro-purchase: spend CREDITS for an access flag (networking/smoking/frontRow)
+//   speakerPool()       → total sats accrued for speakers across ticket purchases (venue-global)
+//   lastSplit()         → this identity's last purchase split (for "where your sats went")
 //   activate(pubkey)/deactivate() · onChange(cb)
 //
 // ── MONEY FLOW (mock, custody-free "arcade ticket" model) ──────────────────────────────
 // Buying a ticket is the ENTRY PAYMENT — it does NOT come from your local credit balance.
-// It's a mock "external" payment (real: a Lightning invoice you pay to the venue). On
-// settle we (a) set your tier and (b) credit your WALLET with the POST-FEE credit amount.
-// Example: Basic = pay 2,100 sats externally → wallet gains 1,890 credits (10% venue fee).
-// Micro-purchases (purchaseAccess) are the opposite direction: they SPEND those credits back
-// to the venue for access/experiences. Persisted PER PUBKEY, like the wallet.
+// It's a mock "external" payment (real: a Lightning invoice you pay to the venue). On settle
+// the price splits three ways (see below): the VENUE fee, the SPEAKER pool share, and your
+// CREDITS (the remainder, added to your wallet). Micro-purchases (purchaseAccess) are the
+// opposite direction — they SPEND credits back to the venue. Persisted PER PUBKEY.
+//
+// ── SPEAKER-POOL DISTRIBUTION SEAM (later slice — do NOT build here) ────────────────────
+// speakerPool() accumulates every ticket's speaker share into ONE venue-global pot. At go-real
+// it will be SPLIT AMONG THE BOOKED SLOT-HOLDERS BY STAGE TIME (the booking service knows each
+// slot's duration) and paid out over Lightning. That distribution — and its guardrails — is a
+// booking + Lightning slice. This module only GROWS the pot; `booking` stays untouched.
 
 const PENDING_MS = 1000; // simulated settle latency (deterministic; matches the wallet)
 
-// Tier catalogue. `price` = external entry payment (sats); `credits` = post-fee credits added
-// to the wallet; `flags` = the perks that tier includes by default.
+// ── Ticket economics (tunable config) ──────────────────────────────────────────────────
+// FLAT venue fee on every tier; PROGRESSIVE speaker share by tier; credits = the remainder.
+// Prices keep the 21-motif (2,100 / 10,000 / 21,000).
+const VENUE_FEE = 0.10;                                   // flat 10%, every tier
+const SPEAKER_SHARE = { basic: 0.10, supporter: 0.20, patron: 0.30 }; // progressive
+
+// Tier catalogue. `price` = external entry payment (sats); `flags` = the perks the tier includes.
+// The venue/speaker/credits split is DERIVED from the config above via split() — not stored here.
 export const TIERS = {
-  ghost:     { label: 'Ghost',     price: 0,     credits: 0,     flags: {} },
-  basic:     { label: 'Basic',     price: 2100,  credits: 1890,  flags: {} },
-  supporter: { label: 'Supporter', price: 8000,  credits: 7200,
+  ghost:     { label: 'Ghost',     price: 0,     flags: {} },
+  basic:     { label: 'Basic',     price: 2100,  flags: {} },
+  supporter: { label: 'Supporter', price: 10000,
     flags: { badge: 'supporter', networkingPriority: true, networkingAccess: true, smokingAccess: true } },
-  patron:    { label: 'Patron',    price: 21000, credits: 18900,
+  patron:    { label: 'Patron',    price: 21000,
     flags: { badge: 'patron', networkingPriority: true, networkingAccess: true, smokingAccess: true, frontRow: true, sponsorSpot: true } },
 };
+
+// The transparent split for a tier: venue fee + speaker share + credits (remainder = price − the
+// two shares, so it always reconciles exactly). → { price, venue, speakers, credits }.
+export function splitFor(tierName) {
+  const t = TIERS[tierName];
+  if (!t || !t.price) return { price: 0, venue: 0, speakers: 0, credits: 0 };
+  const venue = Math.round(t.price * VENUE_FEE);
+  const speakers = Math.round(t.price * (SPEAKER_SHARE[tierName] || 0));
+  return { price: t.price, venue, speakers, credits: t.price - venue - speakers };
+}
 
 // Micro-purchase catalogue (credits → venue). Only these kinds are RECOGNISED; a kind maps to
 // the access flag it unlocks. frontRow is recognised by the seam but has no zone yet, so the
@@ -47,6 +71,7 @@ let activePubkey = null;
 let _tier = 'ghost';
 let _visible = true;              // embodied by default once paid (ghosts ignore this)
 let _access = new Set();          // extra access kinds bought à la carte (Basic)
+let _lastSplit = null;            // this identity's most recent purchase split (persisted)
 let seq = 0;
 const subs = new Set();
 const emit = () => { for (const cb of subs) cb(snapshot()); };
@@ -54,10 +79,22 @@ const emit = () => { for (const cb of subs) cb(snapshot()); };
 const storeKey = (pk) => `xrstage:ticket:${pk}`;
 function persist() {
   if (!activePubkey) return;
-  try { localStorage.setItem(storeKey(activePubkey), JSON.stringify({ tier: _tier, visible: _visible, access: [..._access] })); }
+  try { localStorage.setItem(storeKey(activePubkey), JSON.stringify({ tier: _tier, visible: _visible, access: [..._access], lastSplit: _lastSplit })); }
   catch { /* private mode */ }
 }
-function snapshot() { return { tier: tierNow(), flags: flagsNow(), visible: visibleNow() }; }
+
+// Speaker pool — ONE venue-global pot (not per-pubkey). Persisted across sessions; every ticket
+// purchase grows it by that tier's speaker share (see the distribution seam note at the top).
+const POOL_KEY = 'xrstage:speakerPool';
+function loadPool() { try { return Number(localStorage.getItem(POOL_KEY)) || 0; } catch { return 0; } }
+let _pool = loadPool();
+function growPool(sats) {
+  if (!sats) return;
+  _pool += sats;
+  try { localStorage.setItem(POOL_KEY, String(_pool)); } catch { /* private mode */ }
+}
+
+function snapshot() { return { tier: tierNow(), flags: flagsNow(), visible: visibleNow(), speakerPool: _pool }; }
 
 function tierNow() { return activePubkey ? _tier : 'ghost'; }
 function visibleNow() { return tierNow() !== 'ghost' && _visible; }
@@ -78,19 +115,27 @@ export const tickets = {
   flags: flagsNow,
   visible: visibleNow,
 
+  split: splitFor,
+  speakerPool() { return _pool; },
+  // This identity's last purchase split; older records (pre-3.14) have no split → null.
+  lastSplit() { return _lastSplit; },
+
   // Load this identity's persisted tier/embodiment; make the service live for it.
   activate(pubkey) {
     activePubkey = pubkey;
-    _tier = 'ghost'; _visible = true; _access = new Set();
+    _tier = 'ghost'; _visible = true; _access = new Set(); _lastSplit = null;
     try {
       const raw = JSON.parse(localStorage.getItem(storeKey(pubkey)) || 'null');
-      if (raw && TIERS[raw.tier]) { _tier = raw.tier; _visible = raw.visible !== false; _access = new Set(raw.access || []); }
+      if (raw && TIERS[raw.tier]) {
+        _tier = raw.tier; _visible = raw.visible !== false; _access = new Set(raw.access || []);
+        _lastSplit = raw.lastSplit || null; // MIGRATION: old records lack this — fine, stays null
+      }
     } catch { /* ignore */ }
     emit();
     return snapshot();
   },
-  // On logout: drop in-memory state (→ ghost). Persisted per-pubkey record stays.
-  deactivate() { activePubkey = null; _tier = 'ghost'; _visible = true; _access = new Set(); emit(); },
+  // On logout: drop in-memory state (→ ghost). Persisted per-pubkey record + pool stay.
+  deactivate() { activePubkey = null; _tier = 'ghost'; _visible = true; _access = new Set(); _lastSplit = null; emit(); },
 
   onChange(cb) { subs.add(cb); return () => subs.delete(cb); },
 
@@ -102,15 +147,18 @@ export const tickets = {
     if (!t || tierName === 'ghost') return { state: 'failed', reason: 'unknown tier' };
 
     const id = `ticket-${++seq}`;
+    const sp = splitFor(tierName);      // { price, venue, speakers, credits }
     emit(); // (no visual state change yet; a caller can show its own pending UI)
     await delay(PENDING_MS);            // simulate the external payment settling
     // MOCK: the external payment always confirms. REAL: await the Lightning invoice settle.
     _tier = tierName;
     _visible = true;                    // embodied on purchase
+    _lastSplit = sp;                    // remember the split for "where your sats went"
     persist();
-    wallet.topUp(t.credits);            // post-fee credits land in the local wallet balance
-    emit();
-    return { state: 'confirmed', id, tier: tierName, price: t.price, credits: t.credits };
+    wallet.topUp(sp.credits);           // CREDITS (price − venue − speakers) land in the wallet
+    growPool(sp.speakers);              // the speaker share accrues to the venue-global pool
+    emit();                             // fires onChange listeners (tier + pool growth)
+    return { state: 'confirmed', id, tier: tierName, ...sp };
   },
 
   // Paid-only embodiment toggle. Ghosts can't embody, so this is a no-op for them.

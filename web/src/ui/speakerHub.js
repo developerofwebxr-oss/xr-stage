@@ -18,15 +18,18 @@ const CRITERIA = [['money', 'Money'], ['activity', 'Activity'], ['manual', 'Manu
 
 export function createSpeakerHub({ toast, onCancelBooking, onSetCriteria, onPick, onNext } = {}) {
   const el = {
-    root: $('speaker-hub'), slot: $('hub-slot'), cancel: $('hub-cancel'),
+    root: $('speaker-hub'), pool: $('hub-pool'), slot: $('hub-slot'), cancel: $('hub-cancel'),
     criteria: $('hub-criteria'), queue: $('hub-queue'), next: $('hub-next'), close: $('hub-close'),
   };
   let mySlot = null;
   let criteria = 'money';
 
-  function open({ mySlot: slot, entries = [], criteria: crit = 'money' } = {}) {
+  function open({ mySlot: slot, entries = [], criteria: crit = 'money', speakerPool = 0 } = {}) {
     mySlot = slot;
     criteria = crit;
+    // Pool (all speakers). SEAM: at go-real this is split among booked slot-holders by stage
+    // time and paid over Lightning — the per-speaker share is NOT computed here.
+    el.pool.innerHTML = `⚡ Pool (all speakers): <b>${fmt(speakerPool)}</b> sats<span class="sub">split by stage time at payout</span>`;
     renderSlot();
     renderCancel(false);
     renderCriteria();

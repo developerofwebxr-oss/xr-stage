@@ -1,7 +1,7 @@
 // ui/ticketUI.js — the ticket chooser (three paid tiers) + the access micro-purchase confirm.
 // Container only: prices/credits come from the tickets catalogue; buying/effects are injected.
 //
-//   createTicketUI({ toast, tiers, currentTier, getBalance, onBuy, onAccess })
+//   createTicketUI({ toast, tiers, split, currentTier, getBalance, onBuy, onAccess })
 //     openChooser() · closeChooser()
 //     openAccess({ kind, label, price }) · closeAccess()
 //     closeAll() · isOpen()
@@ -9,16 +9,17 @@
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Number(n).toLocaleString('en-US');
 
-// Honest, compact perk lists per tier (the credits line is rendered separately).
+// Honest, compact perk lists per tier (the split line is rendered separately). The speaker
+// share is framed positively as its own perk line.
 const PERKS = {
-  basic:     ['Embodied — others see you', 'Buy zone access with credits'],
-  supporter: ['Name badge', 'Networking + Smoking access', 'Networking priority'],
-  patron:    ['Distinct badge · all Supporter perks', 'Front-row access', 'Sponsor-ticker spot'],
+  basic:     ['Embodied — others see you', '10% supports the speakers', 'Buy zone access with credits'],
+  supporter: ['Name badge', '20% to the speakers', 'Networking + Smoking access', 'Networking priority'],
+  patron:    ['Distinct badge · all Supporter perks', '30% to the speakers — patron of the event', 'Front-row access', 'Sponsor-ticker spot'],
 };
 const ORDER = ['basic', 'supporter', 'patron'];
 const KIND_LABEL = { networking: 'Networking', smoking: 'Smoking Area', frontRow: 'Front row' };
 
-export function createTicketUI({ toast, tiers, currentTier, getBalance, onBuy, onAccess } = {}) {
+export function createTicketUI({ toast, tiers, split, currentTier, getBalance, onBuy, onAccess } = {}) {
   const el = {
     menu: $('ticket-menu'), tiersBox: $('ticket-tiers'), close: $('ticket-close'),
     access: $('access-menu'), aTitle: $('access-title'), aBody: $('access-body'),
@@ -35,7 +36,7 @@ export function createTicketUI({ toast, tiers, currentTier, getBalance, onBuy, o
     el.tiersBox.innerHTML = '';
     for (const id of ORDER) {
       const t = tiers[id];
-      const feePct = Math.round((1 - t.credits / t.price) * 100);
+      const s = split(id); // { price, venue, speakers, credits } — the transparent split
       const card = document.createElement('div');
       card.className = `tier ${id}`;
       const perks = PERKS[id].map((p) => `<li>${p}</li>`).join('');
@@ -43,7 +44,7 @@ export function createTicketUI({ toast, tiers, currentTier, getBalance, onBuy, o
       card.innerHTML =
         `<div class="tier-head"><span class="tier-name">${t.label}</span>` +
         `<span class="tier-price">${fmt(t.price)} sats</span></div>` +
-        `<div class="tier-credits">→ ${fmt(t.credits)} credits <span class="fee">(${feePct}% venue fee)</span></div>` +
+        `<div class="tier-credits">→ <b>${fmt(s.credits)} credits</b> · <span class="fee">⚡${fmt(s.venue)} venue</span> · <span class="spk">⚡${fmt(s.speakers)} to speakers</span></div>` +
         `<ul class="tier-perks">${perks}</ul>` +
         `<button class="ctl ${id === 'ghost' ? '' : 'primary'}" data-tier="${id}" ${isCurrent ? 'disabled' : ''}>${isCurrent ? 'Current plan' : `Get ${t.label} ⚡`}</button>`;
       el.tiersBox.appendChild(card);
