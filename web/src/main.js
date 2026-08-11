@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { config } from './config.js';
 import { buildScene } from './room/scene.js';
-import { zones, buildZoneScenery } from './zones/zones.js';
+import { zones, buildZoneScenery, accessClamp } from './zones/zones.js';
+import { tickets } from './tickets/tickets.js';
+import { createTicketUI } from './ui/ticketUI.js';
 import { STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
 import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP } from './room/avatars.js';
 import { identity } from './identity/identity.js';
@@ -55,13 +57,15 @@ const staticBodies = seeded.map((s) => s.position);
 // Every avatar is keyed by a pubkey (mock-derived from its stable id) → profile →
 // keyface + name, all via the identity service (the single source of identity). The
 // real swap (nostr-tools + NIP-07) lives behind this same service — callers unchanged.
-function identifyAvatar(group, seedId) {
+function identifyAvatar(group, seedId, badge = null) {
   const pubkey = identity.pubkeyFromSeed(seedId);
   identity.getProfile(pubkey).then((profile) => {
-    applyIdentity(group, { pubkey, npub: identity.npubFromPubkey(pubkey), ...profile });
+    applyIdentity(group, { pubkey, npub: identity.npubFromPubkey(pubkey), ...profile, badge });
   });
 }
-seeded.forEach((s, i) => identifyAvatar(s.group, `seed-${i}`)); // ambiance crowd
+// Ambiance crowd — give two of them paid badges so the tier markers are visible in-world.
+const SEED_BADGE = [null, 'supporter', 'patron'];
+seeded.forEach((s, i) => identifyAvatar(s.group, `seed-${i}`, SEED_BADGE[i % SEED_BADGE.length]));
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
 
@@ -129,8 +133,10 @@ const { rig, update: updateLocomotion, setFreeLook, setMoveInput, jump } =
   });
 scene.add(rig);
 
-// Local player body (capsule), parented to the rig so it moves + turns with us.
-rig.add(createPlayerBody(who.role === 'speaker' ? 0xf7931a : 0x4cc2ff));
+// Local player body (capsule), parented to the rig so it moves + turns with us. Hidden while
+// we're a ghost / invisible (embodiment is a paid ticket perk — see refreshEmbodiment).
+const localBody = createPlayerBody(who.role === 'speaker' ? 0xf7931a : 0x4cc2ff);
+rig.add(localBody);
 
 // ── HUD ─────────────────────────────────────────────────────────────────────────
 const hud = createHud();
@@ -140,6 +146,22 @@ stageState.role = config.role;
 // Social-zone SEAM → HUD locality indicator. This is the ONLY consumer for now; the
 // ticketing + audio-zone slices will subscribe here too (mic on entering Smoking, etc.).
 zones.onChange((zone) => hud.setZone(zone));
+
+// Bounced at a zone door (no access flag). Prompt ONCE per approach: ghosts → the ticket
+// chooser; ticketed-without-access (Basic) → the credits access purchase for that door.
+let _lastBlocked = null;
+function onZoneBlocked(zn) {
+  if (_lastBlocked === zn.id) return;   // already prompted this approach — don't nag every frame
+  _lastBlocked = zn.id;
+  if (tickets.tier() === 'ghost') {
+    hud.toast(`${zn.emoji} ${zn.name} needs a ticket`);
+    ticketUI.openChooser();
+  } else {
+    const price = tickets.accessPrice(zn.accessKind);
+    hud.toast(`${zn.name} — ${price} credits to enter`);
+    ticketUI.openAccess({ kind: zn.accessKind, price });
+  }
+}
 
 // Desktop hint (fine pointer only): default look is hold-drag. Show it briefly,
 // then fade after a few seconds OR on the first look/move input, whichever's first.
@@ -206,14 +228,43 @@ function adoptFlow(profile) {
   const me = identity.adopt(profile);
   return afterSignedIn(me);
 }
-// Shared "we are now signed in as `me`" side-effects (HUD chip + wallet activation).
+// Shared "we are now signed in as `me`" side-effects (HUD chip + wallet + tickets).
 function afterSignedIn(me) {
   wallet.activate(me.pubkey);     // load THIS identity's persisted local balance
+  tickets.activate(me.pubkey);    // load THIS identity's persisted tier + embodiment
   hud.setSignedIn({ name: me.name, faceUrl: drawKeyface(me.pubkey, 64).toDataURL() });
   hud.showBalance(true);
   hud.setBalance(wallet.getBalance());
+  refreshEmbodiment();            // body/ghost-indicator/counts follow the loaded tier
   return me;
 }
+
+// ── Embodiment (ghost vs paid) ────────────────────────────────────────────────────
+// Embodied = holds a paid ticket AND is currently visible. Ghosts (free/un-ticketed) and
+// paid users who "went invisible" are NOT embodied: no local body, no presence broadcast
+// (peers don't render them), counted as listeners not participants.
+function embodied() { return tickets.tier() !== 'ghost' && tickets.visible(); }
+
+const BASE_EMBODIED = seeded.length;   // seeded ambiance bodies
+const BASE_LISTENERS = 32;             // seeded plausible ghost/listener count (mock)
+let lastParticipantCount = 1;
+function refreshCounts(pc = lastParticipantCount) {
+  lastParticipantCount = pc;
+  const remoteEmbodied = Math.max(0, pc - 1);                 // LiveKit peers (minus us)
+  hud.setPresence(BASE_EMBODIED + remoteEmbodied + (embodied() ? 1 : 0),
+                  BASE_LISTENERS + (embodied() ? 0 : 1));
+}
+// Apply the current embodiment state everywhere it shows: local body, ghost indicator, counts.
+function refreshEmbodiment() {
+  localBody.visible = embodied();
+  const tier = tickets.tier();
+  hud.setGhost(embodied() ? null
+    : tier === 'ghost' ? '👻 observing as a ghost' : '👻 invisible — observing');
+  refreshCounts();
+}
+// Tier/embodiment can change from anywhere (buy, toggle, access) — reflect it once, here.
+tickets.onChange(() => { refreshEmbodiment(); hud.setBalance(wallet.getBalance()); });
+refreshEmbodiment(); // initial: signed-out visitor is a ghost (no body, listener count)
 // Sign-in gate for anything that spends sats or posts content. Signed out → prompt sign
 // in (the You menu, where Sign in is the primary button) and stop.
 function requireSignedIn(what = 'do that') {
@@ -222,6 +273,15 @@ function requireSignedIn(what = 'do that') {
   openYou();
   return false;
 }
+// Ticket gate — everything that spends/posts/queues/books now needs a paid ticket, not just a
+// sign-in: signed out → prompt sign-in; signed-in ghost → prompt the ticket chooser. Extends
+// the requireSignedIn pattern (the ghost is the new "not yet allowed" state).
+function requireTicket(what = 'do that') {
+  if (!identity.current()) { hud.toast(`Sign in first to ${what}`); openYou(); return false; }
+  if (tickets.tier() === 'ghost') { hud.toast(`Get a ticket to ${what}`); openTicketChooser(); return false; }
+  return true;
+}
+function openTicketChooser() { closeAllMenus(); ticketUI.openChooser(); }
 hud.onSignIn(() => openYou());   // "You" control-bar chip → You menu
 hud.onStage(() => openStage());  // "Stage" control-bar button → Stage menu
 
@@ -300,12 +360,16 @@ function openYou() {
     name: me?.name || null,
     faceUrl: me ? drawKeyface(me.pubkey, 64).toDataURL() : null,
     balance: wallet.getBalance(),
+    tier: tickets.tier(),                 // 'ghost' | 'basic' | 'supporter' | 'patron'
+    tierLabel: tickets.TIERS[tickets.tier()]?.label,
+    visible: tickets.visible(),
+    badge: tickets.flags().badge,
   });
 }
 async function openStage() { closeAllMenus(); menus.openStage(await stageData()); }
 function openInstructions() { closeAllMenus(); menus.openInstructions(); }
 function openBooking() {
-  if (!requireSignedIn('book a slot')) return;
+  if (!requireTicket('book a slot')) return;
   closeAllMenus();
   bookingUI.open({ slots: booking.slots(), myPubkey: identity.current().pubkey });
 }
@@ -314,7 +378,7 @@ async function openSpeakerHub() {
   closeAllMenus();
   speakerHub.open({ mySlot: booking.mine()[0], entries: await hubEntries(), criteria: queue.criteria() });
 }
-function openSpendHub() { closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup(), mic: micState(), boostByTap: boostByTap() }); }
+function openSpendHub() { if (!requireTicket('spend sats')) return; closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup(), mic: micState(), boostByTap: boostByTap() }); }
 
 // Share the one-link URL to the clipboard. Primary path is the async Clipboard API
 // (works on a real gesture in a secure context); fall back to a hidden-textarea
@@ -375,9 +439,11 @@ const voice = new Voice({
 // Presence exists from the start so avatar separation (incl. static props) is always
 // active. The heartbeat send/receive only carries data once voice connects (sendData
 // no-ops with no room), so nothing leaks before the user joins.
-const presence = createPresence(voice, scene, () => ({
-  x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y,
-}), staticBodies, {
+// getPose returns null while we're a ghost / invisible → presence skips the heartbeat, so
+// peers never render a body for us (we're a listener, not a participant).
+const presence = createPresence(voice, scene, () => (embodied()
+  ? { x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y }
+  : null), staticBodies, {
   // Each remote peer gets a mock identity (face + name) keyed by its presence id.
   // REAL: presence carries the peer's pubkey; this becomes getProfile(pubkey).
   onAvatarSpawn: (id, group) => identifyAvatar(group, id),
@@ -640,7 +706,7 @@ function topUpWallet() {
 // The one "zap a person" entry: sign-in-gated (insufficient balance is handled by the
 // zap-failed path, which prompts Top up), then input-appropriate.
 function zapAvatar(pubkey, name) {
-  if (!requireSignedIn('zap')) return;
+  if (!requireTicket('zap')) return;
   if (renderer.xr.isPresenting) wallet.zap({ toPubkey: pubkey, amountSats: DEFAULT_ZAP, note: zapNote() }); // VR quick-zap
   else zapUI.openPicker({ pubkey, name });                                                                  // flat/mobile picker
 }
@@ -670,18 +736,50 @@ const sessionUI = createSessionUI({
   onAdopted: (profile) => { adoptFlow(profile); openYou(); }, // become them; refresh the You menu
 });
 
+// Ticket chooser + access micro-purchase. buy() is the ENTRY payment (mock external) that,
+// on confirm, credits the wallet and embodies you (tickets.onChange re-embodies + updates HUD).
+const ticketUI = createTicketUI({
+  toast: (m) => hud.toast(m),
+  tiers: tickets.TIERS,
+  currentTier: () => tickets.tier(),
+  getBalance: () => wallet.getBalance(),
+  onBuy: async (tier) => {
+    if (!identity.current()) { hud.toast('Sign in first to buy a ticket'); openYou(); return { state: 'failed', reason: 'not signed in' }; }
+    const res = await tickets.buy(tier);               // pending→confirmed; credits the wallet on confirm
+    if (res.state === 'confirmed') {
+      hud.setBalance(wallet.getBalance());
+      hud.toast(`You're in — ${tickets.TIERS[tier].label} · +${res.credits.toLocaleString('en-US')} credits`);
+      openYou();                                        // reflect embodiment + Go-invisible + credits
+    }
+    return res;
+  },
+  onAccess: async (kind) => {
+    const res = tickets.purchaseAccess(kind);          // spends credits → sets the access flag
+    if (res.ok) { hud.setBalance(wallet.getBalance()); hud.toast(`${zoneKindLabel(kind)} access unlocked — walk in`); }
+    return res;
+  },
+});
+const zoneKindLabel = (k) => (k === 'smoking' ? 'Smoking Area' : k === 'networking' ? 'Networking' : k);
+
 // The You / Stage / Instructions / Booking homes. Live actions route to the identity +
 // wallet services; not-yet buttons dim + toast inside menus.js (no fake behaviour).
 const menus = createMenus({
   toast: (m) => hud.toast(m),
   onSignIn: async () => { await signInFlow(); openYou(); },
-  onSwitch: async () => { identity.logout(); wallet.deactivate(); await signInFlow(); openYou(); },
+  onSwitch: async () => { identity.logout(); wallet.deactivate(); tickets.deactivate(); refreshEmbodiment(); await signInFlow(); openYou(); },
   onLogout: () => {
-    identity.logout(); wallet.deactivate();          // clears in-memory balance; persisted store stays
+    identity.logout(); wallet.deactivate(); tickets.deactivate(); // → ghost; persisted per-pubkey records stay
     hud.setSignedIn(null); hud.showBalance(false);    // no balance shown while signed out
+    refreshEmbodiment();                              // back to ghost: no body, listener count
     openYou();
   },
   onTopUp: () => topUpWallet(),
+  onGetTicket: () => { menus.closeYou(); ticketUI.openChooser(); },  // ghost → tier chooser
+  onToggleVisible: () => {                            // paid → go invisible / re-embody
+    const now = tickets.setVisible(!tickets.visible());
+    hud.toast(now ? 'Visible — others see you' : 'Invisible — observing as a ghost');
+    openYou();
+  },
   onLoginHeadset: () => { menus.closeYou(); sessionUI.openMint(); },  // signed-in → mint a code
   onEnterCode: () => { menus.closeYou(); sessionUI.openRedeem(); },   // signed-out → redeem a code
   onBookOpen: () => openBooking(),
@@ -702,7 +800,7 @@ const boardUI = createBoardUI({
 });
 
 function openCompose() {
-  if (!requireSignedIn('comment')) return;
+  if (!requireTicket('comment')) return;
   closeAllMenus();
   boardUI.openCompose({ cost: BOOST_SATS });
 }
@@ -714,7 +812,7 @@ function openActivity() {
 
 // Post a comment: charge the zap, and only on 'confirmed' record it to the board.
 async function postComment(text, amountSats) {
-  if (!requireSignedIn('comment')) return;
+  if (!requireTicket('comment')) return;
   const me = identity.current();
   boardUI.closeCompose();
   const res = await wallet.zap({ toPubkey: BOARD_PUBKEY, amountSats, note: `comment: ${text.slice(0, 40)}` });
@@ -728,7 +826,7 @@ async function postComment(text, amountSats) {
 async function boostComment(commentId, worldPoint) {
   const c = board.get(commentId);
   if (!c) return;
-  if (!requireSignedIn('zap')) return;
+  if (!requireTicket('zap')) return;
   const res = await wallet.zap({ toPubkey: c.pubkey, amountSats: BOOST_SATS, note: 'boost' });
   if (res.state === 'confirmed') {
     board.boost(commentId, BOOST_SATS);
@@ -761,12 +859,12 @@ function micState() {
   };
 }
 function openMicForm() {
-  if (!requireSignedIn('take the mic')) return;
+  if (!requireTicket('take the mic')) return;
   closeAllMenus();
   micUI.open(micState());
 }
 async function joinQueue(amountSats, pitch) {
-  if (!requireSignedIn('take the mic')) return;
+  if (!requireTicket('take the mic')) return;
   const me = identity.current();
   micUI.close();
   const res = await queue.join({ pubkey: me.pubkey, amountSats, pitch });
@@ -774,7 +872,7 @@ async function joinQueue(amountSats, pitch) {
   // a 'failed' zap surfaces via the global wallet.onZap toast; nothing joins.
 }
 async function topUpQueue(amountSats) {
-  if (!requireSignedIn('take the mic')) return;
+  if (!requireTicket('take the mic')) return;
   const me = identity.current();
   micUI.close();
   const res = await queue.topUp({ pubkey: me.pubkey, amountSats });
@@ -831,7 +929,7 @@ function cancelBooking(slotId) {
 }
 
 async function bookSlot(slotId, title) {
-  if (!requireSignedIn('book a slot')) return;
+  if (!requireTicket('book a slot')) return;
   const me = identity.current();
   const res = await booking.book({ slotId, title });
   if (res.state === 'confirmed') {
@@ -893,7 +991,7 @@ wallet.onZap((e) => {
 });
 
 onStateChange((s) => {
-  hud.setParticipantCount(s.participantCount);
+  refreshCounts(s.participantCount); // embodied · listeners (ghost) split
   hud.setSpeakerCount(s.speakerCount);
   // Placeholder until Nostr names land (Phase 2): summarise by count.
   hud.setNowSpeaking(s.speakerCount > 0 ? 'Someone speaking' : '— no one speaking —');
@@ -1019,6 +1117,13 @@ renderer.setAnimationLoop(() => {
   if (comfort.get('vignette') && !renderer.xr.isPresenting) {
     hud.setVignetteLevel(rig.position.distanceTo(_prevPos) > dt * 0.2 ? 1 : 0);
   }
+  // Zone-entry access GATE: if we've wandered into a zone our ticket doesn't allow, softly
+  // clamp us back to just outside its boundary (no hard teleport) and prompt the purchase.
+  // Runs BEFORE zones.update, so the HUD pill only fires when we're LEGITIMATELY inside.
+  const gate = accessClamp(rig.position.x, rig.position.z, (zn) => !!tickets.flags()[zn.requires]);
+  if (gate.blocked) { rig.position.x = gate.x; rig.position.z = gate.z; onZoneBlocked(gate.blocked); }
+  else _lastBlocked = null;
+
   _prevPos.copy(rig.position);
   zones.update(rig.position.x, rig.position.z); // social-zone enter/leave seam (self-gates on movement)
 

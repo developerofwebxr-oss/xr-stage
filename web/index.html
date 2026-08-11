@@ -280,6 +280,16 @@
       }
       #locality[hidden] { display: none; }
 
+      /* Ghost / invisible indicator — subtle top-centre pill under the status bar. */
+      #ghost-indicator {
+        position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 9;
+        pointer-events: none; white-space: nowrap;
+        font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.02em; color: var(--ink-dim);
+        background: var(--panel); border: 1px solid var(--hairline); border-radius: 999px;
+        padding: 5px 13px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      }
+      #ghost-indicator[hidden] { display: none; }
+
       /* ── Mobile movement joystick: bottom-left, low, clear of the bar ──────────── */
       #joystick {
         position: fixed; left: calc(env(safe-area-inset-left) + 16px);
@@ -394,7 +404,8 @@
 
       /* ── Modal surfaces: spend hub · amount picker · You · Stage · panels ──────── */
       #spend-menu, #zap-picker, #you-menu, #stage-menu, #instructions, #booking,
-      #compose, #activity, #micform, #speaker-hub, #session-code, #session-redeem {
+      #compose, #activity, #micform, #speaker-hub, #session-code, #session-redeem,
+      #ticket-menu, #access-menu {
         position: fixed; inset: 0; z-index: 20; pointer-events: auto;
         display: flex; align-items: center; justify-content: center;
         background: rgba(3, 4, 8, 0.55);
@@ -403,13 +414,37 @@
       #spend-menu[hidden], #zap-picker[hidden], #you-menu[hidden],
       #stage-menu[hidden], #instructions[hidden], #booking[hidden],
       #compose[hidden], #activity[hidden], #micform[hidden], #speaker-hub[hidden],
-      #session-code[hidden], #session-redeem[hidden] { display: none; }
+      #session-code[hidden], #session-redeem[hidden], #ticket-menu[hidden], #access-menu[hidden] { display: none; }
       #spend-panel, #zap-picker-panel, #you-panel, #stage-panel, #instructions-panel,
       #booking-panel, #compose-panel, #activity-panel, #micform-panel, #speaker-hub-panel,
-      #session-code-panel, #session-redeem-panel {
+      #session-code-panel, #session-redeem-panel, #ticket-panel, #access-panel {
         position: relative; flex-direction: column; align-items: stretch; gap: 9px;
         width: min(340px, calc(100vw - 32px)); padding: 18px;
       }
+      #ticket-panel { width: min(380px, calc(100vw - 32px)); }
+
+      /* Ticket tier cards — price · credits (fee) · perks · Buy. */
+      #ticket-tiers { display: flex; flex-direction: column; gap: 8px; }
+      .tier {
+        display: flex; flex-direction: column; gap: 6px; padding: 12px 13px; text-align: left;
+        background: var(--fill); border: 1px solid var(--hairline); border-radius: var(--r-sm);
+      }
+      .tier.supporter { border-color: rgba(39, 198, 198, 0.5); }
+      .tier.patron { border-color: rgba(255, 207, 90, 0.55); }
+      .tier-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+      .tier-name { font-family: var(--font-mono); font-weight: 700; font-size: 14px; letter-spacing: 0.02em; }
+      .tier.supporter .tier-name { color: #7fe3e3; }
+      .tier.patron .tier-name { color: #ffd97a; }
+      .tier-price { font-family: var(--font-mono); font-size: 13px; color: var(--ink); }
+      .tier-credits { font-family: var(--font-mono); font-size: 12px; color: var(--ink-dim); }
+      .tier-credits .fee { color: var(--ink-faint); }
+      .tier-perks { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+      .tier-perks li { font-size: 12px; color: var(--ink-dim); }
+      .tier-perks li::before { content: "✓ "; color: var(--orange); }
+      .tier .ctl { margin-top: 4px; text-align: center; }
+      .tier .ctl[disabled] { opacity: 0.5; pointer-events: none; }
+      .access-body { font-size: 13px; color: var(--ink-dim); line-height: 1.5; }
+      .access-body b { color: var(--ink); }
 
       /* Headset-login: big monospace code + countdown (mint), and the 6-digit input (redeem). */
       .sc-code {
@@ -500,6 +535,9 @@
       #you-wallet, #you-account { display: flex; flex-direction: column; gap: 8px; }
       .you-balance { font-family: var(--font-mono); font-size: 13px; color: var(--ink-dim); }
       .you-balance b { color: var(--orange); font-variant-numeric: tabular-nums; }
+      .you-tier { font-family: var(--font-mono); font-size: 13px; color: var(--ink); line-height: 1.45; }
+      .you-tier b { color: var(--orange-bright); }
+      #you-ticket[hidden], #you-ticket-sec[hidden], #you-wallet[hidden], #you-wallet-sec[hidden] { display: none; }
 
       /* Stage menu — schedule block. */
       .stage-sched { font-family: var(--font-mono); font-size: 13px; color: var(--ink-dim); display: flex; flex-direction: column; gap: 3px; }
@@ -555,7 +593,7 @@
         <span class="sep"></span>
         <span class="field">
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c0-3 2.4-5 5.5-5s5.5 2 5.5 5"/><path d="M16 6.6a3 3 0 0 1 0 5.4M17.2 14c2.4.4 3.8 2.2 3.8 5"/></svg>
-          <b id="presence-count">1</b>
+          <b id="presence-count">1</b><span id="listening-count" class="muted"></span>
         </span>
       </header>
 
@@ -641,7 +679,9 @@
           <button class="pc-close" id="you-close" aria-label="Close">✕</button>
           <div class="pm-title">You</div>
           <div id="you-identity" class="you-identity"></div>
-          <div class="pm-section">Wallet</div>
+          <div class="pm-section" id="you-ticket-sec">Ticket</div>
+          <div id="you-ticket"></div>
+          <div class="pm-section" id="you-wallet-sec">Wallet</div>
           <div id="you-wallet"></div>
           <div class="pm-section">Account</div>
           <div id="you-account"></div>
@@ -675,6 +715,30 @@
           <div class="zp-actions">
             <button class="ctl" id="sr-cancel">Cancel</button>
             <button class="ctl primary" id="sr-submit">Log in ⚡</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ticket chooser — the three paid tiers (embodiment + credits + perks). Cards are
+           built by ticketUI.js from the tickets service so prices/credits/perks stay in one place. -->
+      <div id="ticket-menu" hidden>
+        <div id="ticket-panel" class="bar" role="dialog" aria-modal="true" aria-label="Get a ticket">
+          <button class="pc-close" id="ticket-close" aria-label="Close">✕</button>
+          <div class="pm-title">Get a ticket</div>
+          <div class="pm-section">You're a ghost — listening only. A ticket embodies you + adds credits.</div>
+          <div id="ticket-tiers"></div>
+        </div>
+      </div>
+
+      <!-- Access micro-purchase confirm (credits → venue) — e.g. Basic buying a zone door. -->
+      <div id="access-menu" hidden>
+        <div id="access-panel" class="bar" role="dialog" aria-modal="true" aria-label="Buy access">
+          <button class="pc-close" id="access-close" aria-label="Close">✕</button>
+          <div class="pm-title" id="access-title">Buy access</div>
+          <div id="access-body" class="access-body"></div>
+          <div class="zp-actions">
+            <button class="ctl" id="access-cancel">Cancel</button>
+            <button class="ctl primary" id="access-confirm">Buy ⚡</button>
           </div>
         </div>
       </div>
@@ -822,6 +886,8 @@
     <div id="freelook-hint" hidden>Free look on — press <b>ESC</b> to exit</div>
     <!-- Locality indicator — shows the social zone you're standing in (Smoking / Networking). -->
     <div id="locality" hidden></div>
+    <!-- Ghost / invisible indicator (free ghosts + paid users who went invisible). -->
+    <div id="ghost-indicator" hidden>👻 observing as a ghost</div>
 
     <script type="module" src="/src/main.js"></script>
   </body>

@@ -61,6 +61,19 @@ export const wallet = {
     return { ok: true, balance };
   },
 
+  // Spend credits to the VENUE (a distinct spend TYPE from a person-to-person zap): the
+  // micro-purchase path — buying access/experiences with your local credit balance. Instant
+  // (no invoice; it's internal venue credit), debits + persists. REAL: still internal credit.
+  spend(amountSats, memo = '') {
+    if (!activePubkey) return { ok: false, reason: 'not signed in' };
+    if (!Number.isFinite(amountSats) || amountSats <= 0) return { ok: false, reason: 'invalid amount' };
+    if (amountSats > balance) return { ok: false, reason: 'insufficient balance' };
+    balance -= amountSats;
+    persist();
+    emit({ id: `spend-${++seq}`, memo, amountSats, state: 'spent', balance });
+    return { ok: true, balance };
+  },
+
   onZap(cb) { subs.add(cb); return () => subs.delete(cb); },
 
   async zap({ toPubkey, amountSats, note } = {}) {

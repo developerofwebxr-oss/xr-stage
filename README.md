@@ -134,6 +134,44 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Ticketing + embodiment — ghost mode & tiers (3.10)** — no new deps; the business model:
+- **Free = ghost, paid = embodiment.** A signed-out/un-ticketed visitor is a **ghost**: listens
+  + moves, but has **no body/name-label**, doesn't broadcast presence (peers render nothing for
+  them), and **can't post/zap/queue/book or enter paid zones**. A one-time **ticket** per identity
+  buys embodiment + venue **credits** + perks.
+- **`tickets` service** (`src/tickets/tickets.js`, persisted per pubkey like the wallet):
+  `tier()` · `buy(tier)` · `flags()` · `visible()/setVisible()` · `purchaseAccess(kind)` ·
+  `onChange()`. **Money flow (mock, custody-free):** `buy()` is the **entry payment** (mock
+  "external", not from local credits) → on confirm it sets the tier **and** credits the wallet
+  the **post-fee** amount. Tiers: **Basic** 2,100 sats → 1,890 credits · **Supporter** 8,000 →
+  7,200 (+ badge, networking priority, networking/smoking access) · **Patron** 21,000 → 18,900
+  (+ distinct badge, all Supporter flags, front-row + sponsor-spot flags). The **10% venue fee is
+  shown at purchase**. Micro-purchases (`purchaseAccess`) spend **credits → venue** for a door
+  flag (`wallet.spend()`); only `networking`/`smoking`/`frontRow` are recognised.
+- **Ghost mode:** `getPose()` returns null while ghost/invisible → presence skips the heartbeat
+  (peers never render a body). Status bar now shows **both counts** — `👥 N · M listening`
+  (embodied bodies · ghost listeners, seeded plausibly). Local body hidden; a subtle
+  "👻 observing as a ghost / invisible" pill shows.
+- **Gate:** the central `requireSignedIn` grew a `requireTicket` — every spend/post/queue/book
+  path now needs a paid ticket (signed-in ghost → prompts the tier chooser; signed-out → sign-in).
+- **Buy UX** (`src/ui/ticketUI.js`): a "🎟 Get a ticket" entry in the You menu (primary while a
+  signed-in ghost) + the tier chooser (prices, credits, fee, perks — Live Console). On confirm:
+  body appears, credits land, **badge** shows on the label (Supporter/Patron distinct, baked into
+  the label canvas — no new mesh), toast confirms. Paid users get a **Go invisible / Go visible**
+  toggle (persisted per pubkey).
+- **Zone gates:** the `zones` seam is wired to the flags — entering Networking/Smoking without the
+  flag **softly bounces** you to just outside the boundary (`accessClamp`, no hard teleport) and
+  prompts: ghosts → the ticket chooser; Basic → the **credits access purchase** (500 credits each);
+  Supporter/Patron walk straight in. The HUD zone pill only fires when legitimately inside.
+  Front-row / sponsor stay **flag-only** (no zone/screen yet). *Audio isolation on enter/leave is
+  the later audio-zone slice — a code note marks the seam; voice/LiveKit untouched here.*
+- **Verified** in Chrome: fresh identity = ghost (listens, `3 · 33 listening`, invisible to
+  presence, gated actions prompt a ticket); buy Basic → embodied + 1,890 credits + `4 · 32` +
+  bounced at both doors → buys Networking access (credits) → walks in; Supporter/Patron → badges +
+  flags + both doors open (front-row flag seam-only); go-invisible round-trips the counts; all
+  persisted per pubkey across reload; the 10% fee is shown at purchase. No console errors. (Voice
+  connect + the VR/AR feel are the owner's device pass.)
+
 **Enclose the zones + decoration seams (3.13c)** — no new deps, no services touched:
 - Made both zones **enclosed, exclusive interiors** — not visible into from the plaza, ready
   for future textures/props. The `zones` seam + all existing behavior are unchanged.

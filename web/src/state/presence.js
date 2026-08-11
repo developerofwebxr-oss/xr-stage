@@ -39,11 +39,15 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
     if (sendAcc >= SEND_INTERVAL) {
       sendAcc = 0;
       const pose = getPose();
-      voice.sendData({
-        t: 'presence',
-        p: [round(pose.x), round(pose.y), round(pose.z)],
-        yaw: round(pose.yaw),
-      });
+      // getPose() may return null (e.g. a ghost / invisible viewer) → don't broadcast a body,
+      // so peers render nothing for us. We still receive + render everyone else.
+      if (pose) {
+        voice.sendData({
+          t: 'presence',
+          p: [round(pose.x), round(pose.y), round(pose.z)],
+          yaw: round(pose.yaw),
+        });
+      }
     }
 
     // Expire anyone who's gone quiet, then smooth the rest toward their targets.

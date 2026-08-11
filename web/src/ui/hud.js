@@ -47,6 +47,8 @@ export function createHud() {
     lockHint: $('lock-hint'),
     freelookHint: $('freelook-hint'),
     locality: $('locality'),
+    ghostIndicator: $('ghost-indicator'),
+    listeningCount: $('listening-count'),
   };
   // comfort key → its checkbox, for the menu's persisted toggles.
   const comfortBoxes = { vignette: el.pmVignette, snapTurn: el.pmSnapTurn, haptics: el.pmHaptics };
@@ -77,6 +79,17 @@ export function createHud() {
     // ── Top status (B3) ────────────────────────────────────────────────────────
     setRoom(name) { el.roomLabel.textContent = name; },
     setParticipantCount(n) { el.presenceCount.textContent = String(n); },
+    // Two-count presence: embodied bodies · ghost listeners → "14 · 32 listening".
+    setPresence(embodied, listeners) {
+      el.presenceCount.textContent = String(embodied);
+      el.listeningCount.textContent = ` · ${listeners} listening`;
+    },
+    // Ghost/invisible indicator (free ghosts + paid users who went invisible). null hides it.
+    setGhost(label) {
+      if (!label) { el.ghostIndicator.hidden = true; return; }
+      el.ghostIndicator.textContent = label;
+      el.ghostIndicator.hidden = false;
+    },
     setVoiceState(state) {
       el.voiceStatus.textContent = state;
       el.voiceDot.setAttribute('data-state', state);

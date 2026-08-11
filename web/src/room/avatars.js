@@ -139,14 +139,14 @@ export function applyIdentity(group, identity) {
     face.material.color.set(0xffffff); // let the texture show its true colours
     face.material.needsUpdate = true;
   }
-  setNameLabel(group, identity.name);
+  setNameLabel(group, identity.name, identity.badge || null); // badge = 'supporter' | 'patron' | null
   group.userData.identity = identity; // so click-picking can read it (Phase 2.2)
 }
 
 // Over-head name plate: a camera-facing sprite (Live Console: mono text on a glass
 // pill). Re-used per group so re-identifying just swaps the texture.
-function setNameLabel(group, name) {
-  const canvas = nameCanvas(name);
+function setNameLabel(group, name, badge = null) {
+  const canvas = nameCanvas(name, badge);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   let sprite = group.userData.nameSprite;
@@ -165,11 +165,18 @@ function setNameLabel(group, name) {
   sprite.scale.set(h * (canvas.width / canvas.height), h, 1);
 }
 
-function nameCanvas(name) {
+// Paid tiers get a small badge marker baked into the label canvas (no extra mesh): a subtle
+// gem for Supporter, a brighter ringed star for Patron. Cheap — a few canvas ops.
+const BADGE = {
+  supporter: { color: '#27c6c6', ring: 'rgba(39,198,198,0.5)' },
+  patron:    { color: '#ffcf5a', ring: 'rgba(255,207,90,0.6)' },
+};
+function nameCanvas(name, badge = null) {
   const dpr = 2, padX = 18, fontPx = 30, font = `600 ${fontPx}px ui-monospace, "SF Mono", Menlo, monospace`;
+  const bw = badge && BADGE[badge] ? 26 : 0; // extra left space for the badge
   const m = document.createElement('canvas').getContext('2d');
   m.font = font;
-  const w = Math.ceil(m.measureText(name).width) + padX * 2;
+  const w = Math.ceil(m.measureText(name).width) + padX * 2 + bw;
   const h = fontPx + 22;
   const c = document.createElement('canvas');
   c.width = w * dpr; c.height = h * dpr;
@@ -177,10 +184,22 @@ function nameCanvas(name) {
   g.scale(dpr, dpr);
   roundRect(g, 0.5, 0.5, w - 1, h - 1, 9);
   g.fillStyle = 'rgba(12,14,19,0.78)'; g.fill();
-  g.strokeStyle = 'rgba(255,255,255,0.13)'; g.lineWidth = 1; g.stroke();
+  g.strokeStyle = badge && BADGE[badge] ? BADGE[badge].ring : 'rgba(255,255,255,0.13)';
+  g.lineWidth = badge ? 1.5 : 1; g.stroke();
   g.fillStyle = '#eceef5'; g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText(name, w / 2, h / 2 + 1);
+  g.fillText(name, (w + bw) / 2, h / 2 + 1); // name centred in the space right of the badge
+  if (bw) drawBadge(g, padX + 4, h / 2, badge);
   return c;
+}
+// A small diamond gem in the tier colour; Patron gets a bright core + ring to read as higher.
+function drawBadge(g, cx, cy, badge) {
+  const b = BADGE[badge]; const r = 7;
+  g.save();
+  g.translate(cx, cy); g.rotate(Math.PI / 4);
+  if (badge === 'patron') { g.shadowColor = b.ring; g.shadowBlur = 8; }
+  g.fillStyle = b.color; g.fillRect(-r, -r, r * 2, r * 2);
+  if (badge === 'patron') { g.shadowBlur = 0; g.fillStyle = '#fff6e0'; g.fillRect(-r / 2.4, -r / 2.4, r / 1.2, r / 1.2); }
+  g.restore();
 }
 function roundRect(g, x, y, w, h, r) {
   g.beginPath();

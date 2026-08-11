@@ -17,10 +17,11 @@ const NOT_YET = 'Not available yet';
 
 export function createMenus({
   toast, onSignIn, onSwitch, onLogout, onTopUp, onActivity, onBookOpen, onSpeakerHubOpen,
-  onLoginHeadset, onEnterCode,
+  onLoginHeadset, onEnterCode, onGetTicket, onToggleVisible,
 } = {}) {
   const el = {
     you: $('you-menu'), youIdentity: $('you-identity'), youWallet: $('you-wallet'), youAccount: $('you-account'),
+    youTicket: $('you-ticket'), youTicketSec: $('you-ticket-sec'), youWalletSec: $('you-wallet-sec'),
     stage: $('stage-menu'), stageSched: $('stage-sched'), stageHub: $('stage-speaker-hub'),
     instructions: $('instructions'),
   };
@@ -30,38 +31,61 @@ export function createMenus({
   // ── You menu (identity + wallet home) ───────────────────────────────────────────
   function openYou(info = {}) { renderYou(info); el.you.hidden = false; }
   function closeYou() { el.you.hidden = true; }
-  function renderYou({ signedIn, name, faceUrl, balance } = {}) {
+  function renderYou({ signedIn, name, faceUrl, balance, tier = 'ghost', tierLabel, visible = false, badge } = {}) {
+    const paid = signedIn && tier !== 'ghost';
     el.youIdentity.innerHTML = signedIn
       ? `<img class="you-face" src="${faceUrl}" alt=""><div class="you-name"></div>`
       : `<div class="you-name muted">Not signed in</div>`;
     if (signedIn) el.youIdentity.querySelector('.you-name').textContent = name;
 
-    // Wallet — a LOCAL venue balance tied to your identity. Signed out shows NO balance and
-    // a dimmed "Top up wallet" (toast "Sign in first"); signed in shows the balance + an
-    // active Top up.
-    el.youWallet.innerHTML = '';
-    if (signedIn) {
-      const b = document.createElement('div');
-      b.className = 'you-balance';
-      b.innerHTML = `⚡ Balance: <b>${fmt(balance)}</b> sats`;
-      el.youWallet.appendChild(b);
-      el.youWallet.appendChild(btn('⚡ Top up wallet', 'ctl primary', () => onTopUp && onTopUp()));
-    } else {
-      el.youWallet.appendChild(btn('⚡ Top up wallet', 'ctl soon', () => toast && toast('Sign in first')));
+    // Ticket — the embodiment/tier home. Shown only when signed in. Ghost: "listening only" +
+    // Get-a-ticket primary. Paid: tier (+ badge) + a Go-invisible / Go-visible toggle.
+    const showTicket = signedIn;
+    el.youTicketSec.hidden = !showTicket;
+    el.youTicket.hidden = !showTicket;
+    el.youTicket.innerHTML = '';
+    if (showTicket) {
+      const status = document.createElement('div');
+      status.className = 'you-tier';
+      if (paid) {
+        const b = badge ? ` · ${badge === 'patron' ? '◆ Patron' : '◇ Supporter'} badge` : '';
+        status.innerHTML = `<b>${esc(tierLabel || tier)}</b>${b} — ${visible ? 'embodied' : 'invisible (ghost)'}`;
+      } else {
+        status.innerHTML = `<span class="muted">👻 Ghost — listening only. Get a ticket to be seen, zap, post &amp; enter zones.</span>`;
+      }
+      el.youTicket.appendChild(status);
+      if (paid) {
+        el.youTicket.appendChild(btn(visible ? '👻 Go invisible' : '👁 Go visible', 'ctl', () => onToggleVisible && onToggleVisible()));
+        el.youTicket.appendChild(btn('🎟 Change tier', 'ctl', () => onGetTicket && onGetTicket()));
+      } else {
+        el.youTicket.appendChild(btn('🎟 Get a ticket', 'ctl primary', () => onGetTicket && onGetTicket()));
+      }
     }
 
-    // Account. Signed out: Sign in is the highlighted primary; Activity dimmed. Signed in:
-    // Activity live + Switch / Log out.
+    // Wallet — a LOCAL venue credit balance. Meaningful once you hold a ticket, so it's shown
+    // for paid tiers only (ghosts have nothing to spend). Signed out / ghost: hidden.
+    el.youWalletSec.hidden = !paid;
+    el.youWallet.hidden = !paid;
+    el.youWallet.innerHTML = '';
+    if (paid) {
+      const b = document.createElement('div');
+      b.className = 'you-balance';
+      b.innerHTML = `⚡ Balance: <b>${fmt(balance)}</b> credits`;
+      el.youWallet.appendChild(b);
+      el.youWallet.appendChild(btn('⚡ Top up wallet', 'ctl primary', () => onTopUp && onTopUp()));
+    }
+
+    // Account. Signed out: Sign in primary + Enter code. Signed in: Activity (ticketed only) +
+    // headset login + Switch / Log out.
     el.youAccount.innerHTML = '';
     if (signedIn) {
-      el.youAccount.appendChild(btn('Activity', 'ctl', () => onActivity && onActivity()));
-      // Cross-device: hand THIS identity to a headset via a one-time code.
+      if (paid) el.youAccount.appendChild(btn('Activity', 'ctl', () => onActivity && onActivity()));
+      else el.youAccount.appendChild(btn('Activity', 'ctl soon', () => toast && toast('Get a ticket first')));
       el.youAccount.appendChild(btn('📟 Log in on headset', 'ctl', () => onLoginHeadset && onLoginHeadset()));
       el.youAccount.appendChild(btn('Switch account', 'ctl', () => onSwitch && onSwitch()));
       el.youAccount.appendChild(btn('Log out', 'ctl', () => onLogout && onLogout()));
     } else {
       el.youAccount.appendChild(btn('Sign in', 'ctl primary', () => onSignIn && onSignIn()));
-      // The redeem path IS a sign-in: type a code minted on another device.
       el.youAccount.appendChild(btn('📟 Enter code', 'ctl', () => onEnterCode && onEnterCode()));
       el.youAccount.appendChild(btn('Activity', 'ctl soon', () => toast && toast('Sign in first')));
     }

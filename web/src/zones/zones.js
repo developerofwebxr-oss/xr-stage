@@ -38,6 +38,7 @@ export const ZONE_DEFS = [
     id: 'smoking', name: 'Smoking Area', emoji: '🚬', hue: EMBER,
     fx: -13, fz: 19,             // park gate, back-left
     cx: -14.1, cz: 21.2, r: 3.2, // detection: inside the clearing (past the gate)
+    requires: 'smokingAccess', accessKind: 'smoking', // ticket flag / micro-purchase kind for the door
     lettersText: 'SMOKING AREA', lettersH: 2.0,
     plaque: 'Permissionless talk. The closer you stand, the better you hear. Entry: ticket + mic permission — your mic is ON in here.',
   },
@@ -45,6 +46,7 @@ export const ZONE_DEFS = [
     id: 'networking', name: 'Networking', emoji: '🤝', hue: TEAL,
     fx: 6, fz: 24,               // hall doorway, back centre/right
     cx: 6.48, cz: 26.46, r: 3.4, // detection: inside the hall
+    requires: 'networkingAccess', accessKind: 'networking',
     lettersText: 'NETWORKING', lettersH: 2.6,
     plaque: 'Meet people. Ask to talk — mic by mutual permission. Entry with ticket.',
   },
@@ -61,6 +63,23 @@ function zoneAt(x, z) {
     if (dx * dx + dz * dz <= zn.r * zn.r) return zn;
   }
   return null;
+}
+
+// Zone-entry ACCESS gate (wired to ticket flags in main). If (x,z) is inside a zone the
+// player may not enter, softly push them to JUST outside that zone's boundary and report it
+// — a gentle wall at the door, no hard teleport. `allow(zn)` → may this player enter zn?
+const EDGE = 0.15;
+export function accessClamp(x, z, allow) {
+  for (const zn of ZONE_DEFS) {
+    const dx = x - zn.cx, dz = z - zn.cz;
+    const d2 = dx * dx + dz * dz;
+    if (d2 <= zn.r * zn.r && !allow(zn)) {
+      const d = Math.sqrt(d2) || 1e-6;
+      const k = (zn.r + EDGE) / d;                 // push out to just past the boundary
+      return { x: zn.cx + dx * k, z: zn.cz + dz * k, blocked: zn };
+    }
+  }
+  return { x, z, blocked: null };
 }
 
 export const zones = {
