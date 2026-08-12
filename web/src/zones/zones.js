@@ -1,28 +1,32 @@
 import * as THREE from 'three';
 import { STAGE_POS } from '../room/zones.js';
 
-// zones/zones.js — the SOCIAL zones as ENCLOSED destination buildings across the plaza
-// behind the audience, plus the detection SEAM later slices consume. Facades + shells only;
-// interiors are dark, texture-ready, and empty until the decoration/prop slice.
+// zones/zones.js — the SOCIAL zones as ENCLOSED destination buildings across the plaza behind
+// the audience, the detection + access SEAMS, a night FOREST backdrop, and live OCCUPANCY.
 //
-// NB: distinct from room/zones.js (stage LAYOUT + movement clamp). Here:
-//   • Networking — a curved-facade HALL, fully enclosed (side + back walls + ceiling), so the
-//     plaza sees only the facade + a dark doorway; inside is a real room.
-//   • Smoking — a park GATE opening into an enclosed CLEARING (hedge perimeter + dense trees),
-//     so the plaza sees only the gate opening; trees recede to the horizon as backdrop.
+//   • Networking — a curved-facade HALL, fully enclosed (side + back walls + ceiling), grand +
+//     deep. From the plaza you see only the facade + a dark doorway.
+//   • Smoking — a park GATE opening into an enclosed CLEARING (hedge perimeter). The gate is the
+//     only opening.
+//   • Forest — instanced stylized conifers scattered OUTSIDE both interiors (exclusion regions),
+//     screening + receding to the horizon; never inside a zone or blocking an entrance/path.
 //
-//   zones.current()        → the zone the local rig is in, or null
-//   zones.onChange(cb)     → subscribe to enter/leave; returns unsub  (cb(zone|null))
-//   zones.update(x, z)     → recompute from the rig's XZ; emits only when the zone changes
-//   buildZoneScenery(scene)→ adds the buildings/gate/clearing/trees/plaques (call once)
-//   zoneAnchors            → named refs into each interior for the future decoration slice
+//   zones.current()          → the zone the local rig is in, or null
+//   zones.onChange(cb)       → subscribe to enter/leave; returns unsub  (cb(zone|null))
+//   zones.update(x, z)       → recompute from the rig's XZ; emits only when the zone changes
+//   zones.occupancy(id)      → { count, patron, supporter, speaker } for a zone (mock population
+//                              + the local player when inside — see setLocalBadge)
+//   zones.setLocalBadge(badge, speaker) · zones.refreshOccupancy()
+//   buildZoneScenery(scene)  → adds the buildings/gate/clearing/forest/plaques (call once)
+//   zoneAnchors              → named refs into each interior for decoration/sponsor mounts
 //
-// ─── AUDIO-EXCLUSIVITY SEAM (later slice — do NOT wire here) ────────────────────────────
-// The enter/leave events from `zones.onChange` are the hook the AUDIO-ZONE slice will use to
-// drive audio ISOLATION: while inside a zone, occupants hear each other but NOT the plaza,
-// and the plaza does NOT hear them (and vice versa) — e.g. by moving the participant to a
-// per-zone LiveKit audio group / muting cross-zone tracks on enter, restoring on leave. This
-// module stays presentation-only; nothing here touches voice/LiveKit.
+// ─── SEAMS (later slices — do NOT wire here) ───────────────────────────────────────────
+//  • AUDIO isolation: zones.onChange enter/leave will drive per-zone LiveKit audio groups.
+//  • OCCUPANCY (real): presence will broadcast the occupant's zone id with its heartbeat; swap
+//    the mock population below for a live tally keyed by that. The shape here won't change.
+//  • SPONSOR screens: zoneAnchors.walls (Networking) + the Smoking hedge are the future mounts —
+//    keep them clear (nothing decorates the walls yet).
+//  • Future paid "Ostrich Farm" zone reuses ZONE_DEFS + accessClamp + this whole system.
 // ────────────────────────────────────────────────────────────────────────────────────────
 
 const EMBER = 0xff6a2c;   // Smoking — warm ember
@@ -32,27 +36,41 @@ const C = STAGE_POS;      // arc centre = stage centre (0,0,−7)
 const onArc = (radius, a) => new THREE.Vector3(C.x + radius * Math.sin(a), 0, C.z + radius * Math.cos(a));
 const bearing = (x, z) => Math.atan2(x - C.x, z - C.z);
 const radiusOf = (x, z) => Math.hypot(x - C.x, z - C.z);
+const shortAng = (d) => Math.atan2(Math.sin(d), Math.cos(d));
+
+// ── Building dimensions (module-level so the forest exclusions can reference them) ──────
+// Networking HALL — much wider + deeper than before so the room reads grand. INTERIOR_DEPTH is
+// the occupancy-scaling SEAM (static now; a busy hall could grow it live).
+const NET_H = 7.0, NET_WALLHALF = 0.30, NET_DOORHALF = 0.055, NET_DEPTH = 22;
+// Smoking CLEARING.
+const SMK_CW = 11, SMK_CD = 10, SMK_HH = 3.0, SMK_POSTH = 3.6, SMK_GATEHALF = 0.07;
 
 export const ZONE_DEFS = [
   {
     id: 'smoking', name: 'Smoking Area', emoji: '🚬', hue: EMBER,
     fx: -13, fz: 19,             // park gate, back-left
     cx: -14.1, cz: 21.2, r: 3.2, // detection: inside the clearing (past the gate)
-    requires: 'smokingAccess', accessKind: 'smoking', // ticket flag / micro-purchase kind for the door
+    requires: 'smokingAccess', accessKind: 'smoking',
     lettersText: 'SMOKING AREA', lettersH: 2.0,
     plaque: 'Permissionless talk. The closer you stand, the better you hear. Entry: ticket + mic permission — your mic is ON in here.',
   },
   {
     id: 'networking', name: 'Networking', emoji: '🤝', hue: TEAL,
     fx: 6, fz: 24,               // hall doorway, back centre/right
-    cx: 6.48, cz: 26.46, r: 3.4, // detection: inside the hall
+    cx: 7.04, cz: 29.32, r: 6.0, // detection follows the deeper/wider hall (near edge ≈ the doorway)
     requires: 'networkingAccess', accessKind: 'networking',
     lettersText: 'NETWORKING', lettersH: 2.6,
     plaque: 'Meet people. Ask to talk — mic by mutual permission. Entry with ticket.',
   },
 ];
 
-// ── Detection seam (API unchanged — only the bounds/enclosure moved) ────────────────
+// Per-zone arc geometry (radius + bearing from the stage), computed once.
+const GEOM = {
+  smoking:    { R: radiusOf(-13, 19), th: bearing(-13, 19) },
+  networking: { R: radiusOf(6, 24),   th: bearing(6, 24) },
+};
+
+// ── Detection seam ──────────────────────────────────────────────────────────────────
 const _subs = new Set();
 let _current = null;
 let _lastX = Infinity, _lastZ = Infinity;
@@ -65,9 +83,7 @@ function zoneAt(x, z) {
   return null;
 }
 
-// Zone-entry ACCESS gate (wired to ticket flags in main). If (x,z) is inside a zone the
-// player may not enter, softly push them to JUST outside that zone's boundary and report it
-// — a gentle wall at the door, no hard teleport. `allow(zn)` → may this player enter zn?
+// Zone-entry ACCESS gate — soft push to just outside a zone the player may not enter.
 const EDGE = 0.15;
 export function accessClamp(x, z, allow) {
   for (const zn of ZONE_DEFS) {
@@ -75,22 +91,48 @@ export function accessClamp(x, z, allow) {
     const d2 = dx * dx + dz * dz;
     if (d2 <= zn.r * zn.r && !allow(zn)) {
       const d = Math.sqrt(d2) || 1e-6;
-      const k = (zn.r + EDGE) / d;                 // push out to just past the boundary
+      const k = (zn.r + EDGE) / d;
       return { x: zn.cx + dx * k, z: zn.cz + dz * k, blocked: zn };
     }
   }
   return { x, z, blocked: null };
 }
 
+// ── Occupancy (mock population + the local player when inside) ─────────────────────────
+// Deterministic seeded population per zone, so the badge mixes render as social proof. Real
+// counts arrive when presence broadcasts each occupant's zone id (seam noted at top).
+const MOCK_POP = {
+  networking: { count: 11, patron: 3, supporter: 4, speaker: 1 },
+  smoking:    { count: 6,  patron: 1, supporter: 2, speaker: 2 },
+};
+let _localBadge = { badge: null, speaker: false }; // the local player's marks (set by main)
+const _plaqueRedraws = [];                          // in-world occupancy displays to refresh
+
+function occupancyOf(zoneId) {
+  const base = MOCK_POP[zoneId] || { count: 0, patron: 0, supporter: 0, speaker: 0 };
+  const here = _current && _current.id === zoneId; // local player counts only in THIS zone
+  const b = _localBadge;
+  return {
+    count:     base.count + (here ? 1 : 0),
+    patron:    base.patron + (here && b.badge === 'patron' ? 1 : 0),
+    supporter: base.supporter + (here && b.badge === 'supporter' ? 1 : 0),
+    speaker:   base.speaker + (here && b.speaker ? 1 : 0),
+  };
+}
+
 export const zones = {
   current() { return _current; },
   onChange(cb) { _subs.add(cb); return () => _subs.delete(cb); },
+  occupancy(zoneId) { return occupancyOf(zoneId); },
+  setLocalBadge(badge, speaker) { _localBadge = { badge: badge || null, speaker: !!speaker }; },
+  refreshOccupancy() { for (const fn of _plaqueRedraws) fn(); }, // re-texture in-world counters
   update(x, z) {
-    if (x === _lastX && z === _lastZ) return _current; // rig didn't move → nothing to do
+    if (x === _lastX && z === _lastZ) return _current;
     _lastX = x; _lastZ = z;
     const next = zoneAt(x, z);
     if (next !== _current) {
       _current = next;
+      for (const fn of _plaqueRedraws) fn();   // local player joined/left → counters change
       for (const cb of _subs) cb(_current);
     }
     return _current;
@@ -98,39 +140,33 @@ export const zones = {
 };
 
 // ── Decoration seam ─────────────────────────────────────────────────────────────────
-// Named references INTO each enclosed interior, so a later slice (or the owner's generated
-// wall textures / GLB props: tables, sofas, cigar bar, benches) can attach without hunting
-// the scene graph. Populated by buildZoneScenery(). Shapes:
 //   zoneAnchors.networking = { walls:[back,left,right], floor, ceiling, propSpawns:[Object3D…] }
 //   zoneAnchors.smoking    = { ground, perimeter:[back,left,right,frontL,frontR], propSpawns:[…] }
-// `propSpawns` are empty Object3D transforms parked at interior spots (world-correct via their
-// parent group) — read `.matrixWorld` / parent them to drop furniture at the right place.
+// walls/ground are also the future SPONSOR-screen mounts — kept clear.
 export const zoneAnchors = { networking: null, smoking: null };
 
-// ── Shared materials (cheap: a handful, reused; emissive-via-MeshBasic, no lights/shadows,
-// fog-aware; interior surfaces are flat dark TEXTURE-READY canvases) ─────────────────────
+// ── Shared materials ──────────────────────────────────────────────────────────────────
 const M = {
-  wall:     new THREE.MeshBasicMaterial({ color: 0x0b111c, side: THREE.DoubleSide }), // facade
-  interior: new THREE.MeshBasicMaterial({ color: 0x0a0e16, side: THREE.DoubleSide }), // hall walls/ceiling
-  floorNet: new THREE.MeshBasicMaterial({ color: 0x0a1218, side: THREE.DoubleSide }), // hall floor
-  hedge:    new THREE.MeshBasicMaterial({ color: 0x0a1108, side: THREE.DoubleSide }), // clearing perimeter
-  groundSmk:new THREE.MeshBasicMaterial({ color: 0x100b07, side: THREE.DoubleSide }), // clearing ground
+  wall:     new THREE.MeshBasicMaterial({ color: 0x0b111c, side: THREE.DoubleSide }),
+  interior: new THREE.MeshBasicMaterial({ color: 0x0a0e16, side: THREE.DoubleSide }),
+  floorNet: new THREE.MeshBasicMaterial({ color: 0x0a1218, side: THREE.DoubleSide }),
+  hedge:    new THREE.MeshBasicMaterial({ color: 0x0a1108, side: THREE.DoubleSide }),
+  groundSmk:new THREE.MeshBasicMaterial({ color: 0x100b07, side: THREE.DoubleSide }),
   post:     new THREE.MeshBasicMaterial({ color: 0x11151f }),
   teal:     new THREE.MeshBasicMaterial({ color: TEAL, transparent: true, opacity: 0.9 }),
   ember:    new THREE.MeshBasicMaterial({ color: EMBER, transparent: true, opacity: 0.9 }),
-  tree:     new THREE.MeshBasicMaterial({ color: 0x231206 }), // dark ember-tinted silhouette
+  canopy:   new THREE.MeshBasicMaterial({ color: 0xffffff }), // tinted per-instance (instanceColor)
+  trunk:    new THREE.MeshBasicMaterial({ color: 0x0a0806 }),
 };
 
 const plane = (w, h, mat) => new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
 const hedge = (w, h) => new THREE.Mesh(new THREE.PlaneGeometry(w, h), M.hedge);
-// A group on the arc at (radius, angle): local +Z points OUTWARD (deeper), +X tangent.
 function radialGroup(radius, a) {
   const g = new THREE.Group();
   g.position.copy(onArc(radius, a));
   g.rotation.y = a;
   return g;
 }
-// An empty prop-spawn transform at interior-local (x,z), added to `group` and named.
 function addAnchor(group, x, z, name) {
   const o = new THREE.Object3D();
   o.position.set(x, 0, z);
@@ -146,68 +182,65 @@ export function buildZoneScenery(scene) {
   const net = buildNetworking(ZONE_DEFS[1]);
   const smk = buildSmoking(ZONE_DEFS[0]);
   group.add(net.group, smk.group);
+  group.add(buildForest());              // night forest backdrop OUTSIDE both zones
   zoneAnchors.networking = net.anchors;
   zoneAnchors.smoking = smk.anchors;
   scene.add(group);
+  for (const fn of _plaqueRedraws) fn(); // initial occupancy draw
   return group;
 }
 
-// NETWORKING — curved front facade with a doorway, fully enclosed by side + back walls and a
-// ceiling → from the plaza you see only the facade and a dark doorway; nothing inside.
+// NETWORKING — grand enclosed hall.
 function buildNetworking(zn) {
   const g = new THREE.Group();
   const R = radiusOf(zn.fx, zn.fz);
   const th = bearing(zn.fx, zn.fz);
-  const H = 5.4;                    // wall/ceiling height (generous — people + future furniture)
-  const wallHalf = 0.22, doorHalf = 0.055;
-  const D = 9;                      // INTERIOR_DEPTH — SEAM: occupancy scales this later; static now
-  const HW = R * Math.sin(wallHalf) + 0.05; // interior half-width ≈ facade half-chord (~6.9)
+  const H = NET_H, wallHalf = NET_WALLHALF, doorHalf = NET_DOORHALF, D = NET_DEPTH;
+  const HW = R * Math.sin(wallHalf) + 0.05; // interior half-width ≈ facade half-chord
 
-  // Curved dark facade: two wall arcs flanking the doorway + teal lintel + door jambs.
   g.add(arcWall(R, H, th - wallHalf, wallHalf - doorHalf, M.wall));
   g.add(arcWall(R, H, th + doorHalf, wallHalf - doorHalf, M.wall));
-  g.add(arcWall(R + 0.02, 0.22, th - wallHalf, wallHalf * 2, M.teal, { y: H - 0.11 }));
+  g.add(arcWall(R + 0.02, 0.26, th - wallHalf, wallHalf * 2, M.teal, { y: H - 0.13 }));
   for (const s of [-1, 1]) {
-    const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.12, H, 0.12), M.teal);
+    const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.14, H, 0.14), M.teal);
     jamb.position.copy(onArc(R, th + s * doorHalf)); jamb.position.y = H / 2; jamb.rotation.y = th + s * doorHalf;
     g.add(jamb);
   }
 
-  // Enclosure — clean dark texture-ready planes. Planes span local z ∈ [−1, D] so their front
-  // edge tucks behind the (slightly bowed) facade ends → no corner gaps to see through.
+  // Enclosure — clean dark texture-ready planes (front edge tucks behind the bowed facade ends).
   const room = radialGroup(R, th);
   const zc = (D - 1) / 2;
-  const floor = plane(2 * HW, D + 1, M.floorNet);  floor.rotation.x = -Math.PI / 2; floor.position.set(0, 0.02, zc);
+  const floor = plane(2 * HW, D + 1, M.floorNet);   floor.rotation.x = -Math.PI / 2; floor.position.set(0, 0.02, zc);
   const ceiling = plane(2 * HW, D + 1, M.interior); ceiling.rotation.x = Math.PI / 2; ceiling.position.set(0, H, zc);
   const back = plane(2 * HW, H, M.interior);        back.position.set(0, H / 2, D);
   const left = plane(D + 1, H, M.interior);         left.rotation.y = Math.PI / 2;  left.position.set(-HW, H / 2, zc);
   const right = plane(D + 1, H, M.interior);        right.rotation.y = -Math.PI / 2; right.position.set(HW, H / 2, zc);
   room.add(floor, ceiling, back, left, right);
+  // Prop anchors respawned across the bigger hall.
   const propSpawns = [
-    addAnchor(room, 0, 3.5, 'net-centre'),
-    addAnchor(room, -4, 5, 'net-sofa-L'),
-    addAnchor(room, 4, 5, 'net-sofa-R'),
-    addAnchor(room, 0, 7.5, 'net-back'),
+    addAnchor(room, 0, 6, 'net-centre'),
+    addAnchor(room, -6, 8, 'net-sofa-L'),
+    addAnchor(room, 6, 8, 'net-sofa-R'),
+    addAnchor(room, -6.5, 15, 'net-lounge-L'),
+    addAnchor(room, 6.5, 15, 'net-lounge-R'),
+    addAnchor(room, 0, 19, 'net-back'),
   ];
   g.add(room);
 
-  g.add(placeLetters(zn, R + 0.1, th, H + 1.3));          // wayfinding name above the facade
-  g.add(placePlaque(zn, R, th + wallHalf + 0.06));        // plaque beside the entrance
+  g.add(placeLetters(zn, R + 0.1, th, H + 1.3));
+  g.add(placePlaque(zn, R, th + wallHalf + 0.06));
 
   return { group: g, anchors: { walls: [back, left, right], floor, ceiling, propSpawns } };
 }
 
-// SMOKING — a park gate opening into an ENCLOSED clearing: distinct ground + a closed hedge
-// perimeter (back + sides + gate-flanking fronts) so the plaza sees only the gate opening;
-// dense trees screen + a receding treeline forms the horizon backdrop.
+// SMOKING — park gate + enclosed clearing (forest is built globally, not here).
 function buildSmoking(zn) {
   const g = new THREE.Group();
   const R = radiusOf(zn.fx, zn.fz);
   const th = bearing(zn.fx, zn.fz);
-  const postH = 3.6, gateHalf = 0.07;
-  const CW = 11, CD = 10, HH = 3.0; // clearing width/depth, hedge height
+  const postH = SMK_POSTH, gateHalf = SMK_GATEHALF;
+  const CW = SMK_CW, CD = SMK_CD, HH = SMK_HH;
 
-  // Gate: posts + ember caps + arch beam + sign frame.
   for (const s of [-1, 1]) {
     const a = th + s * gateHalf;
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.36, postH, 0.36), M.post);
@@ -221,15 +254,14 @@ function buildSmoking(zn) {
   const frame = new THREE.Mesh(new THREE.BoxGeometry(beamW, 0.08, 0.34), M.ember); frame.position.y = postH + 0.24; beamG.add(frame);
   g.add(beamG);
 
-  // Enclosed clearing: distinct ground + closed hedge perimeter (only the gate opening is a gap).
   const yard = radialGroup(R, th);
-  const gapHalf = R * Math.sin(gateHalf) + 0.2;   // half the gate opening, local x (~2.2)
+  const gapHalf = R * Math.sin(gateHalf) + 0.2;
   const zc = CD / 2;
   const ground = plane(CW, CD, M.groundSmk); ground.rotation.x = -Math.PI / 2; ground.position.set(0, 0.02, zc);
   const back = hedge(CW, HH); back.position.set(0, HH / 2, CD);
   const leftH = hedge(CD, HH); leftH.rotation.y = Math.PI / 2; leftH.position.set(-CW / 2, HH / 2, zc);
   const rightH = hedge(CD, HH); rightH.rotation.y = -Math.PI / 2; rightH.position.set(CW / 2, HH / 2, zc);
-  const frontW = CW / 2 - gapHalf;                // width of each gate-flanking front hedge
+  const frontW = CW / 2 - gapHalf;
   const frontL = hedge(frontW, HH); frontL.position.set(-(gapHalf + frontW / 2), HH / 2, 0);
   const frontR = hedge(frontW, HH); frontR.position.set(gapHalf + frontW / 2, HH / 2, 0);
   yard.add(ground, back, leftH, rightH, frontL, frontR);
@@ -242,54 +274,110 @@ function buildSmoking(zn) {
   g.add(yard);
 
   g.add(placeLetters(zn, R + 0.05, th, postH + 1.15));
-  g.add(buildTreeline(R, th));                    // dense screen around the clearing + horizon backdrop
   g.add(placePlaque(zn, R, th + gateHalf + 0.12));
 
   return { group: g, anchors: { ground, perimeter: [back, leftH, rightH, frontL, frontR], propSpawns } };
 }
 
-// A curved wall arc = an open-ended cylinder segment centred on the stage. `opt.y` overrides
-// the vertical centre (thin lintel trim).
+// A curved wall arc = an open-ended cylinder segment centred on the stage.
 function arcWall(radius, height, thetaStart, thetaLength, mat, opt = {}) {
-  const segs = Math.max(6, Math.round((thetaLength / (Math.PI * 2)) * 220));
+  const segs = Math.max(6, Math.round((thetaLength / (Math.PI * 2)) * 240));
   const geo = new THREE.CylinderGeometry(radius, radius, height, segs, 1, true, thetaStart, thetaLength);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(C.x, opt.y ?? height / 2, C.z);
   return mesh;
 }
 
-// A dense tree screen wrapping the clearing (closes any hedge gaps to the eye) plus rows
-// receding to the horizon as backdrop. One InstancedMesh; deterministic; fog fades the far
-// ones. Trees start BEHIND the gate line so they never block the gate opening.
-function buildTreeline(R, th) {
-  const RINGS = 7, COLS = 9, N = RINGS * COLS;
-  const inst = new THREE.InstancedMesh(new THREE.ConeGeometry(0.6, 2.6, 7), M.tree, N);
-  inst.frustumCulled = false;
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3();
-  const hash = (i) => { const x = Math.sin(i * 12.9898) * 43758.5453; return x - Math.floor(x); };
-  let i = 0;
-  for (let ring = 0; ring < RINGS; ring++) {
-    for (let col = 0; col < COLS; col++) {
-      const h1 = hash(i * 2 + 1), h2 = hash(i * 2 + 7);
-      const rr = R + 1.8 + ring * 2.1 + (h1 - 0.5) * 1.1;      // deeper each ring
-      const spread = 0.12 + ring * 0.02;                       // fan wider → wraps the sides, then recedes
-      const aa = th + (col - (COLS - 1) / 2) * spread + (h2 - 0.5) * 0.03;
-      const scale = 1.15 + h1 * 0.8;
-      const pos = onArc(rr, aa);
-      p.set(pos.x, 1.3 * scale, pos.z);
-      inst.setMatrixAt(i, m.compose(p, q, s.set(scale, scale, scale)));
-      i++;
-    }
-  }
-  inst.instanceMatrix.needsUpdate = true;
-  return inst;
+// ── Night forest ──────────────────────────────────────────────────────────────────────
+// Two InstancedMeshes (trunks + canopies) of a stylized 3-tier conifer. Deterministic scatter
+// across the back hemisphere with EXCLUSION regions so trees only ever sit OUTSIDE the zone
+// interiors / building footprints, clear of the door approaches and the central plaza walkway.
+function buildForest() {
+  const g = new THREE.Group();
+  g.name = 'forest';
+  const items = scatterTrees();
+  const N = items.length;
+  const canopy = new THREE.InstancedMesh(makeConifer(), M.canopy, N);
+  const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.12, 0.17, 1.0, 6).translate(0, 0.5, 0), M.trunk, N);
+  canopy.frustumCulled = false; trunk.frustumCulled = false;
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
+  items.forEach((it, i) => {
+    q.setFromAxisAngle(up, it.rot);
+    p.set(it.x, 0, it.z); s.set(it.sc, it.sc * it.hv, it.sc);
+    m.compose(p, q, s);
+    canopy.setMatrixAt(i, m); trunk.setMatrixAt(i, m);
+    canopy.setColorAt(i, col.copy(it.tint));
+  });
+  canopy.instanceMatrix.needsUpdate = true; trunk.instanceMatrix.needsUpdate = true;
+  if (canopy.instanceColor) canopy.instanceColor.needsUpdate = true;
+  g.add(trunk, canopy);
+  return g;
 }
 
-// ── Letters + plaque (canvas textures, built once) ──────────────────────────────────
+// A stylized conifer canopy: 3 slightly-irregular stacked cone tiers merged into ONE geometry
+// (base sitting on the trunk top). Silhouette shape; per-instance tint/scale/rotation vary it.
+function makeConifer() {
+  const tiers = [
+    { r: 0.95, h: 1.35, y: 1.15, rot: 0.0 },
+    { r: 0.70, h: 1.15, y: 1.95, rot: 0.5 },
+    { r: 0.46, h: 1.05, y: 2.65, rot: 1.0 },
+  ];
+  const parts = tiers.map((t, k) => {
+    const c = new THREE.ConeGeometry(t.r, t.h, 6);
+    c.rotateY(t.rot);
+    c.translate((k === 1 ? 0.07 : -0.05), t.y, (k === 2 ? 0.06 : 0.0)); // slight irregular stacking
+    return c;
+  });
+  return mergeGeos(parts);
+}
+
+// Minimal geometry merge (position only — MeshBasic needs no normals). Avoids an addon import.
+function mergeGeos(geos) {
+  const arrs = geos.map((g) => (g.index ? g.toNonIndexed() : g).attributes.position.array);
+  let n = 0; for (const a of arrs) n += a.length;
+  const pos = new Float32Array(n);
+  let o = 0; for (const a of arrs) { pos.set(a, o); o += a.length; }
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  return merged;
+}
+
+// Deterministic exclusion scatter. Returns [{x,z,sc,hv,rot,tint}].
+function scatterTrees() {
+  const out = [];
+  const cool = new THREE.Color(0x0e1a14), ember = new THREE.Color(0x241309);
+  const hash = (i) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+  const NET = GEOM.networking, SMK = GEOM.smoking;
+  const netHalfAng = NET_WALLHALF;                          // hall angular half-width
+  const smkHalfAng = Math.asin((SMK_CW / 2) / SMK.R);       // clearing angular half-width
+  let i = 0;
+  for (let ang = -1.15; ang <= 1.15 + 1e-6; ang += 0.085) {
+    for (let rr = 33; rr <= 54; rr += 2.3) {
+      const h1 = hash(i * 3 + 1), h2 = hash(i * 3 + 2), h3 = hash(i * 3 + 3); i++;
+      const a = ang + (h1 - 0.5) * 0.06;
+      const rad = rr + (h2 - 0.5) * 1.7;
+      if (rad < 32) continue;
+      const dNet = Math.abs(shortAng(a - NET.th)), dSmk = Math.abs(shortAng(a - SMK.th));
+      // EXCLUDE: building footprints (+margin), door-approach corridors, central plaza walkway.
+      if (rad > NET.R - 1.5 && rad < NET.R + NET_DEPTH + 2 && dNet < netHalfAng + 0.13) continue;
+      if (rad > SMK.R - 1.5 && rad < SMK.R + SMK_CD + 2 && dSmk < smkHalfAng + 0.13) continue;
+      if (dNet < 0.13 && rad < NET.R + 1) continue;         // networking approach
+      if (dSmk < 0.13 && rad < SMK.R + 1) continue;         // smoking approach
+      if (rad < 40 && Math.abs(a) < 0.5) continue;          // central plaza / audience corridor
+      const pos = onArc(rad, a);
+      const prox = Math.max(0, 1 - dSmk / 0.55);            // ember rim near Smoking
+      const tint = cool.clone().lerp(ember, prox).multiplyScalar(0.72 + h3 * 0.55);
+      out.push({ x: pos.x, z: pos.z, sc: 0.85 + h1 * 0.9, hv: 0.9 + h2 * 0.55, rot: h3 * Math.PI * 2, tint });
+    }
+  }
+  return out;
+}
+
+// ── Letters + plaque (canvas textures) ────────────────────────────────────────────────
 function placeLetters(zn, radius, a, y) {
   const g = radialGroup(radius, a);
   const mesh = makeLettersPlane(zn.lettersText, zn.hue, zn.lettersH);
-  mesh.position.y = y; mesh.rotation.y = Math.PI; // face inward toward the stage/audience
+  mesh.position.y = y; mesh.rotation.y = Math.PI;
   g.add(mesh);
   return g;
 }
@@ -310,7 +398,6 @@ function makeLettersPlane(text, color, worldH) {
   g.fillText(text, w / 2, h / 2);
   g.shadowBlur = 0; g.fillStyle = '#fff6ec'; g.globalAlpha = 0.9;
   g.fillText(text, w / 2, h / 2); g.globalAlpha = 1;
-
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
   const mesh = new THREE.Mesh(
@@ -321,38 +408,53 @@ function makeLettersPlane(text, color, worldH) {
   return mesh;
 }
 
+// Plaque = a stand + a SOLID panel carrying the zone name, copy, and a live OCCUPANCY line
+// (re-textured on change only). Its redraw is registered so zones.update can refresh it.
 function placePlaque(zn, radius, a) {
   const g = radialGroup(radius, a);
-  const postH = 1.02, panelW = 1.5, panelH = 0.92;
+  const postH = 1.02, panelW = 1.6, panelH = 1.12;
   const post = new THREE.Mesh(new THREE.BoxGeometry(0.09, postH, 0.09), M.post);
   post.position.y = postH / 2; g.add(post);
   const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.3, 0.06, 20), M.post);
   foot.position.y = 0.03; g.add(foot);
-  const panel = makePlaquePanel(zn, panelW, panelH);
-  panel.position.set(0, postH + panelH / 2 - 0.04, 0);
-  panel.rotation.y = Math.PI; panel.rotateX(0.16); // face inward, tilt up toward the reader
-  g.add(panel);
+  const { mesh, redraw } = makePlaquePanel(zn, panelW, panelH);
+  mesh.position.set(0, postH + panelH / 2 - 0.04, 0);
+  mesh.rotation.y = Math.PI; mesh.rotateX(0.16);
+  g.add(mesh);
+  _plaqueRedraws.push(() => redraw(occupancyOf(zn.id)));
   return g;
 }
 
+const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
+function occLine(occ) {
+  if (!occ.count) return '👥 quiet in here';
+  const b = [occ.patron && `◆${occ.patron}`, occ.supporter && `◇${occ.supporter}`, occ.speaker && `🎙${occ.speaker}`].filter(Boolean).join('  ');
+  return `👥 ${occ.count} inside${b ? `  ·  ${b}` : ''}`;
+}
 function makePlaquePanel(zn, worldW, worldH) {
-  const CW = 620, CH = Math.round(CW * (worldH / worldW));
-  const cv = document.createElement('canvas');
-  cv.width = CW; cv.height = CH;
+  const CW = 640, CH = Math.round(CW * (worldH / worldW));
+  const cv = document.createElement('canvas'); cv.width = CW; cv.height = CH;
   const ctx = cv.getContext('2d');
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(worldW, worldH), new THREE.MeshBasicMaterial({ map: tex }));
   const hex = `#${new THREE.Color(zn.hue).getHexString()}`;
-  roundRect(ctx, 3, 3, CW - 6, CH - 6, 20);
-  ctx.fillStyle = '#0c111b'; ctx.fill();
-  ctx.strokeStyle = hex; ctx.lineWidth = 3; ctx.globalAlpha = 0.8; ctx.stroke(); ctx.globalAlpha = 1;
-  ctx.textBaseline = 'alphabetic'; ctx.fillStyle = hex;
-  ctx.font = '700 40px ui-monospace, "SF Mono", Menlo, monospace';
-  ctx.fillText(`${zn.emoji} ${zn.name}`, 34, 66);
-  ctx.fillStyle = 'rgba(236,238,245,0.9)';
-  ctx.font = '400 30px system-ui, -apple-system, sans-serif';
-  wrapText(ctx, zn.plaque, 34, 116, CW - 68, 40);
-  const tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
-  return new THREE.Mesh(new THREE.PlaneGeometry(worldW, worldH), new THREE.MeshBasicMaterial({ map: tex }));
+  function redraw(occ) {
+    ctx.clearRect(0, 0, CW, CH);
+    roundRect(ctx, 3, 3, CW - 6, CH - 6, 20);
+    ctx.fillStyle = '#0c111b'; ctx.fill();
+    ctx.strokeStyle = hex; ctx.lineWidth = 3; ctx.globalAlpha = 0.8; ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.textBaseline = 'alphabetic'; ctx.fillStyle = hex;
+    ctx.font = `700 38px ${MONO}`;
+    ctx.fillText(`${zn.emoji} ${zn.name}`, 30, 58);
+    ctx.fillStyle = 'rgba(236,238,245,0.9)'; ctx.font = '400 27px system-ui, -apple-system, sans-serif';
+    wrapText(ctx, zn.plaque, 30, 100, CW - 60, 34);
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(30, CH - 52); ctx.lineTo(CW - 30, CH - 52); ctx.stroke();
+    ctx.fillStyle = hex; ctx.font = `700 27px ${MONO}`;
+    ctx.fillText(occLine(occ), 30, CH - 22); // live occupancy — social proof before entering
+    tex.needsUpdate = true;
+  }
+  return { mesh, redraw };
 }
 
 function wrapText(ctx, text, x, y, maxW, lh) {

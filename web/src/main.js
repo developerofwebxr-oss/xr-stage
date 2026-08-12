@@ -147,7 +147,14 @@ stageState.role = config.role;
 
 // Social-zone SEAM → HUD locality indicator. This is the ONLY consumer for now; the
 // ticketing + audio-zone slices will subscribe here too (mic on entering Smoking, etc.).
-zones.onChange((zone) => hud.setZone(zone));
+// Zone pill — the zone + its live occupancy with a compact badge breakdown.
+function zonePillInfo(zone) {
+  if (!zone) return null;
+  const o = zones.occupancy(zone.id);
+  const badges = [o.patron && `◆${o.patron}`, o.supporter && `◇${o.supporter}`, o.speaker && `🎙${o.speaker}`].filter(Boolean).join(' ');
+  return { text: `${zone.emoji} ${zone.name} · ${o.count} inside${badges ? ` (${badges})` : ''}`, hue: zone.hue };
+}
+zones.onChange((zone) => hud.setZone(zonePillInfo(zone)));
 
 // Bounced at a zone door (no access flag). Prompt ONCE per approach: ghosts → the ticket
 // chooser; ticketed-without-access (Basic) → the credits access purchase for that door.
@@ -267,6 +274,11 @@ function refreshEmbodiment() {
   hud.setGhost(embodied() ? null
     : trueGhost ? '👻 observing as a ghost' : '👻 invisible — observing');
   refreshCounts();
+  // Feed the local player's marks into zone occupancy, then refresh the in-world counters + pill.
+  const f = tickets.flags();
+  zones.setLocalBadge(f.badge, f.speaker);
+  zones.refreshOccupancy();
+  if (zones.current()) hud.setZone(zonePillInfo(zones.current()));
 }
 // Tier/embodiment can change from anywhere (buy, toggle, access) — reflect it once, here.
 tickets.onChange(() => { refreshEmbodiment(); hud.setBalance(wallet.getBalance()); menus.setSpeakerPool(tickets.speakerPool()); });

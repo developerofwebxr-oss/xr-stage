@@ -134,6 +134,34 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Zone polish — trees, interiors, occupancy (3.17)** — no new deps:
+- **BUG fixed — trees no longer inside the zones.** The instanced scatter now rejects any
+  candidate inside a zone's **detection circle**, the **building footprints** (+ margin), the
+  **door-approach corridors**, or the **central plaza walkway** — so trees only ever sit
+  OUTSIDE, as backdrop + side screening. Verified programmatically: **0 of 156 trees** land in
+  either detection circle or footprint. Deterministic as before.
+- **Better trees.** Plain cones → a stylized **3-tier conifer** (slightly-irregular stacked
+  cone tiers merged into one geometry + a short trunk), with per-instance scale/height/rotation/
+  **tint** variation (cool-dark generally, **ember rim near Smoking**). Two `InstancedMesh`es
+  (trunks + canopies), shared materials, no lights/shadows — "forest at night," not toy cones.
+- **Networking — much deeper + grander.** `INTERIOR_DEPTH` 9 → **22** (~2.4×), width via
+  `wallHalf` 0.22 → **0.30** (interior ~18.8 m wide), ceiling 5.4 → **7.0 m**. The detection
+  bound follows the new hall (near edge ≈ the doorway), `zoneAnchors` prop-spawns respawned
+  across the bigger room (6 spots), enclosure re-verified from the plaza + a side orbit (no
+  sightline leaks). The occupancy-scaling seam on `INTERIOR_DEPTH` is kept.
+- **Occupancy display.** `zones.occupancy(id)` → `{ count, patron, supporter, speaker }` from a
+  **deterministic seeded population** + the **local player when inside** (`setLocalBadge`). The
+  **HUD zone pill** now reads live, e.g. `🤝 Networking · 12 inside (◆4 ◇4 🎙2)`; each
+  **entrance plaque** carries a `👥 N inside · ◆x ◇y 🎙z` line (social proof before entering),
+  re-textured **on change only**. Real presence-driven counts are a noted seam (presence will
+  broadcast zone id with its heartbeat).
+- **Roadmap seams (not built):** `zoneAnchors.walls` / the Smoking hedge are the future
+  **sponsor-screen** mounts (kept clear); a future paid **Ostrich Farm** reuses the zone/gate/
+  access system — both just noted in code.
+- **Verified** in Chrome (manual renders): tree-free interiors, the new conifer forest, the deep
+  Networking hall (looked through the doorway), and the pill + plaque occupancy with badge
+  mixes. No console errors. (Owner device-tests interior scale in VR.)
+
 **HUD pill collision — one stacking system (3.16)** — presentation/layout only:
 - The top-centre transient hints + status pills (controls hint, Free-look ESC hint, ghost/
   invisible pill, zone locality pill) each had their own absolute anchor and **overlapped** when

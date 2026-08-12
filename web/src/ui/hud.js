@@ -137,12 +137,12 @@ export function createHud() {
       toastTimer = setTimeout(() => el.toast.classList.remove('show'), 2200);
     },
 
-    // Locality indicator — show "🚬 Smoking Area" / "🤝 Networking" while inside a social
-    // zone, hidden otherwise. zone = { name, emoji, hue } | null. Just a label (no gating).
-    setZone(zone) {
-      if (!zone) { el.locality.hidden = true; return; }
-      el.locality.textContent = `${zone.emoji} ${zone.name}`;
-      el.locality.style.setProperty('--zone-hue', `#${zone.hue.toString(16).padStart(6, '0')}`);
+    // Locality pill — the zone you're in, with live occupancy, e.g.
+    // "🤝 Networking · 12 inside (◆3 🎙1)". info = { text, hue } | null. Just a label (no gating).
+    setZone(info) {
+      if (!info) { el.locality.hidden = true; return; }
+      el.locality.textContent = info.text;
+      el.locality.style.setProperty('--zone-hue', `#${info.hue.toString(16).padStart(6, '0')}`);
       el.locality.hidden = false;
     },
 
