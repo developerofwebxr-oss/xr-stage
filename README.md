@@ -134,6 +134,26 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**HUD pill collision — one stacking system (3.16)** — presentation/layout only:
+- The top-centre transient hints + status pills (controls hint, Free-look ESC hint, ghost/
+  invisible pill, zone locality pill) each had their own absolute anchor and **overlapped** when
+  shown together. Replaced the scattered absolutes with **one top-centre flex-column stack**
+  (`#pill-stack`) sitting just below the status bar; every pill is a normal flow child sharing a
+  `.hud-pill` base, so hidden pills take no space and the column **reflows** as they appear/
+  disappear — never overlapping, always a consistent 8px gap.
+- **Stack order (top→bottom):** status bar → **transient hints** (controls · ESC) → **persistent
+  status pills** (ghost · zone). The zone locality pill **moved from bottom-centre into this top
+  stack**. Two persistent pills (invisible + zone) **STACK, not merge** — chosen for clarity so
+  each keeps its own hue/meaning; merging two-into-one read as noisier.
+- Respects `env(safe-area-inset-top)` (below the notch/status bar), caps width to
+  `100vw − 24px`, and the long controls hint **wraps** rather than overflowing — so nothing
+  collides with the status bar, the notch, or the screen edges on any width. Each pill keeps its
+  exact show/hide logic + timing + accent; **only the positioning changed** (no JS/behaviour/
+  service changes).
+- **Verified** in Chrome by forcing combinations (ghost + controls hint; ghost + ESC hint;
+  invisible + zone; **all four at phone width**): no overlaps anywhere, 8px spacing throughout,
+  the long hint wraps and everything stays within the viewport. No console errors.
+
 **Speaker path — slot = your ticket (3.15)** — no new deps:
 - **Booking IS the speaker's ticket** — no attendee tier required. Book-a-slot now gates on
   **`requireSignedIn`** (not `requireTicket`): a ghost who signs in can book. All other

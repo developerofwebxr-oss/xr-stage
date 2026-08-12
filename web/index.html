@@ -243,52 +243,42 @@
       .pc-actions { display: flex; gap: 8px; margin-top: 14px; }
       .pc-actions .ctl { flex: 1; padding: 8px 6px; font-size: 12px; text-align: center; }
 
-      /* Transient controls hint — top-centre, fades in on load / out on first input. */
-      #lock-hint {
-        position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 9;
-        pointer-events: none; color: var(--ink-dim);
-        font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.01em; white-space: nowrap;
-        background: var(--panel); border: 1px solid var(--panel-edge); border-radius: var(--r-md);
-        padding: 6px 12px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-        box-shadow: var(--shadow), var(--ring-inset);
-        opacity: 0; transition: opacity 0.35s;
+      /* ── Top-centre PILL STACK ─────────────────────────────────────────────────────
+         ONE stacking system for every top-anchored transient hint + status pill, so they
+         never overlap. A fixed, centred flex COLUMN sitting just below the status bar; each
+         pill is a normal flow child, so hidden pills take no space and the column reflows as
+         they appear/disappear. Respects the top safe-area (notch) and caps its width so pills
+         never collide with the status bar, the notch, or the screen edges on any device. */
+      #pill-stack {
+        position: fixed; z-index: 9; pointer-events: none;
+        top: calc(env(safe-area-inset-top) + 52px); left: 50%; transform: translateX(-50%);
+        display: flex; flex-direction: column; align-items: center; gap: 8px;
+        max-width: calc(100vw - 24px);
       }
-      #lock-hint.show { opacity: 1; }
-      #lock-hint[hidden] { display: none; }
-
-      /* Free-look ESC hint — shown while desktop pointer-lock hides the cursor. */
-      #freelook-hint {
-        position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 9;
-        pointer-events: none; color: var(--ink); font-size: 13px; white-space: nowrap;
-        background: var(--panel); border: 1px solid rgba(247, 147, 26, 0.55); border-radius: var(--r-md);
-        padding: 7px 13px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-        box-shadow: var(--shadow), var(--glow-orange);
-      }
-      #freelook-hint b { color: var(--orange-bright); font-weight: 700; letter-spacing: 0.04em; }
-      #freelook-hint[hidden] { display: none; }
-
-      /* Locality indicator — bottom-centre pill, shown only while inside a social zone. Its
-         accent hue is set inline per zone (--zone-hue). */
-      #locality {
-        position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 9;
-        pointer-events: none; white-space: nowrap;
-        font-family: var(--font-mono); font-size: 13px; font-weight: 600; letter-spacing: 0.03em;
-        color: var(--ink);
-        background: var(--panel); border: 1px solid var(--zone-hue, var(--hairline)); border-radius: 999px;
-        padding: 7px 15px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-        box-shadow: var(--shadow), 0 0 16px -3px var(--zone-hue, transparent);
-      }
-      #locality[hidden] { display: none; }
-
-      /* Ghost / invisible indicator — subtle top-centre pill under the status bar. */
-      #ghost-indicator {
-        position: fixed; top: 58px; left: 50%; transform: translateX(-50%); z-index: 9;
-        pointer-events: none; white-space: nowrap;
+      /* Shared pill base — consistent shape/backdrop; each pill overrides its own accent. */
+      .hud-pill {
+        pointer-events: none; max-width: 100%; white-space: nowrap;
         font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.02em; color: var(--ink-dim);
         background: var(--panel); border: 1px solid var(--hairline); border-radius: 999px;
-        padding: 5px 13px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        padding: 6px 13px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        box-shadow: var(--shadow), var(--ring-inset);
       }
-      #ghost-indicator[hidden] { display: none; }
+      .hud-pill[hidden] { display: none; }
+
+      /* Transient controls hint — long, so it may wrap; fades in on load / out on first input. */
+      #lock-hint { white-space: normal; text-align: center; letter-spacing: 0.01em; opacity: 0; transition: opacity 0.35s; }
+      #lock-hint.show { opacity: 1; }
+
+      /* Free-look ESC hint — orange accent while desktop pointer-lock hides the cursor. */
+      #freelook-hint { color: var(--ink); font-size: 13px; border-color: rgba(247, 147, 26, 0.55); box-shadow: var(--shadow), var(--glow-orange); }
+      #freelook-hint b { color: var(--orange-bright); font-weight: 700; letter-spacing: 0.04em; }
+
+      /* Zone locality pill — accent hue set inline per zone (--zone-hue). */
+      #locality {
+        color: var(--ink); font-size: 13px; font-weight: 600; letter-spacing: 0.03em;
+        border-color: var(--zone-hue, var(--hairline));
+        box-shadow: var(--shadow), 0 0 16px -3px var(--zone-hue, transparent);
+      }
 
       /* ── Mobile movement joystick: bottom-left, low, clear of the bar ──────────── */
       #joystick {
@@ -907,12 +897,18 @@
       </svg>
     </button>
 
-    <div id="lock-hint" hidden>hold-drag to look · WASD move · Shift run · Space jump · Esc menu</div>
-    <div id="freelook-hint" hidden>Free look on — press <b>ESC</b> to exit</div>
-    <!-- Locality indicator — shows the social zone you're standing in (Smoking / Networking). -->
-    <div id="locality" hidden></div>
-    <!-- Ghost / invisible indicator (free ghosts + paid users who went invisible). -->
-    <div id="ghost-indicator" hidden>👻 observing as a ghost</div>
+    <!-- Top-centre PILL STACK — one stacking system for every transient hint + status pill so
+         they never overlap. Sits just below the status bar; a flex column that reflows as pills
+         appear/disappear (hidden = no reserved space). Order top→bottom: transient hints
+         (controls · ESC) → persistent status pills (ghost · zone). Each element keeps its own
+         show/hide logic + accent; only the positioning is now the stack's. -->
+    <div id="pill-stack">
+      <div id="lock-hint" class="hud-pill" hidden>hold-drag to look · WASD move · Shift run · Space jump · Esc menu</div>
+      <div id="freelook-hint" class="hud-pill" hidden>Free look on — press <b>ESC</b> to exit</div>
+      <div id="ghost-indicator" class="hud-pill" hidden>👻 observing as a ghost</div>
+      <!-- Locality pill — the social zone you're standing in (Smoking / Networking). -->
+      <div id="locality" class="hud-pill" hidden></div>
+    </div>
 
     <script type="module" src="/src/main.js"></script>
   </body>
