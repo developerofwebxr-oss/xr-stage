@@ -395,7 +395,7 @@
       /* ── Modal surfaces: spend hub · amount picker · You · Stage · panels ──────── */
       #spend-menu, #zap-picker, #you-menu, #stage-menu, #instructions, #booking,
       #compose, #activity, #micform, #speaker-hub, #session-code, #session-redeem,
-      #ticket-menu, #access-menu {
+      #ticket-menu, #access-menu, #event-prompt {
         position: fixed; inset: 0; z-index: 20; pointer-events: auto;
         display: flex; align-items: center; justify-content: center;
         background: rgba(3, 4, 8, 0.55);
@@ -404,10 +404,10 @@
       #spend-menu[hidden], #zap-picker[hidden], #you-menu[hidden],
       #stage-menu[hidden], #instructions[hidden], #booking[hidden],
       #compose[hidden], #activity[hidden], #micform[hidden], #speaker-hub[hidden],
-      #session-code[hidden], #session-redeem[hidden], #ticket-menu[hidden], #access-menu[hidden] { display: none; }
+      #session-code[hidden], #session-redeem[hidden], #ticket-menu[hidden], #access-menu[hidden], #event-prompt[hidden] { display: none; }
       #spend-panel, #zap-picker-panel, #you-panel, #stage-panel, #instructions-panel,
       #booking-panel, #compose-panel, #activity-panel, #micform-panel, #speaker-hub-panel,
-      #session-code-panel, #session-redeem-panel, #ticket-panel, #access-panel {
+      #session-code-panel, #session-redeem-panel, #ticket-panel, #access-panel, #event-prompt-panel {
         position: relative; flex-direction: column; align-items: stretch; gap: 9px;
         width: min(340px, calc(100vw - 32px)); padding: 18px;
       }
@@ -549,6 +549,19 @@
       }
       .booking-note b { color: var(--orange-bright); }
       .booking-note .sub { display: block; margin-top: 3px; font-size: 11px; color: var(--ink-dim); }
+      /* Booking event-length picker (consecutive slots = one event). */
+      .booking-len { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-dim); font-family: var(--font-mono); }
+      .len-btn { pointer-events: auto; border: 1px solid var(--hairline); background: var(--fill); color: var(--ink-dim);
+        border-radius: var(--r-sm); padding: 5px 9px; font-family: var(--font-mono); font-size: 12px; cursor: pointer; }
+      .len-btn.active { border-color: var(--orange); color: var(--orange-bright); box-shadow: var(--glow-orange); }
+      /* Event schedule rows. */
+      .sched-row { font-size: 13px; padding: 3px 0; color: var(--ink-dim); }
+      .sched-row.live { color: var(--ink); }
+      .sched-row b { color: var(--ink); font-family: var(--font-mono); }
+      .sched-row .live-tag { color: var(--orange-bright); font-weight: 600; font-size: 11px; }
+      /* Event-transition prompt. */
+      .ep-headline { font-size: 14px; color: var(--ink); line-height: 1.5; margin-bottom: 2px; }
+      .ep-headline b { color: var(--orange-bright); }
       #you-ticket[hidden], #you-ticket-sec[hidden], #you-wallet[hidden], #you-wallet-sec[hidden] { display: none; }
 
       /* Stage menu — schedule block. */
@@ -737,7 +750,7 @@
         <div id="ticket-panel" class="bar" role="dialog" aria-modal="true" aria-label="Get a ticket">
           <button class="pc-close" id="ticket-close" aria-label="Close">✕</button>
           <div class="pm-title">Get a ticket</div>
-          <div class="pm-section">You're a ghost — listening only. A ticket embodies you + adds credits.</div>
+          <div class="pm-section" id="ticket-event"></div>
           <div id="ticket-tiers"></div>
         </div>
       </div>
@@ -752,6 +765,18 @@
             <button class="ctl" id="access-cancel">Cancel</button>
             <button class="ctl primary" id="access-confirm">Buy ⚡</button>
           </div>
+        </div>
+      </div>
+
+      <!-- Event-transition prompt — shown once per new event to embodied non-holders + signed-in
+           ghosts. Get a ticket · one-tap Welcome zap (everyone) · Continue as ghost (dismiss). -->
+      <div id="event-prompt" hidden>
+        <div id="event-prompt-panel" class="bar" role="dialog" aria-modal="true" aria-label="New event">
+          <div class="pm-title">🎙 New event</div>
+          <div id="ep-headline" class="ep-headline"></div>
+          <button class="ctl primary" id="ep-ticket">🎟 Get a ticket</button>
+          <button class="ctl" id="ep-zap">⚡ Welcome zap <span class="muted">210 to the speaker</span></button>
+          <button class="ctl" id="ep-ghost">Continue as ghost</button>
         </div>
       </div>
 
@@ -793,8 +818,13 @@
           <div id="booking-note" class="booking-note"></div>
           <div id="booking-slots"></div>
           <div id="booking-confirm" hidden>
-            <input type="text" id="booking-title" maxlength="60" placeholder="Talk title" />
-            <button class="ctl primary" id="booking-book">Book &amp; pay ⚡</button>
+            <input type="text" id="booking-title" maxlength="60" placeholder="Event title" />
+            <div id="booking-len" class="booking-len">Length
+              <button class="len-btn active" data-slots="1">10 min</button>
+              <button class="len-btn" data-slots="2">20 min</button>
+              <button class="len-btn" data-slots="3">30 min</button>
+            </div>
+            <button class="ctl primary" id="booking-book">Book event &amp; pay ⚡</button>
           </div>
         </div>
       </div>

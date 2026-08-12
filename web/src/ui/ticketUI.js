@@ -21,14 +21,18 @@ const KIND_LABEL = { networking: 'Networking', smoking: 'Smoking Area', frontRow
 
 export function createTicketUI({ toast, tiers, split, currentTier, getBalance, onBuy, onAccess } = {}) {
   const el = {
-    menu: $('ticket-menu'), tiersBox: $('ticket-tiers'), close: $('ticket-close'),
+    menu: $('ticket-menu'), tiersBox: $('ticket-tiers'), close: $('ticket-close'), event: $('ticket-event'),
     access: $('access-menu'), aTitle: $('access-title'), aBody: $('access-body'),
     aConfirm: $('access-confirm'), aCancel: $('access-cancel'), aClose: $('access-close'),
   };
   let busy = false, pendingAccess = null;
 
   // ── Tier chooser ────────────────────────────────────────────────────────────────
-  function openChooser() { render(); el.menu.hidden = false; }
+  // `eventTitle` scopes the chooser to the event the ticket is for (shown in the header).
+  function openChooser({ eventTitle } = {}) {
+    el.event.textContent = eventTitle ? `🎟 Tickets for: ${eventTitle}` : "You're a ghost — a ticket embodies you + adds credits.";
+    render(); el.menu.hidden = false;
+  }
   function closeChooser() { el.menu.hidden = true; }
 
   function render() {

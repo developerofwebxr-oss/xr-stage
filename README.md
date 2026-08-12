@@ -134,6 +134,36 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Event-scoped economics — the marketplace model (3.18)** — no new deps:
+- The venue is now a **marketplace of events**. Every booking creates an **event**
+  `{ id, title, ownerPubkey, startsAt, endsAt, speakers[], slotIds[] }`; consecutive slots (≤ 3)
+  book as **one event** (booking UI gained a 10/20/30-min length picker). `booking` gained
+  `events()` · `currentEvent()` · `nextEvent()` · a **mock clock** (`now()` + a flagged dev
+  `__skip(min)`), and a few seeded events so the schedule + transitions have content.
+- **Tickets are per-event.** Buying a tier buys it for the running (else next) event; the pass
+  stores `eventId`. The speaker share goes to **that event's `speakerPot`** (the global pool is
+  dropped — mock data). `tickets`: `buy(tier, eventId)`, `speakerPot(eventId)`, `grantSpeakerPass
+  (eventId)`, `heldEventId()`/`holdsFor(id)`, `lapseToGhost()` (keeps identity + credits +
+  badge-history).
+- **Pass lifetime + transitions.** A pass is valid through its event + **`INTER_EVENT_GRACE_MIN =
+  10`** (stay embodied through dead air). A small **transition engine** watches event boundaries:
+  at grace expiry it **lapses to ghost**; when a new/different event starts it shows the
+  **transition prompt** once (to embodied non-holders + signed-in ghosts) — *Get a ticket* (tier
+  chooser scoped to the event) · **⚡ Welcome zap 210** to the speaker (everyone, no status
+  change) · *Continue as ghost* (dismiss → lapse; credits kept, credits never expire).
+- **Ghost zapping un-gated.** Zap/boost paths → `requireSignedIn` (+ balance), not `requireTicket`
+  — signed-in ghosts top up and zap (speaker, boosts) with no ticket. Post/comment/queue/zones/
+  embodiment stay gated.
+- **UI:** the tier chooser header names the event; the Stage **Schedule shows events** (time ·
+  ● live · title — organizer); pot lines → **"⚡ This event's speaker pot: N"** (Stage + Speaker
+  hub); the You menu shows **"Ticket: {event} · until {end}+grace"**. Venue economics unchanged
+  (flat 10% fee, 100% slot rent); per-event custom pricing is a seam only.
+- **Verified** in Chrome with the dev time-skip: buy into A → embodied, **A's pot = the share**;
+  skip past A's end → **grace-embodied**; B starts → **prompt shows**; decline → **ghost, credits
+  kept, zone access dropped**; **ghost welcome-zaps** B's speaker (balance drops); buy into B →
+  embodied, **B's pot funded, A's pot untouched**; Schedule lists events with ● live; chooser
+  header scoped to the event. No console errors.
+
 **Zone polish — trees, interiors, occupancy (3.17)** — no new deps:
 - **BUG fixed — trees no longer inside the zones.** The instanced scatter now rejects any
   candidate inside a zone's **detection circle**, the **building footprints** (+ margin), the

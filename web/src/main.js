@@ -4,6 +4,7 @@ import { buildScene } from './room/scene.js';
 import { zones, buildZoneScenery, accessClamp } from './zones/zones.js';
 import { tickets } from './tickets/tickets.js';
 import { createTicketUI } from './ui/ticketUI.js';
+import { createEventPrompt } from './ui/eventPrompt.js';
 import { STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
 import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP } from './room/avatars.js';
 import { identity } from './identity/identity.js';
@@ -164,7 +165,7 @@ function onZoneBlocked(zn) {
   _lastBlocked = zn.id;
   if (tickets.tier() === 'ghost') {
     hud.toast(`${zn.emoji} ${zn.name} needs a ticket`);
-    ticketUI.openChooser();
+    openTicketChooser();
   } else {
     const price = tickets.accessPrice(zn.accessKind);
     hud.toast(`${zn.name} — ${price} credits to enter`);
@@ -280,8 +281,20 @@ function refreshEmbodiment() {
   zones.refreshOccupancy();
   if (zones.current()) hud.setZone(zonePillInfo(zones.current()));
 }
+// Pass lifetime: valid through its event + this grace (stay embodied through dead air).
+const INTER_EVENT_GRACE_MIN = 10;
+const GRACE_MS = INTER_EVENT_GRACE_MIN * 60_000;
+const WELCOME_ZAP = 210; // one-tap welcome zap to the event speaker (everyone, incl. ghosts)
+// The event a ticket purchase applies to (running, else next), and its speaker pot.
+const eventForTicket = () => booking.activeOrNextEvent();
+const currentPot = () => { const e = eventForTicket(); return e ? tickets.speakerPot(e.id) : 0; };
 // Tier/embodiment can change from anywhere (buy, toggle, access) — reflect it once, here.
-tickets.onChange(() => { refreshEmbodiment(); hud.setBalance(wallet.getBalance()); menus.setSpeakerPool(tickets.speakerPool()); });
+tickets.onChange(() => {
+  refreshEmbodiment();
+  hud.setBalance(wallet.getBalance());
+  const e = eventForTicket();
+  menus.setSpeakerPot(currentPot(), e?.title || '');
+});
 refreshEmbodiment(); // initial: signed-out visitor is a ghost (no body, listener count)
 // Sign-in gate for anything that spends sats or posts content. Signed out → prompt sign
 // in (the You menu, where Sign in is the primary button) and stop.
@@ -301,7 +314,7 @@ function requireTicket(what = 'do that') {
   if (tickets.tier() === 'ghost' && !tickets.speakerPass()) { hud.toast(`Get a ticket to ${what}`); openTicketChooser(); return false; }
   return true;
 }
-function openTicketChooser() { closeAllMenus(); ticketUI.openChooser(); }
+function openTicketChooser() { closeAllMenus(); ticketUI.openChooser({ eventTitle: eventForTicket()?.title }); }
 hud.onSignIn(() => openYou());   // "You" control-bar chip → You menu
 hud.onStage(() => openStage());  // "Stage" control-bar button → Stage menu
 
@@ -386,7 +399,16 @@ function openYou() {
     badge: tickets.flags().badge,
     speaker: tickets.speakerPass(),       // 🎙 Speaker pass (from booking a slot)
     lastSplit: tickets.lastSplit(),       // "where your sats went" (null for pre-3.14 records)
+    held: heldEventSummary(),             // which event this ticket/pass is for, + until when
   });
+}
+// The event this identity holds a ticket/pass for, formatted for the You menu.
+function heldEventSummary() {
+  const id = tickets.heldEventId();
+  const ev = id && booking.event(id);
+  if (!ev) return null;
+  const until = new Date(ev.endsAt + GRACE_MS);
+  return { title: ev.title, until: `${fmtClock(ev.endsAt)} +${INTER_EVENT_GRACE_MIN}m grace (${fmtClock(until.getTime())})` };
 }
 async function openStage() { closeAllMenus(); menus.openStage(await stageData()); }
 function openInstructions() { closeAllMenus(); menus.openInstructions(); }
@@ -396,11 +418,12 @@ function openBooking() {
   bookingUI.open({ slots: booking.slots(), myPubkey: identity.current().pubkey });
 }
 async function openSpeakerHub() {
-  if (!booking.mine().length) return; // gated in the Stage menu, but guard anyway
+  const myEvent = booking.mine()[0];
+  if (!myEvent) return; // gated in the Stage menu, but guard anyway
   closeAllMenus();
-  speakerHub.open({ mySlot: booking.mine()[0], entries: await hubEntries(), criteria: queue.criteria(), speakerPool: tickets.speakerPool() });
+  speakerHub.open({ mySlot: myEvent, entries: await hubEntries(), criteria: queue.criteria(), pot: tickets.speakerPot(myEvent.id) });
 }
-function openSpendHub() { if (!requireTicket('spend sats')) return; closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup(), mic: micState(), boostByTap: boostByTap() }); }
+function openSpendHub() { if (!requireSignedIn('spend sats')) return; closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup(), mic: micState(), boostByTap: boostByTap() }); }
 
 // Share the one-link URL to the clipboard. Primary path is the async Clipboard API
 // (works on a real gesture in a secure context); fall back to a hidden-textarea
@@ -728,7 +751,7 @@ function topUpWallet() {
 // The one "zap a person" entry: sign-in-gated (insufficient balance is handled by the
 // zap-failed path, which prompts Top up), then input-appropriate.
 function zapAvatar(pubkey, name) {
-  if (!requireTicket('zap')) return;
+  if (!requireSignedIn('zap')) return;
   if (renderer.xr.isPresenting) wallet.zap({ toPubkey: pubkey, amountSats: DEFAULT_ZAP, note: zapNote() }); // VR quick-zap
   else zapUI.openPicker({ pubkey, name });                                                                  // flat/mobile picker
 }
@@ -758,6 +781,28 @@ const sessionUI = createSessionUI({
   onAdopted: (profile) => { adoptFlow(profile); openYou(); }, // become them; refresh the You menu
 });
 
+// Event-transition prompt (shown by the transition engine below). Get a ticket · one-tap
+// Welcome zap (everyone) · Continue as ghost (dismiss → lapse, credits kept).
+const eventPrompt = createEventPrompt({
+  onGetTicket: () => openTicketChooser(),
+  onWelcomeZap: () => welcomeZap(),
+  onContinueGhost: () => continueAsGhost(),
+});
+// Welcome zap — one-tap 210 sats to the current/next event's speaker. UN-GATED beyond sign-in +
+// balance (ghosts can zap); doesn't change your status. Reuses the normal zap flow (bursts too).
+function welcomeZap() {
+  if (!requireSignedIn('zap the speaker')) return;
+  const ev = booking.currentEvent() || booking.nextEvent();
+  if (!ev) return hud.toast('No event to zap right now');
+  const spk = ev.speakers[0] || ev.ownerPubkey;
+  wallet.zap({ toPubkey: spk, amountSats: WELCOME_ZAP, note: `Welcome zap · ${ev.title}` });
+  hud.toast(`⚡ Welcome zap — ${WELCOME_ZAP} to ${ev.title}'s speaker`);
+}
+// Continue as ghost — an embodied non-holder lapses now (credits + identity + history kept).
+function continueAsGhost() {
+  if (tickets.visible()) { tickets.lapseToGhost(); hud.toast('Continuing as a ghost — your credits are kept'); }
+}
+
 // Ticket chooser + access micro-purchase. buy() is the ENTRY payment (mock external) that,
 // on confirm, credits the wallet and embodies you (tickets.onChange re-embodies + updates HUD).
 const ticketUI = createTicketUI({
@@ -768,11 +813,14 @@ const ticketUI = createTicketUI({
   getBalance: () => wallet.getBalance(),
   onBuy: async (tier) => {
     if (!identity.current()) { hud.toast('Sign in first to buy a ticket'); openYou(); return { state: 'failed', reason: 'not signed in' }; }
-    const res = await tickets.buy(tier);               // pending→confirmed; credits the wallet on confirm
+    const ev = eventForTicket();
+    if (!ev) { hud.toast('No event to buy into right now'); return { state: 'failed', reason: 'no event' }; }
+    eventPrompt.close();                                 // buying satisfies the transition prompt
+    const res = await tickets.buy(tier, ev.id);          // ticket is scoped to THIS event; share → its pot
     if (res.state === 'confirmed') {
       hud.setBalance(wallet.getBalance());
-      hud.toast(`You're in — ${tickets.TIERS[tier].label} · +${res.credits.toLocaleString('en-US')} credits`);
-      openYou();                                        // reflect embodiment + Go-invisible + credits
+      hud.toast(`You're in — ${tickets.TIERS[tier].label} · ${ev.title} · +${res.credits.toLocaleString('en-US')} credits`);
+      openYou();
     }
     return res;
   },
@@ -797,7 +845,7 @@ const menus = createMenus({
     openYou();
   },
   onTopUp: () => topUpWallet(),
-  onGetTicket: () => { menus.closeYou(); ticketUI.openChooser(); },  // ghost → tier chooser
+  onGetTicket: () => openTicketChooser(),                     // event-scoped tier chooser
   onToggleVisible: () => {                            // paid → go invisible / re-embody
     const now = tickets.setVisible(!tickets.visible());
     hud.toast(now ? 'Visible — others see you' : 'Invisible — observing as a ghost');
@@ -849,7 +897,7 @@ async function postComment(text, amountSats) {
 async function boostComment(commentId, worldPoint) {
   const c = board.get(commentId);
   if (!c) return;
-  if (!requireTicket('zap')) return;
+  if (!requireSignedIn('zap')) return;
   const res = await wallet.zap({ toPubkey: c.pubkey, amountSats: BOOST_SATS, note: 'boost' });
   if (res.state === 'confirmed') {
     board.boost(commentId, BOOST_SATS);
@@ -924,7 +972,7 @@ queue.onChange(() => {
 // NO refunds). A booking unlocks the Speaker hub.
 const bookingUI = createBookingUI({
   toast: (m) => hud.toast(m),
-  onBook: (slotId, title) => bookSlot(slotId, title),
+  onBook: (slotId, title, slots) => bookSlot(slotId, title, slots),
 });
 const speakerHub = createSpeakerHub({
   toast: (m) => hud.toast(m),
@@ -951,33 +999,36 @@ function cancelBooking(slotId) {
   if (!document.getElementById('stage-menu').hidden) openStage(); // refresh the Stage menu if open
 }
 
-async function bookSlot(slotId, title) {
+async function bookSlot(slotId, title, slots = 1) {
   if (!requireSignedIn('book a slot')) return;
   const me = identity.current();
-  const res = await booking.book({ slotId, title });
+  const res = await booking.book({ slotId, title, slots });
   if (res.state === 'confirmed') {
-    // Booking IS the speaker's ticket → the pass grant (in booking) embodies + adds 🎙 via
-    // tickets.onChange. Confirm it here.
-    hud.toast('🎙 Slot booked — Speaker pass active · Speaker hub unlocked');
+    // Booking IS the speaker's ticket for THIS event → the pass grant (in booking) embodies +
+    // adds 🎙 via tickets.onChange. Confirm it here.
+    hud.toast(`🎙 Event booked — "${res.event.title}" · Speaker pass active`);
     bookingUI.render({ slots: booking.slots(), myPubkey: me.pubkey }); // reflect "Yours"
   } else if (res.reason === 'slot taken') {
-    hud.toast('That slot was just taken');
+    hud.toast('One of those slots was just taken');
     bookingUI.render({ slots: booking.slots(), myPubkey: me.pubkey });
   }
   // other failures: nothing books.
 }
 
-// Schedule data for the Stage menu — resolve booker names via identity (async, on demand).
+// Schedule data for the Stage menu — a list of EVENTS (title · organizer · time), resolving
+// organizer names via identity (async, on demand). Marks the currently-running event.
 const fmtClock = (ms) => {
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 };
 async function stageData() {
-  const { now, next } = booking.nowAndNext();
-  const label = async (s) => (s
-    ? { time: fmtClock(s.startsAt), title: s.title || 'Untitled talk', name: (await identity.getProfile(s.bookedBy)).name }
-    : null);
-  return { nowNext: { now: await label(now), next: await label(next) }, hasBooking: booking.mine().length > 0, speakerPool: tickets.speakerPool() };
+  const evs = booking.events();
+  const cur = booking.currentEvent();
+  const events = await Promise.all(evs.map(async (e) => ({
+    id: e.id, time: fmtClock(e.startsAt), title: e.title, organizer: (await identity.getProfile(e.ownerPubkey)).name,
+  })));
+  const e = eventForTicket();
+  return { events, currentId: cur?.id || null, hasBooking: booking.mine().length > 0, pot: currentPot(), potTitle: e?.title || '' };
 }
 
 // Keep the Stage menu live (schedule + hub gate) when a booking changes while it's open;
@@ -986,6 +1037,47 @@ booking.onChange(() => {
   if (!document.getElementById('stage-menu').hidden) openStage();
   if (speakerHub.isOpen() && !booking.mine().length) speakerHub.close();
 });
+
+// ── Event-transition engine ───────────────────────────────────────────────────────────
+// Watches booking's event boundaries (on the mock clock). Drives two things:
+//   (a) LAPSE — when my held event has ended + grace passed → lapse to ghost (credits kept).
+//   (b) PROMPT — when a new/different event is running that I don't hold → show the transition
+//       prompt ONCE per event (to embodied non-holders AND signed-in ghosts).
+let _promptedEventId = null;
+async function eventTick() {
+  if (!identity.current()) return;                 // signed-out → nothing to scope
+  const t = booking.now();
+  const cur = booking.currentEvent();
+  // (a) grace expiry
+  const heldId = tickets.heldEventId();
+  if (tickets.visible() && heldId) {
+    const ev = booking.event(heldId);
+    if (!ev || t >= ev.endsAt + GRACE_MS) {
+      tickets.lapseToGhost();
+      hud.toast('Your event wrapped — back to ghost (credits kept)');
+    }
+  }
+  // (b) new/different current event I don't hold → prompt once
+  if (cur && !tickets.holdsFor(cur.id)) {
+    if (_promptedEventId !== cur.id && !eventPrompt.isOpen()) {
+      _promptedEventId = cur.id;
+      const name = (await identity.getProfile(cur.speakers[0] || cur.ownerPubkey)).name;
+      closeAllMenus();
+      eventPrompt.open({ title: cur.title, speaker: name });
+    }
+  } else {
+    if (cur && tickets.holdsFor(cur.id)) eventPrompt.close(); // I hold the current event → no prompt
+    if (!cur) _promptedEventId = null;                        // dead air → allow the next event to prompt
+  }
+}
+booking.onChange(eventTick);
+tickets.onChange(eventTick);
+setInterval(eventTick, 4000);
+eventTick();
+
+// DEV time-skip (flagged) — advance the mock clock to verify event boundaries without waiting.
+// e.g. window.__skip(11) skips 11 minutes. No UI; console/handle only.
+window.__skip = (min = INTER_EVENT_GRACE_MIN) => { booking.__skip(min); console.info(`[dev] skipped ${min} min → now`, new Date(booking.now()).toLocaleTimeString()); };
 // Zap whoever is currently selected (ring/card target) — the Y binding + hub action.
 function zapSelected() {
   const g = selectedGroup;

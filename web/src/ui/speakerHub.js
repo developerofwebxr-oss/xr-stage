@@ -24,13 +24,13 @@ export function createSpeakerHub({ toast, onCancelBooking, onSetCriteria, onPick
   let mySlot = null;
   let criteria = 'money';
 
-  function open({ mySlot: slot, entries = [], criteria: crit = 'money', speakerPool = 0 } = {}) {
+  function open({ mySlot: slot, entries = [], criteria: crit = 'money', pot = 0 } = {}) {
     mySlot = slot;
     criteria = crit;
-    // Speaker pass status + the pool (all speakers). SEAM: at go-real the pool is split among
-    // booked slot-holders by stage time and paid over Lightning — per-speaker share NOT here.
+    // Speaker pass status + THIS event's pot. SEAM: at go-real the pot is split among the event's
+    // speakers by stage time and paid over Lightning — per-speaker share NOT computed here.
     el.pool.innerHTML = `<span class="pass">🎙 Speaker pass · active</span>`
-      + `⚡ Pool (all speakers): <b>${fmt(speakerPool)}</b> sats<span class="sub">split by stage time at payout</span>`;
+      + `⚡ This event's pot: <b>${fmt(pot)}</b> sats<span class="sub">split among its speakers by stage time at payout</span>`;
     renderSlot();
     renderCancel(false);
     renderCriteria();

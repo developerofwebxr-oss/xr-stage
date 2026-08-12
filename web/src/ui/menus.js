@@ -32,7 +32,7 @@ export function createMenus({
   // ── You menu (identity + wallet home) ───────────────────────────────────────────
   function openYou(info = {}) { renderYou(info); el.you.hidden = false; }
   function closeYou() { el.you.hidden = true; }
-  function renderYou({ signedIn, name, faceUrl, balance, tier = 'ghost', tierLabel, visible = false, badge, speaker = false, lastSplit } = {}) {
+  function renderYou({ signedIn, name, faceUrl, balance, tier = 'ghost', tierLabel, visible = false, badge, speaker = false, lastSplit, held = null } = {}) {
     const paid = signedIn && tier !== 'ghost';
     const member = signedIn && (paid || speaker); // embodied participant: paid tier OR speaker pass
     el.youIdentity.innerHTML = signedIn
@@ -59,6 +59,13 @@ export function createMenus({
         status.innerHTML = `<span class="muted">👻 Ghost — listening only. Get a ticket to be seen, zap, post &amp; enter zones. Or book a slot to speak.</span>`;
       }
       el.youTicket.appendChild(status);
+      // Which EVENT this ticket/pass is for, and until when (event end + grace).
+      if (member && held) {
+        const w = document.createElement('div');
+        w.className = 'you-split';
+        w.innerHTML = `Ticket: <b>${esc(held.title)}</b> · until ${esc(held.until)}`;
+        el.youTicket.appendChild(w);
+      }
       // "Where your sats went" — the split of your last ATTENDEE purchase (null → not drawn;
       // a speaker who never bought a tier has none). Migration-safe.
       if (lastSplit) {
@@ -104,32 +111,31 @@ export function createMenus({
     }
   }
 
-  // ── Stage menu (live schedule + Book / Speaker-hub) ─────────────────────────────
-  function openStage({ nowNext = { now: null, next: null }, hasBooking: booked = false, speakerPool = 0 } = {}) {
+  // ── Stage menu (event schedule + Book / Speaker-hub) ────────────────────────────
+  function openStage({ events = [], currentId = null, hasBooking: booked = false, pot = 0, potTitle = '' } = {}) {
     hasBooking = booked;
-    renderSchedule(nowNext);
-    setSpeakerPool(speakerPool);
+    renderSchedule(events, currentId);
+    setSpeakerPot(pot, potTitle);
     el.stageHub.classList.toggle('soon', !booked);
     el.stageHub.setAttribute('aria-disabled', String(!booked));
     el.stage.hidden = false;
   }
-  // The public speaker-pool number — the growing pot that recruits speakers. Updates live
-  // (main calls this on pool growth) whether or not the Stage menu is open.
-  function setSpeakerPool(sats) {
-    el.stagePool.innerHTML = `⚡ Speaker pool: <b>${fmtN(sats)}</b> sats<span class="sub">10–30% of every ticket goes to the speakers</span>`;
+  // The public per-event speaker pot — the growing pot that recruits speakers.
+  function setSpeakerPot(sats, title) {
+    el.stagePool.innerHTML = `⚡ This event's speaker pot: <b>${fmtN(sats)}</b> sats`
+      + `<span class="sub">${title ? esc(title) + ' — ' : ''}10–30% of every ticket goes to its speakers</span>`;
     el.stagePool.hidden = false;
   }
   function closeStage() { el.stage.hidden = true; }
-  function renderSchedule(nowNext) {
-    if (!nowNext.now && !nowNext.next) {
-      el.stageSched.innerHTML = '<div class="muted">No one booked yet.</div>';
-      return;
-    }
-    el.stageSched.innerHTML = schedLine('Now', nowNext.now) + schedLine('Up next', nowNext.next);
-  }
-  function schedLine(label, s) {
-    if (!s) return `<div>${label}: <b>—</b></div>`;
-    return `<div>${label}: <b>${esc(s.time)}</b> · ${esc(s.name)} — ${esc(s.title)}</div>`;
+  // Schedule = the event line-up (title · organizer · time), the running one marked.
+  function renderSchedule(events, currentId) {
+    if (!events.length) { el.stageSched.innerHTML = '<div class="muted">No events booked yet.</div>'; return; }
+    el.stageSched.innerHTML = events.map((e) => {
+      const live = e.id === currentId;
+      return `<div class="sched-row${live ? ' live' : ''}">`
+        + `<b>${esc(e.time)}</b>${live ? ' <span class="live-tag">● live</span>' : ''} · `
+        + `${esc(e.title)} <span class="muted">— ${esc(e.organizer)}</span></div>`;
+    }).join('');
   }
 
   // ── Instructions ────────────────────────────────────────────────────────────────
@@ -152,7 +158,7 @@ export function createMenus({
   }
 
   return {
-    openYou, closeYou, openStage, closeStage, setSpeakerPool, openInstructions, closeInstructions,
+    openYou, closeYou, openStage, closeStage, setSpeakerPot, openInstructions, closeInstructions,
     closeAll() { closeYou(); closeStage(); closeInstructions(); },
     isOpen: () => [el.you, el.stage, el.instructions].some((n) => !n.hidden),
   };
