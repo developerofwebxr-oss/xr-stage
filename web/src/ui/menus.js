@@ -32,15 +32,16 @@ export function createMenus({
   // ── You menu (identity + wallet home) ───────────────────────────────────────────
   function openYou(info = {}) { renderYou(info); el.you.hidden = false; }
   function closeYou() { el.you.hidden = true; }
-  function renderYou({ signedIn, name, faceUrl, balance, tier = 'ghost', tierLabel, visible = false, badge, lastSplit } = {}) {
+  function renderYou({ signedIn, name, faceUrl, balance, tier = 'ghost', tierLabel, visible = false, badge, speaker = false, lastSplit } = {}) {
     const paid = signedIn && tier !== 'ghost';
+    const member = signedIn && (paid || speaker); // embodied participant: paid tier OR speaker pass
     el.youIdentity.innerHTML = signedIn
       ? `<img class="you-face" src="${faceUrl}" alt=""><div class="you-name"></div>`
       : `<div class="you-name muted">Not signed in</div>`;
     if (signedIn) el.youIdentity.querySelector('.you-name').textContent = name;
 
-    // Ticket — the embodiment/tier home. Shown only when signed in. Ghost: "listening only" +
-    // Get-a-ticket primary. Paid: tier (+ badge) + a Go-invisible / Go-visible toggle.
+    // Ticket — the embodiment/tier home (signed in only). True ghost: "listening only" +
+    // Get-a-ticket primary. Member (paid and/or speaker): status (+ badge + 🎙) + visibility toggle.
     const showTicket = signedIn;
     el.youTicketSec.hidden = !showTicket;
     el.youTicket.hidden = !showTicket;
@@ -48,35 +49,38 @@ export function createMenus({
     if (showTicket) {
       const status = document.createElement('div');
       status.className = 'you-tier';
-      if (paid) {
-        const b = badge ? ` · ${badge === 'patron' ? '◆ Patron' : '◇ Supporter'} badge` : '';
-        status.innerHTML = `<b>${esc(tierLabel || tier)}</b>${b} — ${visible ? 'embodied' : 'invisible (ghost)'}`;
+      if (member) {
+        const marks = [];
+        if (paid) marks.push(`<b>${esc(tierLabel || tier)}</b>`);
+        if (badge) marks.push(`${badge === 'patron' ? '◆ Patron' : '◇ Supporter'} badge`);
+        if (speaker) marks.push('🎙 Speaker');
+        status.innerHTML = `${marks.join(' · ')} — ${visible ? 'embodied' : 'invisible'}`;
       } else {
-        status.innerHTML = `<span class="muted">👻 Ghost — listening only. Get a ticket to be seen, zap, post &amp; enter zones.</span>`;
+        status.innerHTML = `<span class="muted">👻 Ghost — listening only. Get a ticket to be seen, zap, post &amp; enter zones. Or book a slot to speak.</span>`;
       }
       el.youTicket.appendChild(status);
-      // "Where your sats went" — the transparent split of your last purchase (migration-safe:
-      // old records have no split → default the fields to 0).
-      if (paid && lastSplit) {
+      // "Where your sats went" — the split of your last ATTENDEE purchase (null → not drawn;
+      // a speaker who never bought a tier has none). Migration-safe.
+      if (lastSplit) {
         const w = document.createElement('div');
         w.className = 'you-split';
         w.innerHTML = `venue <b>${fmtN(lastSplit.venue)}</b> · speakers <b>${fmtN(lastSplit.speakers)}</b> · credits <b>${fmtN(lastSplit.credits)}</b>`;
         el.youTicket.appendChild(w);
       }
-      if (paid) {
+      if (member) {
         el.youTicket.appendChild(btn(visible ? '👻 Go invisible' : '👁 Go visible', 'ctl', () => onToggleVisible && onToggleVisible()));
-        el.youTicket.appendChild(btn('🎟 Change tier', 'ctl', () => onGetTicket && onGetTicket()));
+        el.youTicket.appendChild(btn(paid ? '🎟 Change tier' : '🎟 Get a ticket', 'ctl', () => onGetTicket && onGetTicket()));
       } else {
         el.youTicket.appendChild(btn('🎟 Get a ticket', 'ctl primary', () => onGetTicket && onGetTicket()));
       }
     }
 
-    // Wallet — a LOCAL venue credit balance. Meaningful once you hold a ticket, so it's shown
-    // for paid tiers only (ghosts have nothing to spend). Signed out / ghost: hidden.
-    el.youWalletSec.hidden = !paid;
-    el.youWallet.hidden = !paid;
+    // Wallet — a LOCAL venue credit balance. Shown for MEMBERS (paid or speaker) so a speaker with
+    // 0 credits can top up to zap. Signed out / true ghost: hidden.
+    el.youWalletSec.hidden = !member;
+    el.youWallet.hidden = !member;
     el.youWallet.innerHTML = '';
-    if (paid) {
+    if (member) {
       const b = document.createElement('div');
       b.className = 'you-balance';
       b.innerHTML = `⚡ Balance: <b>${fmt(balance)}</b> credits`;
@@ -84,11 +88,11 @@ export function createMenus({
       el.youWallet.appendChild(btn('⚡ Top up wallet', 'ctl primary', () => onTopUp && onTopUp()));
     }
 
-    // Account. Signed out: Sign in primary + Enter code. Signed in: Activity (ticketed only) +
+    // Account. Signed out: Sign in primary + Enter code. Signed in: Activity (members) +
     // headset login + Switch / Log out.
     el.youAccount.innerHTML = '';
     if (signedIn) {
-      if (paid) el.youAccount.appendChild(btn('Activity', 'ctl', () => onActivity && onActivity()));
+      if (member) el.youAccount.appendChild(btn('Activity', 'ctl', () => onActivity && onActivity()));
       else el.youAccount.appendChild(btn('Activity', 'ctl soon', () => toast && toast('Get a ticket first')));
       el.youAccount.appendChild(btn('📟 Log in on headset', 'ctl', () => onLoginHeadset && onLoginHeadset()));
       el.youAccount.appendChild(btn('Switch account', 'ctl', () => onSwitch && onSwitch()));

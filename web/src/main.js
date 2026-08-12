@@ -57,15 +57,17 @@ const staticBodies = seeded.map((s) => s.position);
 // Every avatar is keyed by a pubkey (mock-derived from its stable id) → profile →
 // keyface + name, all via the identity service (the single source of identity). The
 // real swap (nostr-tools + NIP-07) lives behind this same service — callers unchanged.
-function identifyAvatar(group, seedId, badge = null) {
+function identifyAvatar(group, seedId, badge = null, speaker = false) {
   const pubkey = identity.pubkeyFromSeed(seedId);
   identity.getProfile(pubkey).then((profile) => {
-    applyIdentity(group, { pubkey, npub: identity.npubFromPubkey(pubkey), ...profile, badge });
+    applyIdentity(group, { pubkey, npub: identity.npubFromPubkey(pubkey), ...profile, badge, speaker });
   });
 }
-// Ambiance crowd — give two of them paid badges so the tier markers are visible in-world.
+// Ambiance crowd — showcase the label marks: a plain SPEAKER (🎙 only), a Supporter gem, and a
+// Patron who also booked (gem + 🎙, i.e. combinable).
 const SEED_BADGE = [null, 'supporter', 'patron'];
-seeded.forEach((s, i) => identifyAvatar(s.group, `seed-${i}`, SEED_BADGE[i % SEED_BADGE.length]));
+const SEED_SPEAKER = [true, false, true];
+seeded.forEach((s, i) => identifyAvatar(s.group, `seed-${i}`, SEED_BADGE[i % SEED_BADGE.length], SEED_SPEAKER[i % SEED_SPEAKER.length]));
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
 
@@ -243,7 +245,9 @@ function afterSignedIn(me) {
 // Embodied = holds a paid ticket AND is currently visible. Ghosts (free/un-ticketed) and
 // paid users who "went invisible" are NOT embodied: no local body, no presence broadcast
 // (peers don't render them), counted as listeners not participants.
-function embodied() { return tickets.tier() !== 'ghost' && tickets.visible(); }
+// Embodied = a MEMBER (paid tier OR speaker pass) who is currently visible. tickets.visible()
+// already folds in the speaker pass, so a ghost who books a slot embodies too.
+function embodied() { return tickets.visible(); }
 
 const BASE_EMBODIED = seeded.length;   // seeded ambiance bodies
 const BASE_LISTENERS = 32;             // seeded plausible ghost/listener count (mock)
@@ -257,9 +261,11 @@ function refreshCounts(pc = lastParticipantCount) {
 // Apply the current embodiment state everywhere it shows: local body, ghost indicator, counts.
 function refreshEmbodiment() {
   localBody.visible = embodied();
-  const tier = tickets.tier();
+  // A true ghost holds neither an attendee tier nor a speaker pass; a member who toggled off is
+  // "invisible", not a ghost.
+  const trueGhost = tickets.tier() === 'ghost' && !tickets.speakerPass();
   hud.setGhost(embodied() ? null
-    : tier === 'ghost' ? '👻 observing as a ghost' : '👻 invisible — observing');
+    : trueGhost ? '👻 observing as a ghost' : '👻 invisible — observing');
   refreshCounts();
 }
 // Tier/embodiment can change from anywhere (buy, toggle, access) — reflect it once, here.
@@ -278,7 +284,9 @@ function requireSignedIn(what = 'do that') {
 // the requireSignedIn pattern (the ghost is the new "not yet allowed" state).
 function requireTicket(what = 'do that') {
   if (!identity.current()) { hud.toast(`Sign in first to ${what}`); openYou(); return false; }
-  if (tickets.tier() === 'ghost') { hud.toast(`Get a ticket to ${what}`); openTicketChooser(); return false; }
+  // A MEMBER — paid attendee tier OR a speaker pass (booked a slot) — is allowed. Only a true
+  // ghost is prompted to get a ticket. (A speaker with 0 credits tops up like anyone to zap.)
+  if (tickets.tier() === 'ghost' && !tickets.speakerPass()) { hud.toast(`Get a ticket to ${what}`); openTicketChooser(); return false; }
   return true;
 }
 function openTicketChooser() { closeAllMenus(); ticketUI.openChooser(); }
@@ -364,13 +372,14 @@ function openYou() {
     tierLabel: tickets.TIERS[tickets.tier()]?.label,
     visible: tickets.visible(),
     badge: tickets.flags().badge,
+    speaker: tickets.speakerPass(),       // 🎙 Speaker pass (from booking a slot)
     lastSplit: tickets.lastSplit(),       // "where your sats went" (null for pre-3.14 records)
   });
 }
 async function openStage() { closeAllMenus(); menus.openStage(await stageData()); }
 function openInstructions() { closeAllMenus(); menus.openInstructions(); }
 function openBooking() {
-  if (!requireTicket('book a slot')) return;
+  if (!requireSignedIn('book a slot')) return;
   closeAllMenus();
   bookingUI.open({ slots: booking.slots(), myPubkey: identity.current().pubkey });
 }
@@ -931,17 +940,19 @@ function cancelBooking(slotId) {
 }
 
 async function bookSlot(slotId, title) {
-  if (!requireTicket('book a slot')) return;
+  if (!requireSignedIn('book a slot')) return;
   const me = identity.current();
   const res = await booking.book({ slotId, title });
   if (res.state === 'confirmed') {
-    hud.toast('Slot booked ⚡ — Speaker hub unlocked');
+    // Booking IS the speaker's ticket → the pass grant (in booking) embodies + adds 🎙 via
+    // tickets.onChange. Confirm it here.
+    hud.toast('🎙 Slot booked — Speaker pass active · Speaker hub unlocked');
     bookingUI.render({ slots: booking.slots(), myPubkey: me.pubkey }); // reflect "Yours"
   } else if (res.reason === 'slot taken') {
     hud.toast('That slot was just taken');
     bookingUI.render({ slots: booking.slots(), myPubkey: me.pubkey });
   }
-  // insufficient / other failures surface via the global wallet.onZap toast; nothing books.
+  // other failures: nothing books.
 }
 
 // Schedule data for the Stage menu — resolve booker names via identity (async, on demand).

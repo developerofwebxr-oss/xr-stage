@@ -139,14 +139,16 @@ export function applyIdentity(group, identity) {
     face.material.color.set(0xffffff); // let the texture show its true colours
     face.material.needsUpdate = true;
   }
-  setNameLabel(group, identity.name, identity.badge || null); // badge = 'supporter' | 'patron' | null
+  // badge = attendee gem ('supporter'|'patron'|null); speaker = 🎙 mark (from booking a slot).
+  // Both can show — the label draws the gem then the mic (combinable).
+  setNameLabel(group, identity.name, identity.badge || null, !!identity.speaker);
   group.userData.identity = identity; // so click-picking can read it (Phase 2.2)
 }
 
 // Over-head name plate: a camera-facing sprite (Live Console: mono text on a glass
 // pill). Re-used per group so re-identifying just swaps the texture.
-function setNameLabel(group, name, badge = null) {
-  const canvas = nameCanvas(name, badge);
+function setNameLabel(group, name, badge = null, speaker = false) {
+  const canvas = nameCanvas(name, badge, speaker);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   let sprite = group.userData.nameSprite;
@@ -171,9 +173,11 @@ const BADGE = {
   supporter: { color: '#27c6c6', ring: 'rgba(39,198,198,0.5)' },
   patron:    { color: '#ffcf5a', ring: 'rgba(255,207,90,0.6)' },
 };
-function nameCanvas(name, badge = null) {
+function nameCanvas(name, badge = null, speaker = false) {
   const dpr = 2, padX = 18, fontPx = 30, font = `600 ${fontPx}px ui-monospace, "SF Mono", Menlo, monospace`;
-  const bw = badge && BADGE[badge] ? 26 : 0; // extra left space for the badge
+  const gem = badge && BADGE[badge] ? 24 : 0;    // attendee tier gem
+  const mic = speaker ? 22 : 0;                  // 🎙 speaker mark
+  const bw = gem + mic;                          // extra left space for the marks
   const m = document.createElement('canvas').getContext('2d');
   m.font = font;
   const w = Math.ceil(m.measureText(name).width) + padX * 2 + bw;
@@ -184,11 +188,14 @@ function nameCanvas(name, badge = null) {
   g.scale(dpr, dpr);
   roundRect(g, 0.5, 0.5, w - 1, h - 1, 9);
   g.fillStyle = 'rgba(12,14,19,0.78)'; g.fill();
-  g.strokeStyle = badge && BADGE[badge] ? BADGE[badge].ring : 'rgba(255,255,255,0.13)';
-  g.lineWidth = badge ? 1.5 : 1; g.stroke();
+  // Border echoes the highest-priority mark (patron > supporter > speaker > none).
+  g.strokeStyle = badge && BADGE[badge] ? BADGE[badge].ring : speaker ? 'rgba(255,178,74,0.5)' : 'rgba(255,255,255,0.13)';
+  g.lineWidth = bw ? 1.5 : 1; g.stroke();
   g.fillStyle = '#eceef5'; g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText(name, (w + bw) / 2, h / 2 + 1); // name centred in the space right of the badge
-  if (bw) drawBadge(g, padX + 4, h / 2, badge);
+  g.fillText(name, (w + bw) / 2, h / 2 + 1); // name centred in the space right of the marks
+  let x = padX + 4;
+  if (gem) { drawBadge(g, x + 7, h / 2, badge); x += gem; } // gem first…
+  if (mic) drawSpeakerMark(g, x + 7, h / 2);                // …then the mic (combinable)
   return c;
 }
 // A small diamond gem in the tier colour; Patron gets a bright core + ring to read as higher.
@@ -199,6 +206,16 @@ function drawBadge(g, cx, cy, badge) {
   if (badge === 'patron') { g.shadowColor = b.ring; g.shadowBlur = 8; }
   g.fillStyle = b.color; g.fillRect(-r, -r, r * 2, r * 2);
   if (badge === 'patron') { g.shadowBlur = 0; g.fillStyle = '#fff6e0'; g.fillRect(-r / 2.4, -r / 2.4, r / 1.2, r / 1.2); }
+  g.restore();
+}
+// The 🎙 speaker mark — a small orange mic (head + stand), distinct from the tier gems.
+function drawSpeakerMark(g, cx, cy) {
+  g.save();
+  g.translate(cx, cy);
+  g.fillStyle = '#ffb24a'; g.strokeStyle = '#ffb24a'; g.lineWidth = 1.6; g.lineCap = 'round';
+  roundRect(g, -3.5, -8, 7, 10, 3.5); g.fill();          // mic head
+  g.beginPath(); g.moveTo(0, 2); g.lineTo(0, 6); g.stroke();     // stand
+  g.beginPath(); g.moveTo(-3.5, 6.5); g.lineTo(3.5, 6.5); g.stroke(); // base
   g.restore();
 }
 function roundRect(g, x, y, w, h, r) {

@@ -134,6 +134,32 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Speaker path — slot = your ticket (3.15)** — no new deps:
+- **Booking IS the speaker's ticket** — no attendee tier required. Book-a-slot now gates on
+  **`requireSignedIn`** (not `requireTicket`): a ghost who signs in can book. All other
+  spend/post/queue gates are unchanged, and a **speaker counts as a member** there too (a
+  speaker with 0 credits tops up like anyone to zap).
+- **Slot price** from named config **`SLOT_PRICE_PER_10MIN = 10000`** (linear with duration;
+  10-min slots at 10,000). The slot fee is a **mock external entry payment** (not from local
+  credits — same custody-free pattern) and goes **100% to the venue** as stage rent —
+  `tickets.recordVenue()` / `venueRevenue()`, **never** the speaker pool (pool stays
+  attendee-funded).
+- **Speaker pass** (`tickets.speakerPass()` / `grantSpeakerPass()`) — a **parallel pass**, not a
+  tier: on a confirmed booking it grants **embodiment** (a ghost gets a body), a distinct
+  **🎙 Speaker badge**, **networking + smoking** access, and a **backstage** seam flag (no zone
+  yet). It **coexists** with any attendee tier (a Patron who books keeps both perk sets),
+  persists per pubkey, and is **kept on cancel** (policy const `KEEP_PASS_ON_CANCEL` — simple +
+  generous; no refund either way). Embodiment logic now keys off *member* (paid tier **or**
+  speaker pass), so `tickets.visible()` folds the pass in.
+- **UI:** the booking surface shows the price + **"Booking includes your 🎙 Speaker pass — no
+  ticket needed."** The **tier chooser stays attendee-only** (no speaker card). The **You menu**
+  and **Speaker hub** reflect the pass (status/🎙). **Badges:** the 🎙 mark is a distinct orange
+  mic baked into the label canvas, **combinable** with the tier gem (gem then mic).
+- **Verified** in Chrome: a signed-in ghost books a 10-min slot for **10,000** → **embodied +
+  🎙 + networking/smoking access, no credits added, pool unchanged, venue +10,000**; cancel
+  **keeps** the pass; a Patron who books keeps **both** (◆ + 🎙); the tier chooser is unchanged
+  (Basic/Supporter/Patron). No console errors.
+
 **Ticket economics v2 — flat venue fee + progressive speaker pool (3.14)** — no new deps:
 - **New split, same custody-free flow.** Every tier: **flat 10% venue fee**, a **progressive
   speaker share (10 / 20 / 30%)**, and **credits = the remainder**. Prices keep the 21-motif:

@@ -11,6 +11,7 @@ const fmt = (n) => Number(n).toLocaleString('en-US');
 export function createBookingUI({ toast, onBook } = {}) {
   const el = {
     root: $('booking'),
+    note: $('booking-note'),
     list: $('booking-slots'),
     confirm: $('booking-confirm'),
     title: $('booking-title'),
@@ -22,6 +23,10 @@ export function createBookingUI({ toast, onBook } = {}) {
   function render({ slots = [], myPubkey = null } = {}) {
     selected = null;
     el.confirm.hidden = true;
+    // Price + the speaker-path pitch: booking IS the ticket (sign-in only, no attendee tier).
+    const s0 = slots[0];
+    if (s0) el.note.innerHTML = `<b>${fmt(s0.price)} sats</b> · ${s0.durationMin} min per slot`
+      + `<span class="sub">Booking includes your 🎙 Speaker pass — no ticket needed.</span>`;
     el.list.innerHTML = '';
     for (const s of slots) {
       const mine = s.bookedBy && s.bookedBy === myPubkey;

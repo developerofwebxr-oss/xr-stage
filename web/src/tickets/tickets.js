@@ -4,15 +4,24 @@ import { wallet } from '../wallet/wallet.js';
 // free visitors are GHOSTS (listen only, no body); a one-time paid TICKET per identity buys
 // embodiment + venue CREDITS + perks. MOCK now, but the seam matches the real thing.
 //
-//   tier()              → 'ghost' | 'basic' | 'supporter' | 'patron'
+//   tier()              → 'ghost' | 'basic' | 'supporter' | 'patron'   (ATTENDEE tier)
 //   buy(tier) async     → pending→confirmed|failed; on confirmed sets tier + credits the wallet
 //   split(tier)         → { price, venue, speakers, credits } — the transparent per-tier math
-//   flags()             → { badge, networkingPriority, networkingAccess, smokingAccess, frontRow, sponsorSpot }
-//   visible()/setVisible(bool) → paid-only embodiment toggle (ghosts are always invisible)
+//   speakerPass()       → true once you've BOOKED a slot (a parallel pass — NOT an attendee tier)
+//   grantSpeakerPass()  → set the pass (called by booking on a confirmed booking)
+//   flags()             → { badge, speaker, networkingPriority, networkingAccess, smokingAccess,
+//                           frontRow, sponsorSpot, backstageAccess }
+//   visible()/setVisible(bool) → embodiment toggle for MEMBERS (paid tier OR speaker pass)
 //   purchaseAccess(kind)→ micro-purchase: spend CREDITS for an access flag (networking/smoking/frontRow)
-//   speakerPool()       → total sats accrued for speakers across ticket purchases (venue-global)
+//   speakerPool()       → total sats accrued for speakers across ATTENDEE ticket purchases (venue-global)
+//   venueRevenue()      → total sats to the venue (ticket fees + slot rent); recordVenue(sats) adds
 //   lastSplit()         → this identity's last purchase split (for "where your sats went")
 //   activate(pubkey)/deactivate() · onChange(cb)
+//
+// SPEAKER PATH: booking a slot IS the speaker's ticket — no attendee tier needed. It grants a
+// parallel SPEAKER PASS (embodiment + 🎙 badge + networking/smoking access + a backstage seam
+// flag), coexisting with any attendee tier (a Patron who books keeps both perk sets). The pass
+// persists for the session/per-pubkey and is NOT revoked when the talk ends.
 //
 // ── MONEY FLOW (mock, custody-free "arcade ticket" model) ──────────────────────────────
 // Buying a ticket is the ENTRY PAYMENT — it does NOT come from your local credit balance.
@@ -65,12 +74,11 @@ const ACCESS = {
   frontRow:   { price: 1000, flag: 'frontRow' },
 };
 
-const PERK_KEYS = ['badge', 'networkingPriority', 'networkingAccess', 'smokingAccess', 'frontRow', 'sponsorSpot'];
-
 let activePubkey = null;
 let _tier = 'ghost';
-let _visible = true;              // embodied by default once paid (ghosts ignore this)
+let _visible = true;              // embodied by default once a member (ghosts ignore this)
 let _access = new Set();          // extra access kinds bought à la carte (Basic)
+let _speaker = false;             // SPEAKER PASS — true once you've booked a slot
 let _lastSplit = null;            // this identity's most recent purchase split (persisted)
 let seq = 0;
 const subs = new Set();
@@ -79,32 +87,42 @@ const emit = () => { for (const cb of subs) cb(snapshot()); };
 const storeKey = (pk) => `xrstage:ticket:${pk}`;
 function persist() {
   if (!activePubkey) return;
-  try { localStorage.setItem(storeKey(activePubkey), JSON.stringify({ tier: _tier, visible: _visible, access: [..._access], lastSplit: _lastSplit })); }
+  try { localStorage.setItem(storeKey(activePubkey), JSON.stringify({ tier: _tier, visible: _visible, access: [..._access], speaker: _speaker, lastSplit: _lastSplit })); }
   catch { /* private mode */ }
 }
 
-// Speaker pool — ONE venue-global pot (not per-pubkey). Persisted across sessions; every ticket
-// purchase grows it by that tier's speaker share (see the distribution seam note at the top).
-const POOL_KEY = 'xrstage:speakerPool';
-function loadPool() { try { return Number(localStorage.getItem(POOL_KEY)) || 0; } catch { return 0; } }
-let _pool = loadPool();
-function growPool(sats) {
-  if (!sats) return;
-  _pool += sats;
-  try { localStorage.setItem(POOL_KEY, String(_pool)); } catch { /* private mode */ }
-}
+// Venue-global pots (not per-pubkey), persisted across sessions:
+//   • speaker pool — grows by each ATTENDEE ticket's speaker share (distribution seam at top).
+//   • venue revenue — ticket venue fees + slot rent; slot fees are 100% venue, NEVER the pool.
+const POOL_KEY = 'xrstage:speakerPool', VENUE_KEY = 'xrstage:venueRevenue';
+const loadNum = (k) => { try { return Number(localStorage.getItem(k)) || 0; } catch { return 0; } };
+let _pool = loadNum(POOL_KEY), _venue = loadNum(VENUE_KEY);
+function growPool(sats) { if (!sats) return; _pool += sats; try { localStorage.setItem(POOL_KEY, String(_pool)); } catch { /* private */ } }
+function addVenue(sats) { if (!sats) return; _venue += sats; try { localStorage.setItem(VENUE_KEY, String(_venue)); } catch { /* private */ } }
 
-function snapshot() { return { tier: tierNow(), flags: flagsNow(), visible: visibleNow(), speakerPool: _pool }; }
+function snapshot() { return { tier: tierNow(), flags: flagsNow(), visible: visibleNow(), speaker: speakerNow(), speakerPool: _pool }; }
 
 function tierNow() { return activePubkey ? _tier : 'ghost'; }
-function visibleNow() { return tierNow() !== 'ghost' && _visible; }
-// Merge the tier's default flags with any à-la-carte access bought with credits.
+function speakerNow() { return !!activePubkey && _speaker; }
+// A MEMBER = holds a paid attendee tier OR a speaker pass → embodied (subject to the toggle).
+function isMember() { return tierNow() !== 'ghost' || speakerNow(); }
+function visibleNow() { return isMember() && _visible; }
+// The tier's default flags + à-la-carte access + the speaker pass. Speaker mingles (networking +
+// smoking) and gets a backstage SEAM flag (no zone yet). `badge` = attendee gem; `speaker` = the
+// 🎙 mark — both can show (combinable) — the label renders them together (avatars.js).
 function flagsNow() {
   const base = TIERS[tierNow()]?.flags || {};
-  const out = { badge: base.badge || null };
-  for (const k of PERK_KEYS) if (k !== 'badge') out[k] = !!base[k];
-  for (const kind of _access) { const f = ACCESS[kind]?.flag; if (f) out[f] = true; }
-  return out;
+  const sp = speakerNow();
+  return {
+    badge: base.badge || null,
+    speaker: sp,
+    networkingPriority: !!base.networkingPriority,
+    networkingAccess: !!base.networkingAccess || _access.has('networking') || sp,
+    smokingAccess: !!base.smokingAccess || _access.has('smoking') || sp,
+    frontRow: !!base.frontRow || _access.has('frontRow'),
+    sponsorSpot: !!base.sponsorSpot,
+    backstageAccess: sp, // SEAM: speakers get backstage — no backstage zone built yet
+  };
 }
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -117,25 +135,38 @@ export const tickets = {
 
   split: splitFor,
   speakerPool() { return _pool; },
+  venueRevenue() { return _venue; },
+  // Record venue revenue (stage rent, ticket fees). NEVER touches the speaker pool.
+  recordVenue(sats) { addVenue(sats); },
+  speakerPass: speakerNow,
+  // Grant the speaker pass (booking calls this on a confirmed booking). Embodies + adds the
+  // speaker flags; coexists with any attendee tier; persists per pubkey.
+  grantSpeakerPass() {
+    if (!activePubkey || _speaker) return speakerNow();
+    _speaker = true; _visible = true; // a fresh speaker is embodied
+    persist(); emit();
+    return true;
+  },
   // This identity's last purchase split; older records (pre-3.14) have no split → null.
   lastSplit() { return _lastSplit; },
 
-  // Load this identity's persisted tier/embodiment; make the service live for it.
+  // Load this identity's persisted tier/embodiment/pass; make the service live for it.
   activate(pubkey) {
     activePubkey = pubkey;
-    _tier = 'ghost'; _visible = true; _access = new Set(); _lastSplit = null;
+    _tier = 'ghost'; _visible = true; _access = new Set(); _speaker = false; _lastSplit = null;
     try {
       const raw = JSON.parse(localStorage.getItem(storeKey(pubkey)) || 'null');
       if (raw && TIERS[raw.tier]) {
         _tier = raw.tier; _visible = raw.visible !== false; _access = new Set(raw.access || []);
-        _lastSplit = raw.lastSplit || null; // MIGRATION: old records lack this — fine, stays null
+        _speaker = !!raw.speaker;            // MIGRATION: old records lack this → false
+        _lastSplit = raw.lastSplit || null;  // MIGRATION: old records lack this → null
       }
     } catch { /* ignore */ }
     emit();
     return snapshot();
   },
-  // On logout: drop in-memory state (→ ghost). Persisted per-pubkey record + pool stay.
-  deactivate() { activePubkey = null; _tier = 'ghost'; _visible = true; _access = new Set(); _lastSplit = null; emit(); },
+  // On logout: drop in-memory state (→ ghost). Persisted per-pubkey record + venue pots stay.
+  deactivate() { activePubkey = null; _tier = 'ghost'; _visible = true; _access = new Set(); _speaker = false; _lastSplit = null; emit(); },
 
   onChange(cb) { subs.add(cb); return () => subs.delete(cb); },
 
@@ -161,9 +192,9 @@ export const tickets = {
     return { state: 'confirmed', id, tier: tierName, ...sp };
   },
 
-  // Paid-only embodiment toggle. Ghosts can't embody, so this is a no-op for them.
+  // Embodiment toggle for MEMBERS (paid tier OR speaker pass). No-op for true ghosts.
   setVisible(on) {
-    if (tierNow() === 'ghost') return false;
+    if (!isMember()) return false;
     _visible = !!on; persist(); emit();
     return _visible;
   },

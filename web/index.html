@@ -456,6 +456,7 @@
       }
       .stage-pool b { color: var(--orange-bright); font-variant-numeric: tabular-nums; }
       .stage-pool .sub { display: block; margin-top: 2px; font-size: 11px; color: var(--ink-faint); }
+      .stage-pool .pass { display: block; margin-bottom: 4px; color: var(--orange-bright); font-weight: 600; }
       .stage-pool[hidden] { display: none; }
 
       /* Headset-login: big monospace code + countdown (mint), and the 6-digit input (redeem). */
@@ -551,6 +552,13 @@
       .you-tier b { color: var(--orange-bright); }
       .you-split { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); margin-top: 2px; }
       .you-split b { color: var(--ink-dim); }
+      .booking-note {
+        font-family: var(--font-mono); font-size: 13px; color: var(--ink);
+        padding: 8px 11px; border-radius: var(--r-sm);
+        background: rgba(247, 147, 26, 0.09); border: 1px solid rgba(247, 147, 26, 0.35);
+      }
+      .booking-note b { color: var(--orange-bright); }
+      .booking-note .sub { display: block; margin-top: 3px; font-size: 11px; color: var(--ink-dim); }
       #you-ticket[hidden], #you-ticket-sec[hidden], #you-wallet[hidden], #you-wallet-sec[hidden] { display: none; }
 
       /* Stage menu — schedule block. */
@@ -792,6 +800,7 @@
         <div id="booking-panel" class="bar" role="dialog" aria-modal="true" aria-label="Book a slot">
           <button class="pc-close" id="booking-close" aria-label="Close">✕</button>
           <div class="pm-title">Book a slot</div>
+          <div id="booking-note" class="booking-note"></div>
           <div id="booking-slots"></div>
           <div id="booking-confirm" hidden>
             <input type="text" id="booking-title" maxlength="60" placeholder="Talk title" />
