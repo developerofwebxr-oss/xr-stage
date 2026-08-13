@@ -46,7 +46,7 @@ document.getElementById('app').appendChild(renderer.domElement);
 // stale inline width/height. (Initial sizing happens after the camera exists.)
 
 // ── Scene + people ──────────────────────────────────────────────────────────────
-const { scene, setARMode, update: updateScene } = buildScene();
+const { scene, userFloor, setARMode, update: updateScene } = buildScene();
 // Social zones behind the audience (Smoking Area + Networking): floor markings, glowing
 // signage, and plaques. Freestanding props → they stay visible in AR (not part of the shell).
 buildZoneScenery(scene);
@@ -486,9 +486,23 @@ const voice = new Voice({
 // no-ops with no room), so nothing leaks before the user joins.
 // getPose returns null while we're a ghost / invisible → presence skips the heartbeat, so
 // peers never render a body for us (we're a listener, not a participant).
-const presence = createPresence(voice, scene, () => (embodied()
-  ? { x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y }
-  : null), staticBodies, {
+//
+// In immersive modes we broadcast the HEAD's world pose, not the rig's: room-scale/AR
+// walking moves the head within the rig, so peers must see us where our head actually is
+// (matching the local body, which also follows the head — see followBody). y stays at the
+// rig's floor level so remote bodies stand on the ground rather than float at head height.
+const _headWorld = new THREE.Vector3();
+const _headQuat = new THREE.Quaternion();
+const _headEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+const presence = createPresence(voice, scene, () => {
+  if (!embodied()) return null;
+  if (renderer.xr.isPresenting) {
+    camera.getWorldPosition(_headWorld);
+    _headEuler.setFromQuaternion(camera.getWorldQuaternion(_headQuat), 'YXZ');
+    return { x: _headWorld.x, y: rig.position.y, z: _headWorld.z, yaw: _headEuler.y };
+  }
+  return { x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y };
+}, staticBodies, {
   // Each remote peer gets a mock identity (face + name) keyed by its presence id.
   // REAL: presence carries the peer's pubkey; this becomes getProfile(pubkey).
   onAvatarSpawn: (id, group) => identifyAvatar(group, id),
@@ -1210,6 +1224,36 @@ function updateVRBoardScroll(dt) {
   }
 }
 
+// ── Body-follows-head (immersive) ────────────────────────────────────────────────
+// Physically stepping in VR/AR moves the HEAD within the rig (thumbstick locomotion
+// still moves the rig itself). Each frame we pin the local body's XZ + yaw under the
+// head so it never gets left behind — the WebXR head pose lands in `camera` as a
+// rig-LOCAL offset (local-floor reference), the same space `localBody` (a rig child)
+// lives in, so we copy it straight across. In AR the dark user-floor disc tracks the
+// head's WORLD XZ too, keeping the footing centred on the player.
+//
+// Zone clamp/detection stay on the RIG (the clampable thing — you can't physically stop
+// a walking user): if you step past a boundary the rig clamps + the edge glows, but the
+// head (and thus the body, and what peers see) may briefly overshoot the line. Flat mode
+// keeps the body at the rig origin.
+function followBody() {
+  if (renderer.xr.isPresenting) {
+    localBody.position.x = camera.position.x;
+    localBody.position.z = camera.position.z;
+    _headEuler.setFromQuaternion(camera.quaternion, 'YXZ');
+    localBody.rotation.y = _headEuler.y;
+    if (arActive) {
+      camera.getWorldPosition(_headWorld);
+      userFloor.position.x = _headWorld.x;
+      userFloor.position.z = _headWorld.z;
+    }
+  } else if (localBody.position.x || localBody.position.z || localBody.rotation.y) {
+    localBody.position.x = 0;
+    localBody.position.z = 0;
+    localBody.rotation.y = 0;
+  }
+}
+
 // ── Frame loop ──────────────────────────────────────────────────────────────────
 const clock = new THREE.Clock();
 const _prevPos = new THREE.Vector3().copy(rig.position); // for the movement vignette
@@ -1218,6 +1262,7 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   updateScene(dt);            // scene mood: ring spread + star flicker (GPU clocks)
   updateLocomotion(dt, renderer);
+  followBody();               // #5: pin the local body under the head in immersive modes
   presence.update(dt);
   // Nudge the local rig out of the deepest overlap with any body (live or static),
   // keeping centres >= MIN_BODY_GAP (heads never intersect), then re-clamp so the

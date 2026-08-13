@@ -69,7 +69,7 @@ export function createLocomotion(camera, domElement, {
   const keys = new Set();
   const moveInput = { x: 0, z: 0 }; // analog joystick, [-1,1]; merged with WASD
 
-  // Jump state (Screen + VR only; gated off in AR — see updateJump). One hop at a
+  // Jump state (Screen + VR + AR — enabled in every mode). One hop at a
   // time: `airborne` blocks re-trigger until we land. `jumpHeight` is added ABOVE
   // the clamped surface y in applyConstraint, so the horizontal boundaries/clamps
   // and the tiered landing surface (floor / mic platform / stage) are untouched —
@@ -288,18 +288,18 @@ export function createLocomotion(camera, domElement, {
       }
     }
 
-    updateJump(dt, renderer, immersive);
+    updateJump(dt);
     applyConstraint();
   }
 
   // Integrate the hop. Horizontal x/z is already settled above; this only touches
-  // the vertical offset. AR is kept grounded (rising off the real passthrough floor
-  // is disorienting), so a queued jump there is simply dropped.
-  function updateJump(dt, renderer, immersive) {
-    const isAR = immersive && isARSession(renderer);
+  // the vertical offset. Jump is enabled in ALL immersive modes now — AR included
+  // (owner-requested, same modest hop as VR); landing height still resolves via the
+  // surface-aware `constrain` callback, so an AR hop returns to the real floor.
+  function updateJump(dt) {
     if (jumpQueued) {
       jumpQueued = false;
-      if (!airborne && !isAR) { vy = JUMP_SPEED; airborne = true; }
+      if (!airborne) { vy = JUMP_SPEED; airborne = true; }
     }
     if (airborne) {
       jumpHeight += vy * dt;
@@ -384,7 +384,7 @@ export function createLocomotion(camera, domElement, {
   }
 
   // jump() queues a hop from any input source (the optional mobile button calls it).
-  // Same guards as Space/VR apply in updateJump (single hop, dropped in AR).
+  // Same guards as Space/VR apply in updateJump (single hop, all modes).
   function jump() { jumpQueued = true; }
 
   // toggleFly() — the standard's fly toggle, gated by ENABLE_FLY (config.enableFly).
@@ -398,13 +398,6 @@ export function createLocomotion(camera, domElement, {
   }
 
   return { rig, update, setFreeLook, setMoveInput, jump, toggleFly, isFlying: () => flying };
-}
-
-// AR vs VR: an immersive session in passthrough reports a non-opaque environment
-// blend mode. Lets us keep jump grounded in AR without any mode-switch wiring.
-function isARSession(renderer) {
-  const s = renderer.xr.getSession();
-  return !!s && !!s.environmentBlendMode && s.environmentBlendMode !== 'opaque';
 }
 
 const UP = new THREE.Vector3(0, 1, 0);

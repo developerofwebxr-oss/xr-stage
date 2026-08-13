@@ -117,7 +117,14 @@ export function buildScene() {
     depthWrite: false,
     blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
-    uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(BITCOIN) } },
+    // uOpacity scales the ring alpha. AR nudges it up (0.5 → 0.72) so the rings read a
+    // touch more against passthrough — more VISIBLE, not brighter: same additive colour,
+    // just less transparent. No bloom, no colour change.
+    uniforms: {
+      uTime: { value: 0 },
+      uColor: { value: new THREE.Color(BITCOIN) },
+      uOpacity: { value: 0.5 },
+    },
     vertexShader: `
       varying float vDist;
       void main() {
@@ -130,13 +137,14 @@ export function buildScene() {
       varying float vDist;
       uniform float uTime;
       uniform vec3 uColor;
+      uniform float uOpacity;
       const float INNER = ${STAGE_RADIUS.toFixed(1)};
       const float OUTER = ${(AUDIENCE_RADIUS + 3).toFixed(1)};
       void main() {
         float wave = sin(vDist * 1.0 - uTime * 0.8);   // travels outward as uTime grows
         float band = smoothstep(0.55, 1.0, wave);       // thin bright rings
         float fade = pow(1.0 - clamp((vDist - INNER) / (OUTER - INNER), 0.0, 1.0), 1.5);
-        float a = band * fade * 0.5;
+        float a = band * fade * uOpacity;
         if (a < 0.002) discard;
         gl_FragColor = vec4(uColor, a);
       }
@@ -149,6 +157,24 @@ export function buildScene() {
   rings.rotation.x = -Math.PI / 2;
   rings.position.set(STAGE_POS.x, 0.03, STAGE_POS.z);
   scene.add(rings);
+
+  // ── AR-only user-floor disc ─────────────────────────────────────────────────────
+  // In AR the VR shell floor is gone (passthrough is the ground), so the player has no
+  // visual footing. This subtle DARK disc (~1.5 m radius) sits under the player and
+  // dissolves to transparent at its edge (the radial-shadow texture handles the fade),
+  // grounding them without walling off the real room. It follows the player's XZ each
+  // frame (main.js) and is hidden in flat + VR. Darker = more present, never brighter.
+  const userFloor = new THREE.Mesh(
+    new THREE.CircleGeometry(1.5, 48),
+    new THREE.MeshBasicMaterial({
+      map: radialShadowTexture(), transparent: true, depthWrite: false,
+      color: 0x000000, opacity: 0.0, blending: THREE.NormalBlending,
+    }),
+  );
+  userFloor.rotation.x = -Math.PI / 2;
+  userFloor.position.y = 0.02;
+  userFloor.visible = false;    // AR-only; toggled in setARMode
+  scene.add(userFloor);
 
   // ── Faked contact shadow: a soft dark radial decal grounding the stage base ─────
   const shadow = new THREE.Mesh(
@@ -272,18 +298,22 @@ export function buildScene() {
   scene.add(border);
 
   // ── Environment adapter: the AR "shell-off" seam ────────────────────────────────
-  // Per the standard, the bounded ENCLOSURE — sky/starfield, floor, grid, backdrop
-  // screen, light beam, fog, background — is VR-only. In AR, passthrough IS the
-  // environment, so the whole shell is suppressed; only the freestanding venue PROPS
-  // (stage, mic platform, mic stand, edge glows, the radiating floor rings, contact
-  // shadow) remain, anchored to the real floor.
+  // Per the standard, the bounded ENCLOSURE — sky/starfield, floor, grid, light beam,
+  // fog, background — is VR-only. In AR, passthrough IS the environment, so the whole
+  // shell is suppressed; only the freestanding venue PROPS (stage, mic platform, mic
+  // stand, edge glows, the radiating floor rings, contact shadow, and the main stage
+  // SCREEN) remain, anchored to the real floor.
+  //
+  // NOTE: the stage screen (backdrop + its frame + border) is DIEGETIC stage furniture,
+  // exactly like the LIVE / TOP-ZAPPED boards — it must render in AR passthrough. So it
+  // is a prop, NOT part of the enclosure, and is deliberately kept OUT of `shell`.
   //
   // We keep ONE persistent scene across flat↔VR↔AR (no rebuild on mode switch), so the
   // seam is a visibility toggle over a cleanly-SEPARATED shell list — not a build-time
   // skip. The separation is the architecture: shell and props never mix, so this one
   // `shell` array is the single place an AR path suppresses the enclosure. Flat and VR
   // are untouched (shell stays visible).
-  const shell = [floor, grid, backdrop, frame, border, sky.points, beam];
+  const shell = [floor, grid, sky.points, beam];
   const environment = {
     shell,
     setShellVisible(visible) {
@@ -293,8 +323,15 @@ export function buildScene() {
     },
   };
 
-  // AR passthrough = shell off. (Kept as the name main.js wires `onARMode` to.)
-  function setARMode(on) { environment.setShellVisible(!on); }
+  // AR passthrough = shell off, plus the AR-only floor treatment: the dark user-floor
+  // disc appears and the radiating rings read a touch stronger (more visible against
+  // passthrough, not brighter). Flat/VR keep the disc hidden and the rings at 0.5.
+  function setARMode(on) {
+    environment.setShellVisible(!on);
+    userFloor.visible = on;
+    userFloor.material.opacity = on ? 0.38 : 0.0;
+    ringMat.uniforms.uOpacity.value = on ? 0.72 : 0.5;
+  }
 
   // ── Per-frame tick (shader clocks) ──────────────────────────────────────────────
   // Drives the ring spread + star flicker. Frozen entirely under prefers-reduced-
@@ -307,7 +344,7 @@ export function buildScene() {
     sky.material.uniforms.uTime.value = elapsed;
   }
 
-  return { scene, backdrop, setARMode, environment, update };
+  return { scene, backdrop, userFloor, setARMode, environment, update };
 }
 
 // A soft black radial-gradient texture for the faked contact shadow under the stage

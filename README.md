@@ -134,6 +134,43 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Device-pass fixes — AR + presence (4.1)** — no new deps. Five owner-verified on-device bugs:
+- **#1 Stage screen now renders in AR.** *Root cause:* the main stage screen (`backdrop` +
+  its `frame` + `border`) was swept into the AR **shell** hide-list, so `setShellVisible(false)`
+  hid it with the enclosure. It's **diegetic stage furniture** (like the LIVE / TOP-ZAPPED
+  boards), not enclosure — pulled OUT of `shell` so it shows in all four modes. Other AR
+  visibility unchanged.
+- **#2 Jump enabled in AR.** Dropped the `!isAR` gate in `updateJump` (and the now-dead
+  `isARSession` helper) — AR gets the same modest hop as VR, off the same **A** button / Space;
+  landing height still resolves via the surface-aware `constrain` callback, so a hop returns to
+  the real floor.
+- **#3 AR-only floor treatment.** A subtle **dark ~1.5 m disc** (radial alpha → transparent at
+  its edge) follows the player's world XZ each frame, giving footing on passthrough; hidden in
+  flat/VR. The orange rings read a touch stronger in AR via a new `uOpacity` uniform
+  (`0.5 → 0.72`) — *more visible, not brighter* (same additive colour, no bloom). Screen + VR
+  unchanged.
+- **#4 Board updates are instant + event-driven.** *Root cause:* **TOP ZAPPED** (`rebuildWall`)
+  was gated behind `WALL_STICKY_MS = 120 000` (a 2-min ranking hold) in both the change handler
+  and a per-frame poll, so a boost never refreshed it. Now `onBoardChange` re-textures **both**
+  screens immediately: LIVE on every change (while live), TOP ZAPPED whenever the ranked top-N
+  changes — signature is `id:sats`, so a boost to the already-#1 card refreshes its ⚡ total the
+  same frame. Removed the per-frame wall poll and the sticky const/var. LIVE was already
+  event-driven; its only residual delay is the upstream mock wallet settle (~1 s), not the render.
+- **#5 Body follows the head in VR/AR.** Physically stepping moves the head within the rig; each
+  frame `followBody()` pins the local body's XZ + yaw under the head (WebXR writes the head pose
+  into `camera` as a rig-LOCAL offset — the same space the body child lives in). Presence now
+  broadcasts the **head's world pose** (XZ + yaw; y stays at floor level) so peers see us where
+  our head is. Thumbstick locomotion still moves the rig. **Zone-edge behavior:** clamp/detection
+  stay on the **rig** (the clampable thing — a walking user can't be physically stopped); step
+  past a boundary and the rig clamps + the edge glows, but the head — and thus the body and what
+  peers see — may briefly **overshoot** the line until you step back. Flat mode keeps the body at
+  the rig origin.
+- **Guardrails:** re-textures stay event-driven (no per-frame canvas work added); follow/pose math
+  is a few vector ops per frame (Quest 72 fps safe); modes/services/menus untouched beyond the
+  above. Clean build, no console errors. *Flat path verified in Chrome (scene renders, screen
+  visible, no errors); the AR/VR immersive paths — #1, #2, #3, #5 — can't be entered by headless/
+  desktop Chrome and are owner-tested on device.*
+
 **Event-scoped economics — the marketplace model (3.18)** — no new deps:
 - The venue is now a **marketplace of events**. Every booking creates an **event**
   `{ id, title, ownerPubkey, startsAt, endsAt, speakers[], slotIds[] }`; consecutive slots (≤ 3)

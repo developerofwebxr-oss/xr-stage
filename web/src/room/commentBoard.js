@@ -21,7 +21,6 @@ const CARD_W = 3.5, CARD_H = 0.8, DY = CARD_H + 0.16;
 const FEED_N = 6, WALL_N = 4;
 const SCROLL_SPEED = 0.22;                 // m/s upward drift of the live feed (when live)
 const TOP_EDGE = SCREEN_H / 2 - 0.18;      // fade/recycle bound inside the frame
-const WALL_STICKY_MS = 120_000;            // top wall holds its ranking ~2 min
 const IDLE_SNAP_MS = 10_000;               // scrolled-back view snaps to live after ~10s idle
 const SCROLL_SMOOTH_HZ = 16;               // easing rate: offset chases its target (higher = snappier, ~0.1s settle)
 
@@ -46,7 +45,6 @@ export function createCommentBoard(scene, { board }) {
 
   let feedCards = []; // [{ mesh, id }]
   let wallCards = [];
-  let lastWallBuild = -Infinity;
   let nowMs = 0; // advanced by update(dt); avoids Date.now for determinism
 
   // Per-viewer LIVE scroll — CLIENT-LOCAL state (never broadcast, never in the board).
@@ -101,16 +99,19 @@ export function createCommentBoard(scene, { board }) {
       const mesh = makeCard(c, { rank: i + 1 });
       mesh.position.set(0, ((top.length - 1) / 2) * DY - i * DY, 0.03);
       wall.content.add(mesh);
-      return { mesh, id: c.id };
+      return { mesh, id: c.id, sats: c.sats };
     });
-    lastWallBuild = nowMs;
   }
 
-  // Live feed re-renders on change ONLY while live — a scrolled-back view is frozen so
-  // new arrivals don't shift what you're reading (they keep landing in the shared data).
+  // Both screens re-texture the instant the board changes — event-driven, no polling,
+  // no throttle. LIVE re-renders on change ONLY while live (a scrolled-back view is
+  // frozen so new arrivals don't shift what you're reading — they still land in the
+  // shared data). TOP ZAPPED rebuilds whenever the ranked top-N actually changes, so a
+  // boost that reorders the leaderboard lands the same frame (the wallDiffersFromTop
+  // guard just skips a redundant re-texture when the order is unchanged).
   function onBoardChange() {
     if (!paused()) rebuildFeed();
-    if (nowMs - lastWallBuild >= WALL_STICKY_MS) rebuildWall();
+    if (wallDiffersFromTop()) rebuildWall();
   }
   const unsub = board.onChange(onBoardChange);
   rebuildFeed();
@@ -153,12 +154,15 @@ export function createCommentBoard(scene, { board }) {
         if (idleMs >= IDLE_SNAP_MS) snapLive();
       }
     }
-    if (nowMs - lastWallBuild >= WALL_STICKY_MS && wallDiffersFromTop()) rebuildWall();
+    // TOP ZAPPED is rebuilt event-driven from onBoardChange — no per-frame poll here.
   }
 
+  // The wall re-textures when the ranked top-N changes in membership, ORDER, or a shown
+  // TOTAL — signing on id:sats catches a boost to the already-#1 card (its sats climb
+  // without the order moving), so the displayed ⚡ total never goes stale.
   function wallDiffersFromTop() {
-    const top = board.top(WALL_N).map((c) => c.id).join(',');
-    return top !== wallCards.map((c) => c.id).join(',');
+    const sig = (c) => `${c.id}:${c.sats}`;
+    return board.top(WALL_N).map(sig).join(',') !== wallCards.map(sig).join(',');
   }
 
   // Client-local scroll of MY live view — all input funnels through the TARGET; the render
