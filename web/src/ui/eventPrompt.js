@@ -12,8 +12,10 @@ export function createEventPrompt({ onGetTicket, onWelcomeZap, onContinueGhost }
     root: $('event-prompt'), headline: $('ep-headline'),
     ticket: $('ep-ticket'), zap: $('ep-zap'), ghost: $('ep-ghost'),
   };
-  function open({ title, speaker } = {}) {
-    el.headline.innerHTML = `Now on stage: <b>${esc(title)}</b>${speaker ? ` — ${esc(speaker)}` : ''}`;
+  function open({ title, speaker, description } = {}) {
+    const first = String(description || '').split('\n')[0].slice(0, 120);
+    el.headline.innerHTML = `Now on stage: <b>${esc(title)}</b>${speaker ? ` — ${esc(speaker)}` : ''}`
+      + (first ? `<div style="margin-top:6px;font-size:13px;color:var(--ink-dim);font-weight:400">${esc(first)}</div>` : '');
     el.root.hidden = false;
   }
   function close() { el.root.hidden = true; }

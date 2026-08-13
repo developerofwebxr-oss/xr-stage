@@ -34,6 +34,7 @@ import { wallet } from './wallet/wallet.js';
 import { createZapEffects } from './room/zapEffect.js';
 import { Voice } from './voice/livekit.js';
 import { createPresence } from './state/presence.js';
+import { createEarnings } from './state/earnings.js';
 import { stageState, setState, onStateChange } from './state/stageState.js';
 
 // main.js — boots the four-mode WebXR spatial stage and runs the frame loop.
@@ -330,7 +331,11 @@ function requireTicket(what = 'do that') {
   if (tickets.tier() === 'ghost' && !tickets.speakerPass()) { hud.toast(`Get a ticket to ${what}`); openTicketChooser(); return false; }
   return true;
 }
-function openTicketChooser() { closeAllMenus(); ticketUI.openChooser({ eventTitle: eventForTicket()?.title }); }
+function openTicketChooser() {
+  closeAllMenus();
+  const ev = eventForTicket();
+  ticketUI.openChooser({ eventTitle: ev?.title, prices: ev?.prices || null, custom: !!ev?.prices });
+}
 hud.onSignIn(() => openYou());   // "You" control-bar chip → You menu
 hud.onStage(() => openStage());  // "Stage" control-bar button → Stage menu
 
@@ -438,7 +443,15 @@ async function openSpeakerHub() {
   const myEvent = booking.mine()[0];
   if (!myEvent) return; // gated in the Stage menu, but guard anyway
   closeAllMenus();
-  speakerHub.open({ mySlot: myEvent, entries: await hubEntries(), criteria: queue.criteria(), pot: tickets.speakerPot(myEvent.id) });
+  const me = identity.current();
+  const totalMin = Math.max(1, Math.round((myEvent.endsAt - myEvent.startsAt) / 60000));
+  const nSpk = myEvent.speakers.length || 1;
+  speakerHub.open({
+    mySlot: myEvent, entries: await hubEntries(), criteria: queue.criteria(),
+    event: myEvent, isOwner: !!me && me.pubkey === myEvent.ownerPubkey,
+    earnings: { pot: tickets.speakerPot(myEvent.id), zaps: earnings.receivedFor(myEvent.id), yourMin: Math.round(totalMin / nSpk), totalMin },
+    defaults: { basic: tickets.TIERS.basic.price, supporter: tickets.TIERS.supporter.price, patron: tickets.TIERS.patron.price },
+  });
 }
 function openSpendHub() { if (!requireSignedIn('spend sats')) return; closeAllMenus(); zapUI.openHub({ speakerAvailable: !!stageSpeakerGroup(), mic: micState(), boostByTap: boostByTap() }); }
 
@@ -496,6 +509,13 @@ function doGrab() {
 const voice = new Voice({
   onCounts: ({ participantCount, speakerCount }) => setState({ participantCount, speakerCount }),
   onState: (state) => hud.setVoiceState(state),
+});
+
+// Speaker earnings — direct-zap tally per event (4.7). Broadcasts my confirmed zaps so
+// recipients can accumulate their incoming totals (mock wallet.onZap is sender-local).
+const earnings = createEarnings(voice, wallet, {
+  getMyPubkey: () => identity.current()?.pubkey || null,
+  getEventId: () => (booking.currentEvent() || booking.nextEvent())?.id || null,
 });
 
 // Presence exists from the start so avatar separation (incl. static props) is always
@@ -941,7 +961,7 @@ async function buyTicket(tier, { notSignedIn } = {}) {
   const ev = eventForTicket();
   if (!ev) { hud.toast('No event to buy into right now'); return { state: 'failed', reason: 'no event' }; }
   eventPrompt.close();                                 // buying satisfies the transition prompt
-  const res = await tickets.buy(tier, ev.id);          // ticket is scoped to THIS event; share → its pot
+  const res = await tickets.buy(tier, ev.id, ev.prices?.[tier]); // charge the event's (maybe custom) price
   if (res.state === 'confirmed') {
     hud.setBalance(wallet.getBalance());
     hud.toast(`You're in — ${tickets.TIERS[tier].label} · ${ev.title} · +${res.credits.toLocaleString('en-US')} credits`);
@@ -951,7 +971,7 @@ async function buyTicket(tier, { notSignedIn } = {}) {
 const ticketUI = createTicketUI({
   toast: (m) => hud.toast(m),
   tiers: tickets.TIERS,
-  split: (t) => tickets.split(t),
+  split: (t, price) => tickets.split(t, price),   // per-event price override (4.7) when the chooser passes one
   currentTier: () => tickets.tier(),
   getBalance: () => wallet.getBalance(),
   onBuy: async (tier) => {
@@ -1107,7 +1127,7 @@ queue.onChange(() => {
 // NO refunds). A booking unlocks the Speaker hub.
 const bookingUI = createBookingUI({
   toast: (m) => hud.toast(m),
-  onBook: (slotId, title, slots) => bookSlot(slotId, title, slots),
+  onBook: (slotId, title, slots, description) => bookSlot(slotId, title, slots, description),
 });
 const speakerHub = createSpeakerHub({
   toast: (m) => hud.toast(m),
@@ -1116,6 +1136,41 @@ const speakerHub = createSpeakerHub({
   onPick: (pubkey) => queue.next(pubkey),                        // Manual: advance THIS entrant → you're-up cue
   onNext: () => queue.next(),                                    // advance by current criteria → you're-up cue
   onAddCoSpeaker: () => addCoSpeakerFlow(),                      // panels: pick a present participant → co-speaker
+  onEditEvent: (fields) => editMyEvent(fields),                 // 4.7: title + description (organizer)
+  onSetPrices: (prices) => setMyEventPrices(prices),            // 4.7: per-event tier prices (organizer)
+});
+
+// Organizer-only event edits (4.7). Owner check on the local booking event, then mutate +
+// broadcast so every client's schedule/chooser converges (mirrors the co-speaker signal).
+function editMyEvent({ title, description } = {}) {
+  const ev = booking.mine()[0];
+  if (!ev) return;
+  if (identity.current()?.pubkey !== ev.ownerPubkey) return hud.toast('Only the organizer can edit');
+  booking.editEvent(ev.id, { title, description });
+  voice.sendData({ t: 'eventedit', eventId: ev.id, title, description }, { reliable: true });
+  hud.toast('Event updated');
+  openSpeakerHub();
+  if (!document.getElementById('stage-menu').hidden) openStage();
+}
+function setMyEventPrices(prices) {
+  const ev = booking.mine()[0];
+  if (!ev) return;
+  if (identity.current()?.pubkey !== ev.ownerPubkey) return hud.toast('Only the organizer can edit');
+  booking.setPrices(ev.id, prices);
+  voice.sendData({ t: 'eventprices', eventId: ev.id, prices: booking.event(ev.id).prices }, { reliable: true });
+  hud.toast(prices ? 'Ticket prices updated (new purchases)' : 'Prices reset to defaults');
+  openSpeakerHub();
+}
+// Inbound event edits/prices from the organizer → converge the local booking + open surfaces.
+voice.onData((_id, msg) => {
+  if (!msg) return;
+  if (msg.t === 'eventedit') {
+    booking.editEvent(msg.eventId, { title: msg.title, description: msg.description });
+    if (!document.getElementById('stage-menu').hidden) openStage();
+    if (speakerHub.isOpen()) openSpeakerHub();
+  } else if (msg.t === 'eventprices') {
+    booking.setPrices(msg.eventId, msg.prices);
+  }
 });
 
 // Entrant rows for the hub queue list, with names resolved via identity (async).
@@ -1135,10 +1190,10 @@ function cancelBooking(slotId) {
   if (!document.getElementById('stage-menu').hidden) openStage(); // refresh the Stage menu if open
 }
 
-async function bookSlot(slotId, title, slots = 1) {
+async function bookSlot(slotId, title, slots = 1, description = '') {
   if (!requireSignedIn('book a slot')) return;
   const me = identity.current();
-  const res = await booking.book({ slotId, title, slots });
+  const res = await booking.book({ slotId, title, slots, description });
   if (res.state === 'confirmed') {
     // Booking IS the speaker's ticket for THIS event → the pass grant (in booking) embodies +
     // adds 🎙 via tickets.onChange. Confirm it here.
@@ -1161,7 +1216,7 @@ async function stageData() {
   const evs = booking.events();
   const cur = booking.currentEvent();
   const events = await Promise.all(evs.map(async (e) => ({
-    id: e.id, time: fmtClock(e.startsAt), title: e.title, organizer: (await identity.getProfile(e.ownerPubkey)).name,
+    id: e.id, time: fmtClock(e.startsAt), title: e.title, description: e.description, organizer: (await identity.getProfile(e.ownerPubkey)).name,
   })));
   const e = eventForTicket();
   return { events, currentId: cur?.id || null, hasBooking: booking.mine().length > 0, pot: currentPot(), potTitle: e?.title || '' };
@@ -1199,7 +1254,7 @@ async function eventTick() {
       _promptedEventId = cur.id;
       const name = (await identity.getProfile(cur.speakers[0] || cur.ownerPubkey)).name;
       closeAllMenus();
-      eventPrompt.open({ title: cur.title, speaker: name });
+      eventPrompt.open({ title: cur.title, speaker: name, description: cur.description });
     }
   } else {
     if (cur && tickets.holdsFor(cur.id)) eventPrompt.close(); // I hold the current event → no prompt

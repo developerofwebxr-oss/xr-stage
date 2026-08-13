@@ -134,6 +134,40 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Speaker-hub upgrades — talk metadata + event pricing + earnings (4.7)** — organizer tooling on
+existing seams. No new deps.
+- **1. Edit title + description.** Events gained a `description` (≤280 chars). The organizer edits
+  both any time from the Speaker hub (co-speakers read-only); changes **broadcast** over the data
+  channel (`{t:'eventedit'}`, mirroring the co-speaker signal) so every client's schedule/prompt
+  converges. Description surfaces: the **Schedule** (Stage menu — title · organizer · a truncated
+  description line), the **transition prompt** (title + first line), and the **booking form**
+  (optional description textarea at booking time). The central editable-focus guard already keeps
+  game keys from hijacking the inputs.
+- **2. Per-event ticket pricing (the 3.18 seam, live).** The organizer sets Basic/Supporter/Patron
+  prices in the hub (prefilled with the venue defaults 2,100 / 10,000 / 21,000; clamped min 500 /
+  max 210,000; coerced to sane ordering basic ≤ supporter ≤ patron). Percentages stay global (10%
+  venue · 10/20/30 speaker). `splitFor(tier, price)` + `tickets.buy(tier, eventId, price)` now take
+  the event's price, so the **tier chooser prices from the event's table and credits/splits
+  recompute**; the chooser shows **"Prices set by the organizer"** when they differ from defaults.
+  Mid-event changes apply to new purchases only. Prices broadcast (`{t:'eventprices'}`).
+- **3. Speaker earnings view.** The hub's prominent "speaking here pays" card: **this event's
+  speaker pot** (`tickets.speakerPot`), your **share basis** ("split by stage time — you: N of M
+  min", equal-split note for panels), and **direct zaps received this event**. Because the mock
+  `wallet.onZap` is sender-local, a new `state/earnings.js` **broadcasts each confirmed zap** and
+  every recipient accumulates its own incoming total, keyed by (pubkey, eventId), mock-persisted.
+- **Guardrails.** Organizer-only edits (owner-pubkey check in the hub render AND the handlers); no
+  payout logic; slides/Blossom stay parked; no new deps. Clean build, no console errors; events /
+  tickets / panels / zones / audio untouched beyond the price/description threading.
+- **Verified (flat, one tab):** booked an event with a description → it renders on the **Schedule**
+  under my event; the **booking form** description textarea works; the **transition prompt** shows
+  title (+ first description line when present); the **Speaker hub** shows all three sections —
+  earnings (pot + direct zaps + share basis), editable title/description (prefilled), and the
+  per-event price inputs (prefilled, defaults note, Save/Reset); no console errors; clean build.
+  **Needs two tabs / device:** the edit + price **broadcast convergence** across clients, the
+  **"organizer pricing" note + recomputed splits** in the chooser after a custom-price save, and
+  cross-client **direct-zap accumulation**. Non-organizer edit is code-gated (hub renders edit only
+  for the owner; handlers re-check `ownerPubkey`).
+
 **Panels + Backstage + token grant (4.5)** — multi-speaker events, a gated green room, and the
 server publish grant 4.4 flagged. No new deps.
 - **Part A — Backstage (a real, gated building).** An enclosed green room BEHIND the screen wall

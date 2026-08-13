@@ -16,28 +16,82 @@ const $ = (id) => document.getElementById(id);
 const fmt = (n) => Number(n).toLocaleString('en-US');
 const CRITERIA = [['money', 'Money'], ['activity', 'Activity'], ['manual', 'Manual']];
 
-export function createSpeakerHub({ toast, onCancelBooking, onSetCriteria, onPick, onNext, onAddCoSpeaker } = {}) {
+export function createSpeakerHub({ toast, onCancelBooking, onSetCriteria, onPick, onNext, onAddCoSpeaker, onEditEvent, onSetPrices } = {}) {
   const el = {
-    root: $('speaker-hub'), pool: $('hub-pool'), slot: $('hub-slot'), cancel: $('hub-cancel'),
+    root: $('speaker-hub'), pool: $('hub-pool'), earn: $('hub-earnings'), slot: $('hub-slot'), cancel: $('hub-cancel'),
+    edit: $('hub-edit'), prices: $('hub-prices'),
     criteria: $('hub-criteria'), queue: $('hub-queue'), next: $('hub-next'), close: $('hub-close'),
     addCoSpeaker: $('hub-add-cospeaker'),
   };
   el.addCoSpeaker?.addEventListener('click', () => onAddCoSpeaker && onAddCoSpeaker());
   let mySlot = null;
   let criteria = 'money';
+  let event = null, isOwner = false, defaults = { basic: 2100, supporter: 10000, patron: 21000 };
 
-  function open({ mySlot: slot, entries = [], criteria: crit = 'money', pot = 0 } = {}) {
-    mySlot = slot;
-    criteria = crit;
-    // Speaker pass status + THIS event's pot. SEAM: at go-real the pot is split among the event's
-    // speakers by stage time and paid over Lightning — per-speaker share NOT computed here.
-    el.pool.innerHTML = `<span class="pass">🎙 Speaker pass · active</span>`
-      + `⚡ This event's pot: <b>${fmt(pot)}</b> sats<span class="sub">split among its speakers by stage time at payout</span>`;
+  // data: { mySlot, entries, criteria, event, isOwner, earnings:{ pot, zaps, yourMin, totalMin }, defaults }
+  function open(data = {}) {
+    mySlot = data.mySlot || null;
+    criteria = data.criteria || 'money';
+    event = data.event || mySlot || null;
+    isOwner = !!data.isOwner;
+    defaults = data.defaults || defaults;
+    el.pool.innerHTML = `<span class="pass">🎙 Speaker pass · active</span>`;
+    renderEarnings(data.earnings || {});
     renderSlot();
     renderCancel(false);
+    renderEdit();
+    renderPrices();
     renderCriteria();
-    renderQueue(entries);
+    renderQueue(data.entries || []);
     el.root.hidden = false;
+  }
+
+  // The "speaking here pays" surface: this event's pot + your direct zaps + your share basis.
+  function renderEarnings({ pot = 0, zaps = 0, yourMin = 0, totalMin = 0 } = {}) {
+    const nSpk = event?.speakers?.length || 1;
+    el.earn.innerHTML =
+      `<div class="earn-row"><span class="earn-lbl">This event's speaker pot</span><span class="earn-big">⚡ ${fmt(pot)}</span></div>`
+      + `<div class="earn-row"><span class="earn-lbl">Direct zaps to you</span><span class="earn-big">⚡ ${fmt(zaps)}</span></div>`
+      + `<div class="earn-sub">Pot split by stage time at payout — you: <b>${yourMin}</b> of ${totalMin} min${nSpk > 1 ? ` (equal split across ${nSpk} speakers)` : ''}.</div>`;
+  }
+
+  // Edit title + description — organizer only (co-speakers read-only v1).
+  function renderEdit() {
+    el.edit.innerHTML = '';
+    if (!event) return;
+    if (!isOwner) {
+      if (event.description) { const d = document.createElement('div'); d.className = 'hub-note'; d.textContent = event.description; el.edit.appendChild(d); }
+      return;
+    }
+    const sec = document.createElement('div'); sec.className = 'pm-section'; sec.textContent = 'My event · edit'; el.edit.appendChild(sec);
+    const title = document.createElement('input'); title.type = 'text'; title.maxLength = 60; title.placeholder = 'Talk title'; title.value = event.title || '';
+    const desc = document.createElement('textarea'); desc.maxLength = 280; desc.placeholder = 'Description (up to 280 chars)'; desc.value = event.description || '';
+    const save = btn('Save title + description', 'ctl', () => onEditEvent && onEditEvent({ title: title.value.trim(), description: desc.value.trim() }));
+    el.edit.append(title, desc, save);
+  }
+
+  // Per-event ticket prices — organizer only. Prefilled with the event's prices or the global
+  // defaults; constraints (min/max, ordering) enforced in the service on save.
+  function renderPrices() {
+    el.prices.innerHTML = '';
+    if (!event || !isOwner) return;
+    const sec = document.createElement('div'); sec.className = 'pm-section'; sec.textContent = 'Ticket prices · this event'; el.prices.appendChild(sec);
+    const cur = event.prices || defaults;
+    const inputs = {};
+    for (const [tier, label] of [['basic', 'Basic'], ['supporter', 'Supporter'], ['patron', 'Patron']]) {
+      const row = document.createElement('div'); row.className = 'price-row';
+      const lab = document.createElement('label'); lab.textContent = label;
+      const inp = document.createElement('input'); inp.type = 'number'; inp.min = 500; inp.max = 210000; inp.step = 100; inp.value = cur[tier];
+      inputs[tier] = inp; row.append(lab, inp); el.prices.appendChild(row);
+    }
+    const custom = !!event.prices;
+    const note = document.createElement('div'); note.className = 'hub-note';
+    note.textContent = custom ? 'Custom prices set — buyers see "prices set by the organizer".' : 'Using the venue defaults (2,100 / 10,000 / 21,000).';
+    el.prices.appendChild(note);
+    el.prices.append(
+      btn('Save prices', 'ctl', () => onSetPrices && onSetPrices({ basic: +inputs.basic.value, supporter: +inputs.supporter.value, patron: +inputs.patron.value })),
+      btn('Reset to defaults', 'ctl', () => onSetPrices && onSetPrices(null)),
+    );
   }
   function close() { el.root.hidden = true; }
   // Live-update the ordering toggle + list while open (queue.onChange).

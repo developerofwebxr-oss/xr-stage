@@ -15,6 +15,7 @@ export function createBookingUI({ toast, onBook } = {}) {
     list: $('booking-slots'),
     confirm: $('booking-confirm'),
     title: $('booking-title'),
+    desc: $('booking-desc'),
     len: $('booking-len'),
     book: $('booking-book'),
     close: $('booking-close'),
@@ -51,6 +52,7 @@ export function createBookingUI({ toast, onBook } = {}) {
     setLen(1);
     el.confirm.hidden = false;
     el.title.value = '';
+    if (el.desc) el.desc.value = '';
     el.title.focus();
     updateBookLabel();
   }
@@ -71,7 +73,7 @@ export function createBookingUI({ toast, onBook } = {}) {
   el.len.addEventListener('click', (e) => { const b = e.target.closest('.len-btn'); if (b) setLen(Number(b.dataset.slots)); });
   el.book.addEventListener('click', () => {
     if (!selected) return toast && toast('Pick a free slot first');
-    onBook && onBook(selected, el.title.value.trim(), lenSlots);
+    onBook && onBook(selected, el.title.value.trim(), lenSlots, el.desc ? el.desc.value.trim() : '');
   });
 
   return { open, render, close, isOpen: () => !el.root.hidden };

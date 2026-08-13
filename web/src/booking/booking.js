@@ -28,6 +28,8 @@ const PENDING_MS = 1000;            // mock external-payment settle
 const TITLE_MAX = 60;
 const MAX_EVENT_SLOTS = 3;          // book up to 3 consecutive slots as ONE event (minimal grouping)
 const MAX_SPEAKERS = 5;             // panels cap at 5 speakers per event (4.5)
+const DESC_MAX = 280;              // event description length (4.7)
+const PRICE_MIN = 500, PRICE_MAX = 210000; // per-event tier price bounds (4.7)
 const priceFor = (durationMin) => Math.round((durationMin / 10) * SLOT_PRICE_PER_10MIN);
 
 // ── Mock clock ────────────────────────────────────────────────────────────────────────
@@ -48,15 +50,16 @@ const _subs = new Set();
 const emit = () => { for (const cb of _subs) cb(); };
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function makeEvent({ title, ownerPubkey, slotList }) {
+function makeEvent({ title, description, ownerPubkey, slotList }) {
   const id = `e${++_eventSeq}`;
   const last = slotList[slotList.length - 1];
   const ev = {
-    id, title, ownerPubkey,
+    id, title, description: String(description || '').slice(0, DESC_MAX), ownerPubkey,
     startsAt: slotList[0].startsAt,
     endsAt: last.startsAt + last.durationMin * 60_000,
     speakers: [ownerPubkey],           // SEAM: co-speakers append here later (owner-only now)
     slotIds: slotList.map((s) => s.id),
+    prices: null,                      // null = global default tier prices; organizer may override (4.7)
   };
   _events.set(id, ev);
   for (const s of slotList) s.eventId = id;
@@ -81,7 +84,8 @@ const spk = (i) => identity.pubkeyFromSeed(`speaker-${i}`);
   }
 })();
 
-const copy = (e) => (e ? { ...e, speakers: [...e.speakers], slotIds: [...e.slotIds] } : null);
+const copy = (e) => (e ? { ...e, speakers: [...e.speakers], slotIds: [...e.slotIds], prices: e.prices ? { ...e.prices } : null } : null);
+export const EVENT_LIMITS = { DESC_MAX, PRICE_MIN, PRICE_MAX };
 
 export const booking = {
   SLOT_PRICE_PER_10MIN, SLOT_MIN, TITLE_MAX, MAX_EVENT_SLOTS, priceFor, now,
@@ -102,7 +106,7 @@ export const booking = {
     });
   },
 
-  async book({ slotId, slots = 1, title } = {}) {
+  async book({ slotId, slots = 1, title, description } = {}) {
     const me = identity.current();
     if (!me) return { state: 'failed', reason: 'not signed in' }; // sign-in only — no attendee ticket
     const start = _slots.findIndex((s) => s.id === slotId);
@@ -114,7 +118,7 @@ export const booking = {
 
     await delay(PENDING_MS); // mock external ENTRY PAYMENT (stage rent), not from credits
     if (chosen.some((s) => s.eventId)) return { state: 'failed', reason: 'slot taken' };
-    const ev = makeEvent({ title: String(title || '').slice(0, TITLE_MAX) || 'Untitled talk', ownerPubkey: me.pubkey, slotList: chosen });
+    const ev = makeEvent({ title: String(title || '').slice(0, TITLE_MAX) || 'Untitled talk', description, ownerPubkey: me.pubkey, slotList: chosen });
     const rent = chosen.reduce((a, s) => a + s.price, 0);
     tickets.recordVenue(rent);            // 100% to the venue (stage rent) — never a speaker pot
     tickets.grantSpeakerPass(ev.id);      // booking IS the speaker's ticket — scoped to THIS event
@@ -122,7 +126,36 @@ export const booking = {
     return { state: 'confirmed', price: rent, eventId: ev.id, event: copy(ev) };
   },
 
-  MAX_SPEAKERS,
+  MAX_SPEAKERS, DESC_MAX, PRICE_MIN, PRICE_MAX,
+  // Edit an event's title/description (4.7) — organizer-driven (owner check is at the call site);
+  // idempotent, only the provided fields change. Peers converge via a broadcast that re-calls this.
+  editEvent(eventId, { title, description } = {}) {
+    const ev = _events.get(eventId);
+    if (!ev) return false;
+    if (typeof title === 'string' && title.trim()) ev.title = title.trim().slice(0, TITLE_MAX);
+    if (typeof description === 'string') ev.description = description.slice(0, DESC_MAX);
+    emit();
+    return true;
+  },
+  // Set per-event tier prices (4.7). null → reset to global defaults. Clamped to [PRICE_MIN,
+  // PRICE_MAX] and coerced to sane ordering (basic ≤ supporter ≤ patron). Percentages stay global.
+  setPrices(eventId, prices) {
+    const ev = _events.get(eventId);
+    if (!ev) return false;
+    if (!prices) { ev.prices = null; emit(); return true; }
+    const clampP = (v, def) => Math.min(PRICE_MAX, Math.max(PRICE_MIN, Math.round(Number(v) || def)));
+    const basic = clampP(prices.basic, tickets.TIERS.basic.price);
+    const supporter = Math.max(basic, clampP(prices.supporter, tickets.TIERS.supporter.price));
+    const patron = Math.max(supporter, clampP(prices.patron, tickets.TIERS.patron.price));
+    ev.prices = { basic, supporter, patron };
+    emit();
+    return true;
+  },
+  // The price of a tier for an event (organizer override, else the global default).
+  priceFor(eventId, tierName) {
+    const ev = _events.get(eventId);
+    return (ev && ev.prices && ev.prices[tierName]) || tickets.TIERS[tierName]?.price || 0;
+  },
   // Add a co-speaker to an event (panels, 4.5) — organizer-driven, capped at MAX_SPEAKERS.
   // Deduped + idempotent; peers converge via a broadcast that re-calls this on each client.
   addSpeaker(eventId, pubkey) {

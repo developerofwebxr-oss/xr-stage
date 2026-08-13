@@ -493,11 +493,29 @@
       .slot-price { color: var(--ink-dim); font-family: var(--font-mono); font-size: 12px; flex: 0 0 auto; }
       .slot-status { margin-left: auto; font-size: 12px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .slot-row.mine .slot-status { color: var(--orange-bright); }
-      #booking-confirm { display: flex; gap: 8px; margin-top: 4px; }
+      #booking-confirm { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
       #booking-title { flex: 1; background: var(--fill); border: 1px solid var(--hairline); border-radius: var(--r-sm); color: var(--ink); padding: 8px 10px; font-size: 14px; }
+      #booking-desc { width: 100%; box-sizing: border-box; resize: vertical; min-height: 46px; background: var(--fill); border: 1px solid var(--hairline); border-radius: var(--r-sm); color: var(--ink); padding: 8px 10px; font-size: 13px; font-family: system-ui, sans-serif; }
       #hub-slot { font-family: var(--font-mono); font-size: 13px; color: var(--ink); }
       .hub-slot-time { color: var(--orange); font-weight: 600; }
       .hub-slot-title { color: var(--ink-dim); margin-top: 2px; }
+      /* Earnings card — the "speaking here pays" surface (4.7). */
+      .hub-earn { margin: 4px 0 2px; padding: 12px 14px; border: 1px solid rgba(247,147,26,0.4); border-radius: var(--r-md); background: rgba(247,147,26,0.07); }
+      .hub-earn .earn-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-family: var(--font-mono); }
+      .hub-earn .earn-big { font-size: 22px; font-weight: 700; color: var(--orange); }
+      .hub-earn .earn-lbl { font-size: 12px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+      .hub-earn .earn-sub { margin-top: 6px; font-size: 12px; color: var(--ink-dim); }
+      /* Edit event + per-event prices (organizer). */
+      #hub-edit, #hub-prices { display: flex; flex-direction: column; gap: 7px; }
+      #hub-edit input, #hub-edit textarea, #hub-prices input {
+        width: 100%; box-sizing: border-box; background: rgba(0,0,0,0.3); border: 1px solid var(--hairline);
+        border-radius: 8px; color: var(--ink); font-family: var(--font-mono); font-size: 13px; padding: 8px 10px; pointer-events: auto;
+      }
+      #hub-edit textarea { resize: vertical; min-height: 52px; font-family: system-ui, sans-serif; }
+      .price-row { display: flex; align-items: center; gap: 8px; }
+      .price-row label { flex: 0 0 82px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-dim); }
+      .price-row input { flex: 1; }
+      .hub-note { font-size: 11px; color: var(--ink-faint); }
       /* Cancel booking (inline confirm). */
       #hub-cancel { display: flex; gap: 8px; }
       #hub-cancel .ctl { flex: 1; }
@@ -861,6 +879,7 @@
           <div id="booking-slots"></div>
           <div id="booking-confirm" hidden>
             <input type="text" id="booking-title" maxlength="60" placeholder="Event title" />
+            <textarea id="booking-desc" maxlength="280" placeholder="Description (optional, up to 280 chars)"></textarea>
             <div id="booking-len" class="booking-len">Length
               <button class="len-btn active" data-slots="1">10 min</button>
               <button class="len-btn" data-slots="2">20 min</button>
@@ -877,9 +896,12 @@
           <button class="pc-close" id="hub-close" aria-label="Close">✕</button>
           <div class="pm-title">Speaker hub</div>
           <div id="hub-pool" class="stage-pool"></div>
+          <div id="hub-earnings" class="hub-earn"></div>
           <div class="pm-section">My slot</div>
           <div id="hub-slot"></div>
           <div id="hub-cancel"></div>
+          <div id="hub-edit"></div>
+          <div id="hub-prices"></div>
           <div class="pm-section">Panel · speakers</div>
           <button class="ctl" id="hub-add-cospeaker">➕ Add co-speaker</button>
           <div class="pm-section">Mic queue · ordering</div>

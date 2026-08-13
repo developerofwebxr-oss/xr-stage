@@ -26,28 +26,33 @@ export function createTicketUI({ toast, tiers, split, currentTier, getBalance, o
     aConfirm: $('access-confirm'), aCancel: $('access-cancel'), aClose: $('access-close'),
   };
   let busy = false, pendingAccess = null;
+  let prices = null, custom = false;   // per-event price overrides (4.7) + whether they differ from defaults
 
   // ── Tier chooser ────────────────────────────────────────────────────────────────
-  // `eventTitle` scopes the chooser to the event the ticket is for (shown in the header).
-  function openChooser({ eventTitle } = {}) {
-    el.event.textContent = eventTitle ? `🎟 Tickets for: ${eventTitle}` : "You're a ghost — a ticket embodies you + adds credits.";
+  // `eventTitle` scopes the chooser to the event; `prices` = the event's tier table (organizer
+  // override), `custom` = it differs from the venue defaults → shown as an honesty note.
+  function openChooser({ eventTitle, prices: pr = null, custom: cus = false } = {}) {
+    prices = pr; custom = cus;
+    const head = eventTitle ? `🎟 Tickets for: ${eventTitle}` : "You're a ghost — a ticket embodies you + adds credits.";
+    el.event.innerHTML = head + (custom ? '<span class="sub" style="display:block;color:var(--ink-dim);font-size:12px">Prices set by the organizer.</span>' : '');
     render(); el.menu.hidden = false;
   }
   function closeChooser() { el.menu.hidden = true; }
+  const priceOf = (id) => (prices && prices[id]) || tiers[id].price;
 
   function render() {
     const cur = currentTier();
     el.tiersBox.innerHTML = '';
     for (const id of ORDER) {
       const t = tiers[id];
-      const s = split(id); // { price, venue, speakers, credits } — the transparent split
+      const s = split(id, priceOf(id)); // { price, venue, speakers, credits } from the EVENT's price
       const card = document.createElement('div');
       card.className = `tier ${id}`;
       const perks = PERKS[id].map((p) => `<li>${p}</li>`).join('');
       const isCurrent = cur === id;
       card.innerHTML =
         `<div class="tier-head"><span class="tier-name">${t.label}</span>` +
-        `<span class="tier-price">${fmt(t.price)} sats</span></div>` +
+        `<span class="tier-price">${fmt(priceOf(id))} sats</span></div>` +
         `<div class="tier-credits">→ <b>${fmt(s.credits)} credits</b> · <span class="fee">⚡${fmt(s.venue)} venue</span> · <span class="spk">⚡${fmt(s.speakers)} to speakers</span></div>` +
         `<ul class="tier-perks">${perks}</ul>` +
         `<button class="ctl ${id === 'ghost' ? '' : 'primary'}" data-tier="${id}" ${isCurrent ? 'disabled' : ''}>${isCurrent ? 'Current plan' : `Get ${t.label} ⚡`}</button>`;

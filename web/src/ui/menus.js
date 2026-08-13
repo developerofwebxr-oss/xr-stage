@@ -132,9 +132,12 @@ export function createMenus({
     if (!events.length) { el.stageSched.innerHTML = '<div class="muted">No events booked yet.</div>'; return; }
     el.stageSched.innerHTML = events.map((e) => {
       const live = e.id === currentId;
+      const desc = e.description ? String(e.description).slice(0, 90) + (e.description.length > 90 ? '…' : '') : '';
       return `<div class="sched-row${live ? ' live' : ''}">`
         + `<b>${esc(e.time)}</b>${live ? ' <span class="live-tag">● live</span>' : ''} · `
-        + `${esc(e.title)} <span class="muted">— ${esc(e.organizer)}</span></div>`;
+        + `${esc(e.title)} <span class="muted">— ${esc(e.organizer)}</span>`
+        + (desc ? `<div class="sched-desc muted" style="font-size:11px;margin-top:2px">${esc(desc)}</div>` : '')
+        + `</div>`;
     }).join('');
   }
 

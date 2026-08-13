@@ -62,12 +62,16 @@ export const TIERS = {
 
 // The transparent split for a tier: venue fee + speaker share + credits (remainder = price − the
 // two shares, so it always reconciles exactly). → { price, venue, speakers, credits }.
-export function splitFor(tierName) {
+// `price` overrides the tier default when an organizer has set a per-event price (4.7); the
+// PERCENTAGES stay global (flat 10% venue · progressive 10/20/30 speaker).
+export function splitFor(tierName, price) {
   const t = TIERS[tierName];
-  if (!t || !t.price) return { price: 0, venue: 0, speakers: 0, credits: 0 };
-  const venue = Math.round(t.price * VENUE_FEE);
-  const speakers = Math.round(t.price * (SPEAKER_SHARE[tierName] || 0));
-  return { price: t.price, venue, speakers, credits: t.price - venue - speakers };
+  if (!t) return { price: 0, venue: 0, speakers: 0, credits: 0 };
+  const p = Number(price) > 0 ? Number(price) : t.price;
+  if (!p) return { price: 0, venue: 0, speakers: 0, credits: 0 };
+  const venue = Math.round(p * VENUE_FEE);
+  const speakers = Math.round(p * (SPEAKER_SHARE[tierName] || 0));
+  return { price: p, venue, speakers, credits: p - venue - speakers };
 }
 
 // Micro-purchase catalogue (credits → venue). Only these kinds are RECOGNISED; a kind maps to
@@ -213,14 +217,14 @@ export const tickets = {
 
   // Buy a ticket FOR AN EVENT. ENTRY PAYMENT (mock external — not from credits); on confirmed,
   // set the tier + eventId, credit the wallet, and accrue the speaker share to THAT event's pot.
-  async buy(tierName, eventId) {
+  async buy(tierName, eventId, price) {
     if (!activePubkey) return { state: 'failed', reason: 'not signed in' };
     const t = TIERS[tierName];
     if (!t || tierName === 'ghost') return { state: 'failed', reason: 'unknown tier' };
     if (!eventId) return { state: 'failed', reason: 'no event' };
 
     const id = `ticket-${++seq}`;
-    const sp = splitFor(tierName);
+    const sp = splitFor(tierName, price);   // charge the event's price (organizer-set) when given
     emit();
     await delay(PENDING_MS);
     _tier = tierName;
