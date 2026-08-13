@@ -86,6 +86,7 @@ export function createLocomotion(camera, domElement, {
   // jump is purely vertical.
   let jumpQueued = false, airborne = false, jumpHeight = 0, vy = 0;
   let spaceHeld = false;
+  let _reassert = 0; // frames to re-assert the flat camera reset after an immersive exit (4.3)
 
   // Fly (ENABLE_FLY only): "fly where you look" — a single toggle, no separate up/down
   // controls (look up + move = ascend). Off → behaves exactly as the grounded path.
@@ -257,6 +258,14 @@ export function createLocomotion(camera, domElement, {
     if (immersive) {
       readVRSticks(dt, renderer);
     } else {
+      // Just exited immersive: re-assert the full flat camera reset for a few frames so any
+      // XR matrix Three writes on the teardown frames can't leave a residual roll/offset.
+      if (_reassert > 0) {
+        _reassert--;
+        camera.matrixAutoUpdate = true;
+        camera.position.set(0, 1.6, 0);
+        camera.rotation.set(pitch, 0, 0);   // pitch only — zero yaw + ROLL
+      }
       // Gyro look low-passes toward its target; drag/pointer-lock already wrote
       // yaw/pitch directly in their handlers. One set of vars → rig + camera.
       if (lookMode() === 'gyro' && gyroActive) {
@@ -357,6 +366,18 @@ export function createLocomotion(camera, domElement, {
       const x = gp.axes?.[2] ?? 0;
       const y = gp.axes?.[3] ?? 0;
 
+      // ── ?vrdebug readout (4.3 re-fix) — report EXACTLY what the Quest sends per press-edge:
+      // hand, button index, and the raw axes (so the real stick range + face-button indices are
+      // visible via chrome://inspect). Off unless config.vrDebug. Remove once confirmed on device.
+      if (config.vrDebug) {
+        if (!hand || hand === 'none') console.warn('[vrbtn] handedness=none — cannot tell A/X or B/Y apart');
+        for (let i = 0; i < b.length; i++) {
+          if (vrEdge(`dbg:${hand}:${i}`, !!b[i]?.pressed)) {
+            console.log(`[vrbtn] hand=${hand} index=${i} pressed · axes=[${(gp.axes || []).map((a) => a.toFixed(2)).join(', ')}]`);
+          }
+        }
+      }
+
       // Grip = grab on either hand (parity: grip / E-hold·right-click).
       if (vrEdge(hand + ':grip', !!b[BTN.GRIP]?.pressed)) onGrab();
 
@@ -407,11 +428,18 @@ export function createLocomotion(camera, domElement, {
   // unreset, the residual head roll returns as a TILTED view and the head offset as a
   // POSITION shift — every exit. Re-initialise the flat camera state fully here.
   function resetFlatView() {
+    camera.matrixAutoUpdate = true;      // XR may have driven the matrix directly — re-enable auto
+    camera.up.set(0, 1, 0);              // and a clean up vector (roll lives here if XR baked it)
     camera.position.set(0, 1.6, 0);      // flat eye height, centred on the rig
-    camera.rotation.set(pitch, 0, 0);    // pitch only — zero the residual yaw + ROLL
+    camera.quaternion.identity();        // wipe the head orientation…
+    camera.rotation.set(pitch, 0, 0);    // …then re-apply flat PITCH only — zero yaw + ROLL
+    camera.updateMatrix();
+    camera.updateMatrixWorld(true);
     camera.updateProjectionMatrix();     // XR may have overwritten the mono projection
+    rig.matrixAutoUpdate = true;
     rig.rotation.set(0, yaw, 0);         // rig owns yaw; clear any stray roll/pitch on it
     rig.updateMatrixWorld(true);
+    _reassert = 6;                       // re-assert over the next few flat frames (see update)
   }
 
   // jump() queues a hop from any input source (the optional mobile button calls it).

@@ -44,6 +44,11 @@ export const config = {
   // Overridable for testing with ?fly=1.
   enableFly: params.get('fly') === '1',
 
+  // ?vrdebug=1 — on-device controller readout (4.3 re-fix): logs `hand=… index=… axes=…` for
+  // every button press-edge so the owner can report EXACTLY what the Quest sends. Off by default
+  // (a diagnostic; remove the gated block once the button matrix is confirmed on hardware).
+  vrDebug: params.get('vrdebug') === '1',
+
   // ── Zone audio (Prompt 4.4) ─────────────────────────────────────────────────────
   // Proximity voice inside the social zones. Falloff: per-participant gain fades from 1
   // at the source to 0 by ZONE_FALLOFF_M metres (smoothstep). ZONE_HEARS_STAGE keeps the

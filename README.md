@@ -134,6 +134,39 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Headset input re-fix — button matrix · sprint · exit-tilt (4.3 re-issue, vs current main)** — no
+new deps; immersive-only, one binding table, one locomotion path.
+- **Root cause found (buttons).** There is exactly **one** gamepad reader on main — `readVRSticks`
+  in `xr/locomotion.js` — and it already implements the standard map: controllers keyed by
+  **`inputSource.handedness`** (never index/connection order), face buttons at **`buttons[4]` (A
+  right / X left)** and **`buttons[5]` (B right / Y left)**, sticks on **`axes[2]/[3]`**, all on
+  **press-edge** (`vrEdge`). Target map is live: **A(right[4])=jump · X(left[4])=menu ·
+  B(right[5])=mic · Y(left[5])=quick-zap**. There is **no legacy path** to kill. Crucially, **no
+  handedness/index permutation of this code can produce "Y=jump"** — that is the *pre-standard*
+  binding, so the owner's device evidence is from a **build predating the standard bindings** (they
+  landed after the bug was seen). The fix on main is therefore: confirm + harden the one table, not
+  re-map it.
+- **On-device readout shipped (`?vrdebug=1`).** So the actual Quest mapping is verifiable on
+  hardware, `readVRSticks` now logs — per **press-edge** — `hand=… index=… pressed · axes=[…]`
+  (visible via `chrome://inspect`), and **warns on `handedness=none`** (the one condition that would
+  genuinely break A/X vs B/Y). **Off by default** (a diagnostic to remove once confirmed).
+- **Sprint.** Axes confirmed `[2]/[3]`; `SPRINT_EDGE = 0.85` (already **below** the ~0.93 the brief
+  suggested → reachable) with a `WALK_PLATEAU = 0.6` walk band; one shared `analogSpeed()` for the
+  VR stick + mobile joystick, desktop Shift-sprint intact. The readout logs the **real stick range**
+  — if full push maxes below 0.85 there, sprint is an axes/read issue (same root as the buttons),
+  not the threshold.
+- **Exit-to-flat tilt — bulletproofed.** Both exit routes (in-app "Exit to screen" + the platform
+  system-quit) funnel through `session 'end'` → `onModeChange('flat')` → `resetFlatView()`. That now
+  **re-enables `camera.matrixAutoUpdate`**, resets `up`, **wipes the head quaternion** then re-applies
+  flat **pitch only** (zero yaw + ROLL), forces `updateMatrix`/`updateMatrixWorld`/`updateProjection
+  Matrix`, and zeroes stray rig roll/pitch — then **re-asserts the reset for 6 flat frames** so any
+  XR matrix Three writes on the teardown frames can't leave a residual roll/offset. Yaw comes from
+  the rig, pitch from the flat var, so the first drag doesn't snap.
+- **Guardrails.** One binding table, one locomotion path; no service/UI changes. Clean build, no
+  console errors. **Device items (owner-tested):** the live A/X/B/Y matrix + the `?vrdebug` readings,
+  full-push sprint, and enter→exit ×3 from VR and AR staying level. Skill fold-in (handedness/index
+  rules + the sessionend-restore) lands **after on-device confirmation**.
+
 **🦩 Nostrich Park — farm + roller coaster (4.10)** — a new paid zone with the coaster as its
 first ride. No new npm deps (three's bundled GLTF/DRACO decoders, copied to `public/draco`).
 - **Assets.** Owner GLBs copied to `web/public` (served at `/*.glb`). They're **DRACO-compressed**,
