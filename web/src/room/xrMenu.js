@@ -147,6 +147,8 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
       actions.topUp(); notice = `Topped up · balance ⚡ ${fmt(state.balance())}`; return render();
     }
     if (id === 'requests') { page = 'requests'; notice = ''; return render(); }
+    if (id === 'emotes') { page = 'emotes'; notice = ''; return render(); }
+    if (id.startsWith('emote:')) { actions.emote(id.slice(6)); return closeMenu(); } // play + close so the burst shows
     if (id.startsWith('zap-spk:')) { actions.zapPickedSpeaker(id.slice(8)); notice = '⚡ Zapped'; page = 'main'; return render(); }
     if (id.startsWith('req-accept:')) { actions.acceptTalk(id.slice(11)); notice = 'Talk link opened'; page = 'main'; return render(); }
     if (id.startsWith('req-decline:')) { actions.declineTalk(id.slice(12)); return render(); }
@@ -204,6 +206,7 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
     else if (page === 'keypad') renderKeypad();
     else if (page === 'requests') renderRequests();
     else if (page === 'speakers') renderSpeakers();
+    else if (page === 'emotes') renderEmotes();
 
     if (notice) {
       g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -253,12 +256,26 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
     keys.forEach((k, i) => toggle(`comfort:${k}`, PAD + i * (cw + 12), y, cw, 56, COMFORT_LABEL[k] || k, !!cm[k], true));
     y += 74;
 
-    // Zap the speaker
-    button('zap', PAD, y, full, 66, 'Zap the speaker ⚡ 21', { accent: true }); y += 78;
+    // Zap the speaker + Emotes (two half-width)
+    const halfz = (full - 16) / 2;
+    button('zap', PAD, y, halfz, 66, 'Zap speaker ⚡', { accent: true });
+    button('emotes', PAD + halfz + 16, y, halfz, 66, '😀 Emotes'); y += 78;
 
     // Talk requests (Networking) — only when someone has asked to talk
     const reqs = state.talkRequests ? state.talkRequests() : [];
     if (reqs.length) button('requests', PAD, y, full, 58, '🤝 Talk requests', { right: `${reqs.length} ›`, accent: true });
+  }
+
+  function renderEmotes() {
+    title('EMOTES', 'tap to express');
+    button('back', PAD, 28, 150, 52, '‹ Back');
+    const es = state.emotes ? state.emotes() : [];
+    const cols = 2, gap = 16, bw = (CW - 2 * PAD - (cols - 1) * gap) / cols, bh = 110;
+    const LABEL = { wave: 'Wave', clap: 'Clap', thumbsup: 'Thumbs up', point: 'Point' };
+    es.forEach((e, i) => {
+      const c = i % cols, r = (i - c) / cols;
+      button(`emote:${e.kind}`, PAD + c * (bw + gap), 150 + r * (bh + gap), bw, bh, `${e.emoji} ${LABEL[e.kind] || e.kind}`, { big: false });
+    });
   }
 
   function renderSpeakers() {

@@ -109,11 +109,59 @@ function makeCapsule(color, { withHead = true } = {}) {
     }),
   );
   body.position.y = 0.73; // capsule centre so its feet sit on y=0
+  body.name = 'body';     // emote animations target this mesh (not the group → no fight with position/yaw lerp)
   group.add(body);
 
   if (withHead) group.add(makeHead());
 
   return group;
+}
+
+// ── Tracked hands (4.8) ──────────────────────────────────────────────────────────
+// Cheap mitts mirrored at the controllers' poses — no finger articulation v1. Shared
+// geometry; one material per body colour (both hands share it). Encoding: two transforms
+// (position 3 + quaternion 4) each, RELATIVE TO THE BODY ROOT → 14 floats on the heartbeat.
+const _handGeo = new THREE.CapsuleGeometry(0.05, 0.07, 4, 8);
+export function makeHand(colorHex) {
+  return new THREE.Mesh(_handGeo, new THREE.MeshStandardMaterial({
+    color: colorHex, emissive: colorHex, emissiveIntensity: BODY_EMISSIVE_INTENSITY, roughness: 0.7, metalness: 0.05,
+  }));
+}
+
+// ── Emotes (4.8) — short procedural transforms in the avatar's abstract language ──
+// Each animates the BODY mesh (+ head bob) over ~1.7s with a smooth in/out envelope, then
+// resets. NO skeletons. Hands (if the avatar has broadcast ones) already move for real, so
+// emotes don't touch them. The floating emoji burst is spawned separately (zapEffect).
+export const EMOTES = {
+  wave:     { emoji: '👋', dur: 1.8 },
+  clap:     { emoji: '👏', dur: 1.6 },
+  thumbsup: { emoji: '👍', dur: 1.6 },
+  point:    { emoji: '⚡', dur: 1.7 },
+};
+export function playEmote(group, kind) {
+  if (!group || !EMOTES[kind]) return;
+  group.userData.emote = { kind, t: 0, dur: EMOTES[kind].dur };
+}
+export function tickEmote(group, dt) {
+  const e = group.userData.emote;
+  if (!e) return;
+  const body = group.getObjectByName('body');
+  const head = group.getObjectByName('faceMount')?.parent || null;
+  e.t += dt;
+  const k = Math.min(1, e.t / e.dur);
+  const env = Math.sin(Math.PI * k);          // 0 → 1 → 0 envelope (no snap in/out)
+  if (body) {
+    if (e.kind === 'wave')     { body.rotation.z = Math.sin(e.t * 13) * 0.20 * env; }
+    else if (e.kind === 'clap'){ const c = Math.abs(Math.sin(e.t * 15)) * env; body.position.y = 0.73 - c * 0.05; body.scale.set(1 + c * 0.06, 1 - c * 0.05, 1 + c * 0.06); }
+    else if (e.kind === 'thumbsup') { body.position.y = 0.73 + Math.sin(e.t * 6) * 0.12 * env; }
+    else if (e.kind === 'point'){ body.rotation.x = -0.28 * env; body.position.z = -0.12 * env; }
+  }
+  if (head) head.position.y = HEAD_Y + (e.kind === 'thumbsup' ? 0.06 : 0.03) * env * Math.sin(e.t * 5);
+  if (k >= 1) {                                // done → reset cleanly
+    if (body) { body.rotation.set(0, 0, 0); body.position.set(0, 0.73, 0); body.scale.set(1, 1, 1); }
+    if (head) head.position.y = HEAD_Y;
+    group.userData.emote = null;
+  }
 }
 
 // ── Smoking-zone cigarette prop (Prompt 4.4) ─────────────────────────────────────
@@ -313,20 +361,22 @@ export class AvatarPool {
     this.onSpawn = onSpawn || null; // (id, group) when a remote avatar first appears
   }
 
-  // Create-or-update a remote avatar's target position + yaw from a presence sample.
-  upsert(id, position, yaw = 0) {
+  // Create-or-update a remote avatar's target position + yaw (+ optional hand transforms).
+  upsert(id, position, yaw = 0, hands = null) {
     let entry = this.byId.get(id);
     const isNew = !entry;
     if (isNew) {
       // Derive a stable hue from the id so each peer keeps a consistent colour.
       const hue = [...id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
-      const group = makeCapsule(new THREE.Color().setHSL(hue / 360, 0.6, 0.6).getHex());
+      const hex = new THREE.Color().setHSL(hue / 360, 0.6, 0.6).getHex();
+      const group = makeCapsule(hex);
       this.scene.add(group);
-      entry = { group, target: new THREE.Vector3(), targetYaw: yaw };
+      entry = { group, hex, target: new THREE.Vector3(), targetYaw: yaw, hands: null, handTargets: null };
       this.byId.set(id, entry);
     }
     entry.target.set(position[0], position[1], position[2]);
     entry.targetYaw = yaw;
+    this._setHands(entry, hands, isNew);
     // Snap a freshly-spawned avatar straight to its pose so it doesn't glide in
     // from the origin on its first frame, then let the caller attach its identity.
     if (isNew) {
@@ -350,15 +400,47 @@ export class AvatarPool {
     for (const id of this.byId.keys()) if (!liveIds.has(id)) this.remove(id);
   }
 
-  // Per-frame smoothing toward each target position + yaw.
+  // Attach/refresh/hide a peer's two hand proxies from a 14-float sample (or hide on null —
+  // headless/no-data peers never get default T-pose hands). Hands are children of the group,
+  // so they inherit its position + yaw; their LOCAL transform is the body-relative hand pose.
+  _setHands(entry, hands, isNew) {
+    if (hands && hands.length === 14) {
+      if (!entry.hands) {
+        entry.hands = [makeHand(entry.hex), makeHand(entry.hex)];
+        entry.handTargets = [{ p: new THREE.Vector3(), q: new THREE.Quaternion() }, { p: new THREE.Vector3(), q: new THREE.Quaternion() }];
+        for (const m of entry.hands) entry.group.add(m);
+      }
+      for (let i = 0; i < 2; i++) {
+        const o = i * 7;
+        entry.handTargets[i].p.set(hands[o], hands[o + 1], hands[o + 2]);
+        entry.handTargets[i].q.set(hands[o + 3], hands[o + 4], hands[o + 5], hands[o + 6]);
+        entry.hands[i].visible = true;
+        if (isNew) { entry.hands[i].position.copy(entry.handTargets[i].p); entry.hands[i].quaternion.copy(entry.handTargets[i].q); } // snap on first sight
+      }
+    } else if (entry.hands) {
+      for (const m of entry.hands) m.visible = false;   // flat/mobile / dropped hands → no hands
+      entry.handTargets = null;
+    }
+  }
+
+  // Per-frame smoothing toward each target position + yaw (+ hand transforms).
   update(dt) {
     const t = Math.min(1, dt * 8); // critically-ish damped lerp
-    for (const { group, target, targetYaw } of this.byId.values()) {
+    for (const entry of this.byId.values()) {
+      const { group, target, targetYaw } = entry;
       group.position.lerp(target, t);
       // Shortest-path yaw lerp (handles the ±π wraparound).
       let d = targetYaw - group.rotation.y;
       d = Math.atan2(Math.sin(d), Math.cos(d));
       group.rotation.y += d * t;
+      if (entry.hands && entry.handTargets) {
+        for (let i = 0; i < 2; i++) {
+          if (!entry.hands[i].visible) continue;
+          entry.hands[i].position.lerp(entry.handTargets[i].p, t);
+          entry.hands[i].quaternion.slerp(entry.handTargets[i].q, t);
+        }
+      }
+      tickEmote(group, dt);   // advance any active emote (no-op when idle)
     }
   }
 }

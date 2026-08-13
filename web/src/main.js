@@ -6,7 +6,7 @@ import { tickets } from './tickets/tickets.js';
 import { createTicketUI } from './ui/ticketUI.js';
 import { createEventPrompt } from './ui/eventPrompt.js';
 import { STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
-import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP, setCigarette, tickCigarette } from './room/avatars.js';
+import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP, setCigarette, tickCigarette, makeHand, playEmote, tickEmote, EMOTES } from './room/avatars.js';
 import { createZoneAudio } from './audio/zoneAudio.js';
 import { identity } from './identity/identity.js';
 import { drawKeyface } from './identity/keyface.js';
@@ -145,6 +145,7 @@ const { rig, update: updateLocomotion, setFreeLook, setMoveInput, jump, resetFla
     onGrab: () => doGrab(),           // grip / E-hold·right-click → grab (inert seam)
     onVerbB: () => toggleVoice(),     // B / B-key  → game verb: toggle mic (Listen/Speak)
     onVerbY: () => zapSelected(),     // Y / Y-key  → game verb: zap the selected avatar
+    onEmote: (kind) => doEmote(kind), // 1–4 keys   → emotes (4.8), typing-guarded in locomotion
   });
 scene.add(rig);
 
@@ -538,7 +539,7 @@ const presence = createPresence(voice, scene, () => {
   if (renderer.xr.isPresenting) {
     camera.getWorldPosition(_headWorld);
     _headEuler.setFromQuaternion(camera.getWorldQuaternion(_headQuat), 'YXZ');
-    return { x: _headWorld.x, y: rig.position.y, z: _headWorld.z, yaw: _headEuler.y, zone, seatIdx };
+    return { x: _headWorld.x, y: rig.position.y, z: _headWorld.z, yaw: _headEuler.y, zone, seatIdx, hands: localHands() };
   }
   return { x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y, zone, seatIdx };
 }, staticBodies, {
@@ -835,6 +836,13 @@ const xrControllers = []; // for the VR board-scroll (frame loop reads the right
     );
     ray.visible = false;
     controller.add(ray);
+    // Tracked-hand proxy (4.8): a mitt parented to the controller → auto-follows its pose.
+    // Shown only in immersive while embodied (toggled in updateLocalHands). Peers see it via
+    // the broadcast hand transforms; this is the local first-person view of your own hands.
+    const mitt = makeHand(who.role === 'speaker' ? 0xf7931a : 0x4cc2ff);
+    mitt.visible = false;
+    controller.add(mitt);
+    controller.userData.mitt = mitt;
     controller.addEventListener('connected', (e) => {
       ray.visible = e.data?.targetRayMode !== 'screen';
       controller.userData.handedness = e.data?.handedness;   // for the VR scroll
@@ -853,6 +861,66 @@ const xrControllers = []; // for the VR board-scroll (frame loop reads the right
       pickFromRaycaster();
     });
   }
+}
+
+// ── Tracked hands + emotes (4.8) ─────────────────────────────────────────────────
+// HAND ENCODING: each hand = position(3) + quaternion(4) RELATIVE TO THE BODY ROOT, so a peer
+// reconstructs them as children of the avatar group (which sits at the head pose). 14 floats,
+// quantised to mm/1e-3 → ~100 bytes added to the heartbeat when in immersive; absent otherwise.
+const _hp = new THREE.Vector3(), _hq = new THREE.Quaternion(), _bq = new THREE.Quaternion();
+const q3 = (n) => Math.round(n * 1000) / 1000;
+function localHands() {
+  if (!renderer.xr.isPresenting || !embodied()) return null;
+  const out = []; let any = false;
+  for (let i = 0; i < 2; i++) {
+    const c = xrControllers[i], src = c?.userData.inputSource;
+    if (c && src && src.targetRayMode !== 'screen') {
+      c.getWorldPosition(_hp); localBody.worldToLocal(_hp);          // → body-relative position
+      localBody.getWorldQuaternion(_bq).invert().multiply(c.getWorldQuaternion(_hq)); // → body-relative quat
+      out.push(q3(_hp.x), q3(_hp.y), q3(_hp.z), q3(_bq.x), q3(_bq.y), q3(_bq.z), q3(_bq.w));
+      any = true;
+    } else out.push(0, 0, 0, 0, 0, 0, 1);   // absent hand → identity (harmless; hidden peer-side if all absent)
+  }
+  return any ? out : null;
+}
+// Show/hide the local mitts each frame (immersive + embodied + a real controller pointer).
+function updateLocalHands() {
+  const on = renderer.xr.isPresenting && embodied();
+  for (const c of xrControllers) {
+    const m = c.userData.mitt; if (!m) continue;
+    const src = c.userData.inputSource;
+    m.visible = on && !!src && src.targetRayMode !== 'screen';
+  }
+}
+
+// EMOTES: procedural body animation + a floating emoji burst, played locally and on peers.
+// Gated on EMBODIMENT (ghosts have no body); rate-limited to 1/sec per participant.
+let _lastEmoteAt = -1e9;
+function doEmote(kind) {
+  if (!EMOTES[kind]) return;
+  if (!embodied()) return hud.toast('Emotes need a body — get a ticket');
+  const nowMs = performance.now();
+  if (nowMs - _lastEmoteAt < 1000) return;   // 1/sec spam guard
+  _lastEmoteAt = nowMs;
+  playEmote(localBody, kind);
+  zapFx.emote(localBody, EMOTES[kind].emoji);
+  voice.sendData({ t: 'emote', kind }, { reliable: true });
+}
+// Inbound emote → play it on the sender's avatar (+ burst). Rate-limited per sender.
+const _peerEmoteAt = new Map();
+voice.onData((id, msg) => {
+  if (!msg || msg.t !== 'emote' || !EMOTES[msg.kind]) return;
+  const nowMs = performance.now();
+  if (nowMs - (_peerEmoteAt.get(id) || -1e9) < 900) return;   // ignore spam from a peer
+  _peerEmoteAt.set(id, nowMs);
+  const g = presence.peers().find((p) => p.id === id)?.group;
+  if (!g) return;
+  playEmote(g, msg.kind);
+  zapFx.emote(g, EMOTES[msg.kind].emoji);
+});
+// Emote row (flat/mobile) → the same doEmote path as the 1–4 keys.
+for (const b of document.querySelectorAll('#emote-row .emote-btn')) {
+  b.addEventListener('click', () => doEmote(b.dataset.emote));
 }
 
 // ── Wallet + zap (Phase 3, mock) ─────────────────────────────────────────────────
@@ -1451,6 +1519,7 @@ xrMenu = createXrMenu(scene, {
     zapPickedSpeaker: (pk) => zapAvatar(pk, `@${pk.slice(0, 8)}`),
     acceptTalk: (id) => zoneAudio.acceptTalk(id),      // Networking talk-request accept (VR)
     declineTalk: (id) => zoneAudio.declineTalk(id),
+    emote: (kind) => doEmote(kind),                    // 4.8: emotes from the in-world menu
   },
   state: {
     signedIn: () => !!identity.current(),
@@ -1468,6 +1537,7 @@ xrMenu = createXrMenu(scene, {
     voiceVerb: verb,
     speakerPresent: () => !!stageSpeakerGroup(),
     talkRequests: () => zoneAudio.pendingIncoming(),   // [{ id, name }] pending Networking asks
+    emotes: () => Object.entries(EMOTES).map(([kind, e]) => ({ kind, emoji: e.emoji })), // 4.8 emote list
     zapSpeakers: () => currentEventSpeakers().map((pk) => ({ pubkey: pk, label: `@${pk.slice(0, 8)}` })), // panel picker rows
   },
 });
@@ -1637,6 +1707,8 @@ renderer.setAnimationLoop(() => {
   updateLocomotion(dt, renderer);
   followBody();               // #5: pin the local body under the head in immersive modes
   updateSeat();               // panels: hold the seated drop / stand on walk-off (before broadcast)
+  updateLocalHands();         // 4.8: show/hide local hand mitts (immersive + embodied)
+  tickEmote(localBody, dt);   // 4.8: advance the local player's own emote (peers tick via the pool)
   presence.update(dt);
   // Nudge the local rig out of the deepest overlap with any body (live or static),
   // keeping centres >= MIN_BODY_GAP (heads never intersect), then re-clamp so the

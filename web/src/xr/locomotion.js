@@ -61,7 +61,7 @@ const BTN = { TRIGGER: 0, GRIP: 1, STICK: 3, PRIMARY: 4, SECONDARY: 5 }; // A/X 
 // (B / B-key — this game: toggle mic), onVerbY (Y / Y-key — this game: zap).
 export function createLocomotion(camera, domElement, {
   spawn, constrain, onBoundary, isMobile = false, onFreeLookEnd,
-  onMenu = () => {}, onGrab = () => {}, onVerbB = () => {}, onVerbY = () => {},
+  onMenu = () => {}, onGrab = () => {}, onVerbB = () => {}, onVerbY = () => {}, onEmote = () => {},
 } = {}) {
   const start = spawn || { position: [0, 0, 4], yaw: 0 };
 
@@ -152,6 +152,10 @@ export function createLocomotion(camera, domElement, {
       case 'KeyB': onVerbB(); return;              // Game verb B (this game: toggle mic)
       case 'KeyY': onVerbY(); return;              // Game verb Y (this game: zap)
       case 'KeyM': onMenu(); return;               // Menu alias (parity: X / Esc·M / ☰)
+      case 'Digit1': onEmote('wave'); return;      // Emotes (4.8) — guarded by the editable-focus check above
+      case 'Digit2': onEmote('clap'); return;
+      case 'Digit3': onEmote('thumbsup'); return;
+      case 'Digit4': onEmote('point'); return;
       case 'Escape':
         // Esc is the PRIMARY desktop menu key — but when pointer-locked the browser
         // consumes it to release the lock (handled by pointerlockchange). Only open

@@ -129,6 +129,21 @@
         flex-wrap: wrap; justify-content: center;
         width: max-content; max-width: calc(100vw - 16px); /* one row wide; wraps when capped on narrow */
       }
+      /* Emote row (4.8) — sits just above the control bar; flat/mobile expression. */
+      #emote-row {
+        position: fixed; bottom: calc(env(safe-area-inset-bottom) + 68px); left: 50%; transform: translateX(-50%);
+        z-index: 12; display: flex; gap: 6px; padding: 5px; border-radius: 999px;
+        background: rgba(12, 14, 20, 0.7); border: 1px solid var(--hairline);
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      }
+      .emote-btn {
+        width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--hairline);
+        background: var(--fill); font-size: 19px; cursor: pointer; pointer-events: auto;
+        display: flex; align-items: center; justify-content: center; transition: background var(--t), transform var(--t);
+      }
+      .emote-btn:hover { background: var(--fill-hover); transform: translateY(-1px); }
+      .emote-btn:active { transform: scale(0.92); }
+      body.immersive #emote-row { display: none; } /* VR/AR use the in-world menu Emotes page */
       /* Powered "energy line" along the top edge — marks the live action surface. */
       #controlbar::before {
         content: ""; position: absolute; left: 16px; right: 16px; top: 0; height: 1px;
@@ -675,6 +690,14 @@
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4"/></svg>
             <b id="speaker-count">0</b></span>
         </div>
+      </div>
+
+      <!-- Emote row (4.8): quick expression, flat/mobile. Keys 1–4 do the same. -->
+      <div id="emote-row" aria-label="Emotes">
+        <button class="emote-btn" data-emote="wave" title="Wave (1)">👋</button>
+        <button class="emote-btn" data-emote="clap" title="Clap (2)">👏</button>
+        <button class="emote-btn" data-emote="thumbsup" title="Thumbs up (3)">👍</button>
+        <button class="emote-btn" data-emote="point" title="Point (4)">⚡</button>
       </div>
 
       <!-- Profile card (fixed corner; opened by clicking an avatar). -->

@@ -47,6 +47,17 @@ export function createZapEffects(scene) {
     active.push({ kind: 'avatar', sprite, group, t: 0, life: AV_LIFE });
   }
 
+  // Emote — a floating emoji that rises off the person's head + fades (like an avatar zap).
+  function emote(group, emoji) {
+    if (!group) return;
+    cull();
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: emojiTexture(emoji), transparent: true, depthWrite: false, depthTest: false }));
+    sprite.scale.set(0.55, 0.55, 1); sprite.renderOrder = 999;
+    sprite.position.set(0, AV_START_Y, 0);
+    group.add(sprite);
+    active.push({ kind: 'avatar', sprite, group, t: 0, life: 1.3 });
+  }
+
   // Comment-card boost — flung off the card into world space.
   function fling({ position, side = 'right', topY = 4.5, amount } = {}) {
     if (!position) return;
@@ -97,7 +108,20 @@ export function createZapEffects(scene) {
     }
   }
 
-  return { spawn, fling, update };
+  return { spawn, fling, emote, update };
+}
+
+// One small canvas → texture for an emoji burst (disposed on end).
+function emojiTexture(emoji) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.font = '96px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(emoji || '👋', 64, 70);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 // One small canvas → texture per burst (disposed on end). Not per-frame work.

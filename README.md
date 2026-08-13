@@ -134,6 +134,37 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Hands & gestures (4.8)** — embodiment, riding the existing presence/data channels. No new deps.
+- **A. Tracked hands.** In immersive VR/AR, two cheap **mitts** (shared capsule geometry, body
+  colour) parent to the controllers → auto-follow their pose locally. **Broadcast:** the presence
+  heartbeat gains two hand transforms — **position(3) + quaternion(4) each, relative to the body
+  root** = 14 floats quantised to 1e-3 (**+71 bytes**, 77→148, only when in immersive; flat/mobile
+  broadcast none). Peers reconstruct them as children of the avatar group (which sits at the head
+  pose) and **interpolate on the existing tick** (position lerp + quaternion slerp); no-data /
+  headless peers get **no hands** (never a T-pose default). Waving/pointing/thumbs-up emerge for
+  free from real motion — no gesture recognition. Hands render seated too (children of the group).
+  Perf: two small meshes per handed peer, shared geometry, transform-lerp only.
+- **B. Emotes** (flat/mobile/VR expression, gated on **embodiment** not tier — ghosts can't emote).
+  Four: 👋 Wave · 👏 Clap · 👍 Thumbs-up · ⚡ Point — each a ~1.6–1.8 s **procedural body transform**
+  (bob/tilt/lean in the avatar's abstract language, **no skeletons**) + a floating **emoji burst**
+  over the head (new `zapEffect.emote`, spawn/rise/fade/dispose like the zap burst). **Triggers:**
+  desktop keys **1–4** (guarded by the central editable-focus rule), a compact **emote row** above
+  the control bar (flat/mobile), and an **Emotes page** on the in-world VR menu. **Broadcast:**
+  `{t:'emote', kind}` on the data channel → peers play the same animation + burst on that avatar
+  (via the AvatarPool tick). **Rate-limited 1/sec** per participant, both send and receive.
+- **Hand-pose encoding:** `[Lx,Ly,Lz, Lqx,Lqy,Lqz,Lqw, Rx,Ry,Rz, Rqx,Rqy,Rqz,Rqw]`, body-root-
+  relative, 3-dp quantised, on the existing heartbeat (no extra channel). Emote surfaces: keys 1–4,
+  DOM emote row, in-world menu Emotes page.
+- **Guardrails.** Heartbeat stays compact (+71 bytes, immersive-only); shared geometry; no
+  skeletons/mocap; no new deps; emote keys respect the typing guard. Clean build, no console errors;
+  presence / zones / audio / panels / seating / input standard untouched beyond the additive fields.
+- **Verified (flat, one tab):** the emote row renders and its buttons + keys 1–4 route through one
+  path; the **embodiment gate holds** (as a ghost, an emote is refused with no burst); the
+  hand-transform **round-trip** is exact and the **heartbeat delta is +71 bytes**; no console
+  errors; clean build. **Needs VR / two tabs (owner-tested):** real controller-following mitts, the
+  in-world Emotes page, and the peer side — a simulated hand heartbeat growing hand proxies at the
+  right relative poses (absence → none), remote emote playback, and seated + hands together.
+
 **Speaker-hub upgrades — talk metadata + event pricing + earnings (4.7)** — organizer tooling on
 existing seams. No new deps.
 - **1. Edit title + description.** Events gained a `description` (≤280 chars). The organizer edits
