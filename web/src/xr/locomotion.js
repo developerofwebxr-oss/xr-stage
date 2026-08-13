@@ -22,7 +22,12 @@ import { config } from '../config.js';
 // → run; the keyboard, being digital, sprints with Shift.
 const WALK_SPEED = 1.4;          // metres/sec — normal pace
 const SPRINT_SPEED = 2.8;        // metres/sec — full-push / Shift
-const SPRINT_EDGE = 0.92;        // analog magnitude at/above which we sprint
+// Analog sprint threshold. A Quest thumbstick at full push rarely reports magnitude near
+// 1.0 — the runtime's radial scaling tops it out around ~0.85–0.95 — so a 0.92 bar was
+// effectively unreachable and sprint never engaged (walk scaling just maxed out under it).
+// 0.85 leaves headroom: full push sprints, everything below stays fine-grained walk.
+const SPRINT_EDGE = 0.85;        // analog magnitude at/above which we sprint
+const WALK_PLATEAU = 0.6;        // magnitude at which analog reaches full WALK_SPEED (below = fine control)
 const SMOOTH_TURN_SPEED = 2.4;   // rad/sec — default continuous right-stick turn
 const SNAP_TURN = Math.PI / 6;   // 30° per flick — opt-in comfort (comfort.snapTurn)
 const LOOK_SENSITIVITY = 0.0022; // pointer-lock radians per mouse pixel
@@ -35,6 +40,11 @@ const FLY_SPEED = 3.2;           // metres/sec while flying (ENABLE_FLY only)
 // peak, ~0.57s airtime — gentle enough for VR comfort.
 const JUMP_SPEED = 2.8;          // initial upward velocity (m/s)
 const GRAVITY = 9.8;             // downward accel while airborne (m/s²)
+
+// ONE analog speed curve for every analog input (VR left stick + mobile joystick): fine
+// control that reaches full walk by WALK_PLATEAU, then a clean step to sprint at SPRINT_EDGE.
+// Keeping this shared is what keeps the "one locomotion path" promise across realities.
+const analogSpeed = (mag) => (mag >= SPRINT_EDGE ? SPRINT_SPEED : WALK_SPEED * Math.min(1, mag / WALK_PLATEAU));
 
 // xr-standard gamepad map (queried by index; see the skill's Controller & Input
 // Standard). The hardware Menu/System buttons are NOT in this list — the platform
@@ -270,12 +280,12 @@ export function createLocomotion(camera, domElement, {
 
       if (ix !== 0 || iz !== 0) {
         const shift = keys.has('ShiftLeft') || keys.has('ShiftRight');
-        const sprinting = (kbActive && shift) || joyMag >= SPRINT_EDGE;
+        // Digital (keyboard) sprints with Shift; analog (joystick) sprints by magnitude
+        // through the shared curve — the SAME analogSpeed() the VR stick uses.
         let speed;
         if (flying) speed = FLY_SPEED;
-        else if (sprinting) speed = SPRINT_SPEED;
-        else if (joyMag > 0.01 && !kbActive) speed = WALK_SPEED * Math.min(1, joyMag / SPRINT_EDGE); // analog: fine control up to walk
-        else speed = WALK_SPEED;
+        else if (kbActive) speed = shift ? SPRINT_SPEED : WALK_SPEED;
+        else speed = analogSpeed(joyMag);
         const step = speed * dt;
 
         // "Fly where you look": when flying, forward follows the camera pitch so
@@ -351,8 +361,7 @@ export function createLocomotion(camera, domElement, {
         const mag = Math.hypot(x, y);
         if (mag > 0.15) {
           const nx = x / mag, ny = y / mag;
-          const speed = flying ? FLY_SPEED
-            : (mag >= SPRINT_EDGE ? SPRINT_SPEED : WALK_SPEED * Math.min(1, mag / SPRINT_EDGE));
+          const speed = flying ? FLY_SPEED : analogSpeed(mag); // full push (>= SPRINT_EDGE) → run
           const step = speed * dt;
           if (flying) _forward.set(0, 0, 1).applyEuler(_flyEuler.set(-headPitchOf(renderer), headYaw, 0, 'YXZ'));
           else _forward.set(0, 0, 1).applyAxisAngle(UP, headYaw);
@@ -383,6 +392,24 @@ export function createLocomotion(camera, domElement, {
     }
   }
 
+  // Restore a clean FLAT camera when an immersive session ends. BOTH exit routes — the
+  // in-app "Exit to screen" and the platform system-quit — funnel through the same
+  // sessionend → onModeChange('flat'), so main calls this once from there.
+  //
+  // Why it's needed (the sessionend lifecycle footgun): in XR, Three drives the camera's
+  // LOCAL transform from the live head pose — a position offset AND full head orientation
+  // including PITCH and ROLL. Flat mode only ever writes `rig.rotation.y = yaw` and
+  // `camera.rotation.x = pitch`; it never clears the camera's position, yaw, or ROLL. Left
+  // unreset, the residual head roll returns as a TILTED view and the head offset as a
+  // POSITION shift — every exit. Re-initialise the flat camera state fully here.
+  function resetFlatView() {
+    camera.position.set(0, 1.6, 0);      // flat eye height, centred on the rig
+    camera.rotation.set(pitch, 0, 0);    // pitch only — zero the residual yaw + ROLL
+    camera.updateProjectionMatrix();     // XR may have overwritten the mono projection
+    rig.rotation.set(0, yaw, 0);         // rig owns yaw; clear any stray roll/pitch on it
+    rig.updateMatrixWorld(true);
+  }
+
   // jump() queues a hop from any input source (the optional mobile button calls it).
   // Same guards as Space/VR apply in updateJump (single hop, all modes).
   function jump() { jumpQueued = true; }
@@ -397,7 +424,7 @@ export function createLocomotion(camera, domElement, {
     return flying;
   }
 
-  return { rig, update, setFreeLook, setMoveInput, jump, toggleFly, isFlying: () => flying };
+  return { rig, update, setFreeLook, setMoveInput, jump, toggleFly, resetFlatView, isFlying: () => flying };
 }
 
 const UP = new THREE.Vector3(0, 1, 0);

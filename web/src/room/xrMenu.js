@@ -12,7 +12,7 @@ import * as THREE from 'three';
 // a laser hit on the plane maps its local point → canvas coords → the button under it, so a
 // single mesh is the raycast target (no dozens of sub-meshes). Pages: main · tickets · keypad.
 //
-//   createXrMenu(scene, { camera, actions, state })
+//   createXrMenu(scene, { camera, renderer, actions, state })
 //     → { open, close, toggle, isOpen, targets, pressWorld, hoverAt, update, dispose }
 //
 // The panel anchors ~1.2 m in front of the camera AT OPEN, then is world-LOCKED in position
@@ -35,7 +35,7 @@ const PAD = 34;
 const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 const SANS = 'system-ui, -apple-system, sans-serif';
 
-export function createXrMenu(scene, { camera, actions, state }) {
+export function createXrMenu(scene, { camera, renderer, actions, state }) {
   const group = new THREE.Group();
   group.visible = false;
 
@@ -62,14 +62,24 @@ export function createXrMenu(scene, { camera, actions, state }) {
   const _dir = new THREE.Vector3();
   const _local = new THREE.Vector3();
 
+  // The immersive HEAD pose. In XR the mono `camera`'s LOCAL transform is NOT the head at
+  // input time — Three writes the head pose into it during render(), AFTER the X-button
+  // handler that opens this menu runs — so anchoring off `camera.getWorldPosition()` here
+  // spawns the panel off your gaze (it reads the stale rig-relative transform). The live
+  // head world matrix lives on `renderer.xr.getCamera()`; read position + forward from it.
+  function headPose(outPos, outDir) {
+    const cam = renderer && renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+    outPos.setFromMatrixPosition(cam.matrixWorld);
+    if (outDir) outDir.set(0, 0, -1).transformDirection(cam.matrixWorld); // normalized forward
+  }
+
   // ── Open / close ────────────────────────────────────────────────────────────────
   function openMenu() {
-    camera.getWorldPosition(_camPos);
-    camera.getWorldDirection(_dir);
+    headPose(_camPos, _dir);
     _dir.y = 0;
     if (_dir.lengthSq() < 1e-4) _dir.set(0, 0, -1);
     _dir.normalize();
-    group.position.copy(_camPos).addScaledVector(_dir, 1.2); // 1.2 m ahead, then world-locked
+    group.position.copy(_camPos).addScaledVector(_dir, 1.2); // 1.2 m ahead of gaze, then world-locked
     group.position.y = _camPos.y - 0.12;                     // just below eye line
     open = true; group.visible = true;
     page = 'main'; hovered = null; notice = ''; codeBuf = ''; busy = false;
@@ -79,9 +89,9 @@ export function createXrMenu(scene, { camera, actions, state }) {
   function closeMenu() { open = false; group.visible = false; hovered = null; }
   function toggle() { open ? closeMenu() : openMenu(); }
 
-  // Yaw-only billboard: face the camera, stay upright (readable). Position never moves.
+  // Yaw-only billboard: face the head, stay upright (readable). Position never moves.
   function faceCamera() {
-    camera.getWorldPosition(_camPos);
+    headPose(_camPos, null);
     group.rotation.set(0, Math.atan2(_camPos.x - group.position.x, _camPos.z - group.position.z), 0);
   }
 

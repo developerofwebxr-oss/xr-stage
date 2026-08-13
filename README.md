@@ -134,6 +134,38 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Headset bugs — sprint · X menu · exit-to-flat (4.3)** — no new deps; immersive-only fixes
+headless can't catch, so each carries its diagnosis:
+- **#1 VR sprint never engaged.** *Root cause:* `SPRINT_EDGE` was `0.92`, but a Quest thumbstick
+  at full push reports magnitude ≈ 0.85–0.95 (the runtime radially scales it below 1.0), so the
+  sprint branch was effectively unreachable — the analog walk-scaling just maxed out under the bar,
+  reading as constant walk. Lowered the edge to `0.85` with a distinct `WALK_PLATEAU = 0.6`, and
+  routed **both** the VR left stick and the mobile joystick through one shared `analogSpeed()` (one
+  locomotion path). Desktop Shift-sprint unchanged. Full push now ≈ doubles speed; release → walk.
+- **#2 X didn't open the in-world menu.** *Root cause (by elimination):* the button index
+  (`buttons[4]`), handedness (`src.handedness`), press-edge (`vrEdge`), and `isPresenting` routing
+  were all standard-correct — leaving **placement**. `openMenu()` anchored off the mono `camera`,
+  but the X handler runs *before* `renderer.render()` writes the current head pose into that camera
+  each frame, so it read a stale/rig-relative transform and spawned the panel **off your gaze** (it
+  looked like "nothing happened"). Fixed by anchoring from the **live XR head camera**
+  (`renderer.xr.getCamera().matrixWorld`) — position + forward — so the panel appears ~1.2 m ahead
+  of where you're actually looking, at eye height. Applies to VR and Quest-AR.
+- **#3 Exit to flat = tilted + displaced camera.** *Root cause:* during a session Three drives the
+  mono camera's **local** transform from the live head pose — a position offset plus the full head
+  orientation **including pitch and ROLL**. Flat look controls only ever write `rig.rotation.y =
+  yaw` and `camera.rotation.x = pitch`; they never clear the camera's position, yaw, or roll. So on
+  `sessionend` the residual head **roll returned as a tilt** and the head offset as a **position
+  shift** — every exit. Added `resetFlatView()` to the **single** sessionend restore path (both the
+  in-app Exit button and the platform system-quit funnel through `session 'end'` → `onModeChange
+  ('flat')`): `camera.position.set(0, 1.6, 0)`, `camera.rotation.set(pitch, 0, 0)` (zero yaw+roll),
+  `rig.rotation.set(0, yaw, 0)`, `updateProjectionMatrix()`. Flat's per-frame writes never re-dirty
+  those, so one reset holds. View returns level, at eye height, where the rig was; drag-look
+  continues smoothly. Folded #2 + #3 (and the sprint-threshold gotcha) into the `webxr-threejs`
+  skill's lifecycle rules.
+- **Guardrails.** One locomotion path stays unified; no service/UI changes beyond these. Clean
+  build, no console errors, flat scene unregressed. The three behaviours are immersive-only —
+  **owner re-tests all three on the Quest** (headless/desktop Chrome can't enter immersive).
+
 **In-world VR/AR menu — the headset gets controls (4.2)** — no new deps; one new module
 `src/room/xrMenu.js`, a RENDERER over the existing service flows (no new service logic):
 - **The panel.** The **X** button (left controller, the standard Pause/Menu binding) toggles a

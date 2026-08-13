@@ -119,7 +119,7 @@ let boundaryGlow = 0;
 let arActive = false;
 let xrMenu = null; // the in-world VR/AR menu (created near the frame loop); null in flat-only load
 
-const { rig, update: updateLocomotion, setFreeLook, setMoveInput, jump } =
+const { rig, update: updateLocomotion, setFreeLook, setMoveInput, jump, resetFlatView } =
   createLocomotion(camera, renderer.domElement, {
     spawn,
     isMobile,
@@ -356,7 +356,7 @@ setupXR(renderer, {
     document.getElementById('joystick').hidden = mode !== 'flat' ? true : !isMobile;
     document.getElementById('jump-btn').hidden = mode !== 'flat' ? true : !isMobile;
     if (mode !== 'flat') closeAllMenus();        // leaving flat closes all DOM menus
-    if (mode === 'flat') xrMenu?.close();        // returning to flat closes the in-world menu
+    if (mode === 'flat') { xrMenu?.close(); resetFlatView(); } // close panel + clear residual XR camera roll/offset
     if (mode === 'flat' && !isMobile) hud.flashLockHint(); // brief reminder on return
     if (mode !== 'flat') hud.showFreeLookHint(false);
   },
@@ -1280,6 +1280,7 @@ function followBody() {
 // event-transition prompt stays DOM-only for now — a future in-world page can host it.
 xrMenu = createXrMenu(scene, {
   camera,
+  renderer,                                             // for the live XR head pose at open
   actions: {
     exit: () => xrCtl?.enter('screen'),                 // session.end → sessionend restores flat
     buyTicket: (tier) => buyTicket(tier),               // panel gates sign-in before calling
