@@ -134,6 +134,44 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**In-world VR/AR menu — the headset gets controls (4.2)** — no new deps; one new module
+`src/room/xrMenu.js`, a RENDERER over the existing service flows (no new service logic):
+- **The panel.** The **X** button (left controller, the standard Pause/Menu binding) toggles a
+  3D, laser-clickable panel. It anchors **~1.2 m in front of the camera at open**, then is
+  **world-locked** in position (not head-glued) and only **billboards (yaw)** to keep facing you.
+  It's ONE **opaque** canvas-textured mesh (3.11 solid-panel rule — writes depth, occludes
+  correctly), **re-textured only on state change** (page switch, value change, or hover change) —
+  never per frame. Buttons are rectangles in canvas space; a laser hit maps its local point →
+  canvas coords → the button under it, so a single mesh is the raycast target. Disposed on close.
+- **Page structure (multi-page, Back button):**
+  - **main** — Resume (close) · Exit to Screen (`session.end` → flat restore) · Ticket status +
+    Get/Upgrade → **tickets** page · Wallet balance + Top up (mock +21,000) · Enter session code →
+    **keypad** page · toggles (Boost-by-tap · Speak/Listen voice · the three comfort toggles) ·
+    Zap the speaker (⚡21).
+  - **tickets** — three tier buttons (Basic/Supporter/Patron) with real price + spendable credits
+    + perks, current tier marked; tap → the shared **event-scoped** `buyTicket()` flow.
+  - **keypad** — a 6-digit numeric pad (0-9, ⌫ del, ✓ submit — 12 big laser-friendly buttons)
+    feeding the same `redeemCode()` → `adoptFlow()`. **This is THE headset sign-in path** (mint
+    still happens on phone/desktop); shows "Signed in as {name}" on success. No text entry anywhere.
+- **Behavior.** The in-world menu is **modal** while open (it owns the laser select; nothing behind
+  it is pickable). Hover is driven per-frame by whichever controller laser is on the panel, but
+  **re-textures only when the hovered button changes** (no per-frame canvas). Opening it never
+  touches the DOM pause menu — in immersive the DOM is hidden, and **X routes to the in-world panel
+  when `renderer.xr.isPresenting`, to the DOM pause menu in flat** (same concept, two renderers).
+  **Comfort toggles are shared state** — the panel calls the same `comfort.set()` and persists as
+  before. Returning to flat closes the panel. Works in **VR and AR** (Quest passthrough has the X
+  button + controllers); an AR **phone** has neither, so its in-world entry is a later seam. The
+  **event-transition prompt stays DOM-only** for now (a future in-world page — noted as a seam in
+  `xrMenu.js`). The DOM ticket chooser and the in-world tickets page now share one `buyTicket(tier)`
+  function so neither duplicates the purchase logic.
+- **Guardrails.** No new service logic. Quest 72 fps safe (canvas re-texture on change only; hover
+  via raycast, no per-frame canvas). Clean build, no console errors. **Verified structurally +
+  emulated in Chrome**: forced the panel open in flat and screenshot all three pages (main /
+  tickets / keypad) with hover highlights — layout, event-scoped prices/credits, and the keypad
+  grid all render correctly; the frame loop ran `updateMenu()` every frame with no errors. The real
+  headset interactions (X open, laser hover/press, keypad redeem, in-headset ticket buy, exit sync)
+  are **device-tested** — headless/desktop Chrome cannot enter immersive.
+
 **Device-pass fixes — AR + presence (4.1)** — no new deps. Five owner-verified on-device bugs:
 - **#1 Stage screen now renders in AR.** *Root cause:* the main stage screen (`backdrop` +
   its `frame` + `border`) was swept into the AR **shell** hide-list, so `setShellVisible(false)`

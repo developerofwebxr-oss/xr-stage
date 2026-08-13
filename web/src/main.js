@@ -25,6 +25,7 @@ import { createCommentBoard } from './room/commentBoard.js';
 import { createMicUI } from './ui/micUI.js';
 import { queue } from './queue/queue.js';
 import { createQueuePanel } from './room/queuePanel.js';
+import { createXrMenu } from './room/xrMenu.js';
 import { createBookingUI } from './ui/bookingUI.js';
 import { createSpeakerHub } from './ui/speakerHub.js';
 import { booking } from './booking/booking.js';
@@ -116,6 +117,7 @@ let boundaryGlow = 0;
 // AR shell-off swaps room-bounds for per-prop collision (zones.js `ar` flag); set
 // when an AR session is active so locomotion's clamp lets the player roam the real room.
 let arActive = false;
+let xrMenu = null; // the in-world VR/AR menu (created near the frame loop); null in flat-only load
 
 const { rig, update: updateLocomotion, setFreeLook, setMoveInput, jump } =
   createLocomotion(camera, renderer.domElement, {
@@ -129,7 +131,9 @@ const { rig, update: updateLocomotion, setFreeLook, setMoveInput, jump } =
     // Cross-input parity: these verbs are also bound on the desktop keys (inside
     // locomotion) — here we route them to this game's actions. One handler per verb,
     // shared by VR buttons + keyboard, so nothing is improvised per-platform.
-    onMenu: () => toggleMenu(),       // X / Esc·M  → Pause/Menu
+    // X / Esc·M → Pause/Menu. In immersive the in-world panel is the menu (DOM is
+    // invisible there); in flat it's the DOM pause menu. Same concept, two renderers.
+    onMenu: () => { if (renderer.xr.isPresenting && xrMenu) xrMenu.toggle(); else toggleMenu(); },
     onGrab: () => doGrab(),           // grip / E-hold·right-click → grab (inert seam)
     onVerbB: () => toggleVoice(),     // B / B-key  → game verb: toggle mic (Listen/Speak)
     onVerbY: () => zapSelected(),     // Y / Y-key  → game verb: zap the selected avatar
@@ -352,6 +356,7 @@ setupXR(renderer, {
     document.getElementById('joystick').hidden = mode !== 'flat' ? true : !isMobile;
     document.getElementById('jump-btn').hidden = mode !== 'flat' ? true : !isMobile;
     if (mode !== 'flat') closeAllMenus();        // leaving flat closes all DOM menus
+    if (mode === 'flat') xrMenu?.close();        // returning to flat closes the in-world menu
     if (mode === 'flat' && !isMobile) hud.flashLockHint(); // brief reminder on return
     if (mode !== 'flat') hud.showFreeLookHint(false);
   },
@@ -563,6 +568,13 @@ function pickFromRaycaster() {
   // VR controller path sets the ray directly (not setFromCamera), so ensure it here or
   // Sprite.raycast throws on a null camera.
   raycaster.camera = camera;
+  // The in-world menu is MODAL while open: it owns the pointer, so a select goes to the
+  // panel (button under the laser) and nothing behind it is pickable.
+  if (xrMenu && xrMenu.isOpen()) {
+    const mh = raycaster.intersectObjects(xrMenu.targets(), false)[0];
+    if (mh) xrMenu.pressWorld(mh.point);
+    return;
+  }
   const targets = pickables().concat(commentBoard.pickables());
   const hits = raycaster.intersectObjects(targets, true);
   for (const h of hits) {
@@ -819,6 +831,21 @@ function continueAsGhost() {
 
 // Ticket chooser + access micro-purchase. buy() is the ENTRY payment (mock external) that,
 // on confirm, credits the wallet and embodies you (tickets.onChange re-embodies + updates HUD).
+// The ONE ticket-purchase flow (event-scoped), shared by the DOM tier chooser and the
+// in-world VR/AR menu so neither duplicates the service logic. `notSignedIn` lets each
+// caller route the not-signed-in case its own way (DOM → You menu, VR → keypad page).
+async function buyTicket(tier, { notSignedIn } = {}) {
+  if (!identity.current()) { hud.toast('Sign in first to buy a ticket'); notSignedIn && notSignedIn(); return { state: 'failed', reason: 'not signed in' }; }
+  const ev = eventForTicket();
+  if (!ev) { hud.toast('No event to buy into right now'); return { state: 'failed', reason: 'no event' }; }
+  eventPrompt.close();                                 // buying satisfies the transition prompt
+  const res = await tickets.buy(tier, ev.id);          // ticket is scoped to THIS event; share → its pot
+  if (res.state === 'confirmed') {
+    hud.setBalance(wallet.getBalance());
+    hud.toast(`You're in — ${tickets.TIERS[tier].label} · ${ev.title} · +${res.credits.toLocaleString('en-US')} credits`);
+  }
+  return res;
+}
 const ticketUI = createTicketUI({
   toast: (m) => hud.toast(m),
   tiers: tickets.TIERS,
@@ -826,16 +853,8 @@ const ticketUI = createTicketUI({
   currentTier: () => tickets.tier(),
   getBalance: () => wallet.getBalance(),
   onBuy: async (tier) => {
-    if (!identity.current()) { hud.toast('Sign in first to buy a ticket'); openYou(); return { state: 'failed', reason: 'not signed in' }; }
-    const ev = eventForTicket();
-    if (!ev) { hud.toast('No event to buy into right now'); return { state: 'failed', reason: 'no event' }; }
-    eventPrompt.close();                                 // buying satisfies the transition prompt
-    const res = await tickets.buy(tier, ev.id);          // ticket is scoped to THIS event; share → its pot
-    if (res.state === 'confirmed') {
-      hud.setBalance(wallet.getBalance());
-      hud.toast(`You're in — ${tickets.TIERS[tier].label} · ${ev.title} · +${res.credits.toLocaleString('en-US')} credits`);
-      openYou();
-    }
+    const res = await buyTicket(tier, { notSignedIn: openYou });
+    if (res.state === 'confirmed') openYou();           // refresh the DOM You menu
     return res;
   },
   onAccess: async (kind) => {
@@ -1254,6 +1273,64 @@ function followBody() {
   }
 }
 
+// ── In-world VR/AR menu (Prompt 4.2) ─────────────────────────────────────────────
+// X opens a laser-clickable 3D panel that RENDERS OVER the existing service flows (no
+// new service logic). One instance; shown only in immersive. Sign-in is the 6-digit
+// keypad page (mint still happens on phone/desktop → redeemCode/adoptFlow). SEAM: the
+// event-transition prompt stays DOM-only for now — a future in-world page can host it.
+xrMenu = createXrMenu(scene, {
+  camera,
+  actions: {
+    exit: () => xrCtl?.enter('screen'),                 // session.end → sessionend restores flat
+    buyTicket: (tier) => buyTicket(tier),               // panel gates sign-in before calling
+    topUp: () => { wallet.topUp(); hud.showBalance(true); hud.setBalance(wallet.getBalance()); hud.toast(`Topped up +${fmtSats(wallet.DEFAULT_TOPUP)} sats`); },
+    redeem: async (code) => { const p = await redeemCode(code); adoptFlow(p); return p; }, // headset sign-in
+    toggleBoost: () => { setBoostByTap(!boostByTap()); zapUI.setBoost(boostByTap()); },
+    setComfort: (key, on) => comfort.set(key, on),
+    toggleVoice: () => toggleVoice(),
+    zapSpeaker: () => { const gr = stageSpeakerGroup(); if (!gr) return hud.toast('No one on stage to zap'); const id = gr.userData.identity; zapAvatar(id.pubkey, id.name); },
+  },
+  state: {
+    signedIn: () => !!identity.current(),
+    name: () => identity.current()?.name,
+    balance: () => wallet.getBalance(),
+    tier: () => tickets.tier(),
+    tierLabel: () => tickets.TIERS[tickets.tier()]?.label,
+    tiers: tickets.TIERS,
+    split: (t) => tickets.split(t),
+    eventTitle: () => eventForTicket()?.title,
+    boostOn: () => boostByTap(),
+    comfort: () => comfort.all(),
+    comfortKeys: comfort.KEYS,
+    voiceOn: () => active,
+    voiceVerb: verb,
+    speakerPresent: () => !!stageSpeakerGroup(),
+  },
+});
+
+// Per-frame while the menu is open: billboard it toward the head, and drive hover from
+// whichever controller laser is on the panel (re-textures only when the hovered button
+// changes — no per-frame canvas work). Screen-tap (AR phone) sources have no persistent
+// ray, so they simply get no hover; the trigger/tap still presses via pickFromRaycaster.
+const _menuM = new THREE.Matrix4();
+function updateMenu() {
+  if (!xrMenu.isOpen()) return;
+  xrMenu.update();
+  if (!renderer.xr.isPresenting) return;
+  let hit = null;
+  for (const ctrl of xrControllers) {
+    const src = ctrl.userData.inputSource;
+    if (!src || src.targetRayMode === 'screen') continue;
+    _menuM.identity().extractRotation(ctrl.matrixWorld);
+    raycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
+    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(_menuM).normalize();
+    raycaster.camera = camera;
+    const h = raycaster.intersectObjects(xrMenu.targets(), false)[0];
+    if (h) { hit = h.point; break; }
+  }
+  xrMenu.hoverAt(hit);
+}
+
 // ── Frame loop ──────────────────────────────────────────────────────────────────
 const clock = new THREE.Clock();
 const _prevPos = new THREE.Vector3().copy(rig.position); // for the movement vignette
@@ -1293,6 +1370,7 @@ renderer.setAnimationLoop(() => {
   commentBoard.update(dt);    // live-feed scroll + sticky top-wall refresh
   queuePanel.update(dt);      // pulse the pedestal "you're up" ring (only when set)
   updateVRBoardScroll(dt);    // VR: aim right controller at LIVE + right-stick Y scrolls
+  updateMenu();               // in-world menu: billboard + laser hover (only while open)
 
   renderer.render(scene, camera);
 });
