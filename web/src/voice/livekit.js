@@ -57,12 +57,15 @@ export class Voice {
       this.room = room;
 
       room
-        .on(RoomEvent.TrackSubscribed, (track) => {
+        .on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
           // Attach audio so it plays; ignore any (future) video tracks. Respect the
           // current playback state so a listener with Listen:off doesn't hear it.
           if (track.kind === 'audio') {
             const el = track.attach();
             el.setAttribute('data-livekit', 'audio');
+            // Tag the owning participant so zoneAudio can gate/gain this element by the
+            // publisher's zone + distance (identity == the presence id == the pool key).
+            el.dataset.identity = participant ? participant.identity : '';
             el.muted = !this._audioEnabled;
             this._audioEls.add(el);
             document.body.appendChild(el);
@@ -124,6 +127,20 @@ export class Voice {
       try { await this.room.startAudio(); } catch { /* gesture already covers it */ }
     }
   }
+
+  // ── Zone audio composition (Prompt 4.4) — layered OVER the stage path, not forking it.
+  // The stage keeps setMicEnabled (speaker-only) + setListening (playback). Zone audio adds:
+  //   • setZoneMic(on): publish/unpublish MY mic for proximity voice (any role). NOTE: a
+  //     non-speaker token may lack a publish grant — real audio then needs a server-side
+  //     canPublish (out of scope here); the call no-ops gracefully when not connected.
+  //   • eachRemoteAudio(cb): iterate attached remote <audio> els with their owner identity,
+  //     so zoneAudio can set per-element volume (proximity) / mute (out-of-zone).
+  async setZoneMic(on) {
+    if (!this.room) return false;
+    try { await this.room.localParticipant.setMicrophoneEnabled(on); return true; }
+    catch (err) { throw short('mic denied', err); }
+  }
+  eachRemoteAudio(cb) { for (const el of this._audioEls) cb(el.dataset.identity || null, el); }
 
   // Broadcast a small JS object to everyone over the lossy data channel.
   // reliable:false is right for high-rate presence — drop a frame, send the next.

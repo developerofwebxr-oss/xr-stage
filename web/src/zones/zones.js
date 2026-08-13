@@ -106,6 +106,7 @@ const MOCK_POP = {
   smoking:    { count: 6,  patron: 1, supporter: 2, speaker: 2 },
 };
 let _localBadge = { badge: null, speaker: false }; // the local player's marks (set by main)
+let _liveCounts = {};                               // real live remote occupants per zone (4.4)
 const _plaqueRedraws = [];                          // in-world occupancy displays to refresh
 
 function occupancyOf(zoneId) {
@@ -113,7 +114,8 @@ function occupancyOf(zoneId) {
   const here = _current && _current.id === zoneId; // local player counts only in THIS zone
   const b = _localBadge;
   return {
-    count:     base.count + (here ? 1 : 0),
+    // Real live remote participants (presence heartbeat zone) + local player + seeded mock.
+    count:     base.count + (_liveCounts[zoneId] || 0) + (here ? 1 : 0),
     patron:    base.patron + (here && b.badge === 'patron' ? 1 : 0),
     supporter: base.supporter + (here && b.badge === 'supporter' ? 1 : 0),
     speaker:   base.speaker + (here && b.speaker ? 1 : 0),
@@ -125,6 +127,18 @@ export const zones = {
   onChange(cb) { _subs.add(cb); return () => _subs.delete(cb); },
   occupancy(zoneId) { return occupancyOf(zoneId); },
   setLocalBadge(badge, speaker) { _localBadge = { badge: badge || null, speaker: !!speaker }; },
+  // Feed live remote occupancy (from presence.zoneCounts()); re-textures plaques only when a
+  // count actually changes, so this can be called every frame cheaply.
+  setLiveOccupancy(counts) {
+    const next = counts || {};
+    let changed = false;
+    for (const id of new Set([...Object.keys(next), ...Object.keys(_liveCounts)])) {
+      if ((next[id] || 0) !== (_liveCounts[id] || 0)) { changed = true; break; }
+    }
+    if (!changed) return;
+    _liveCounts = { ...next };
+    for (const fn of _plaqueRedraws) fn();
+  },
   refreshOccupancy() { for (const fn of _plaqueRedraws) fn(); }, // re-texture in-world counters
   update(x, z) {
     if (x === _lastX && z === _lastZ) return _current;

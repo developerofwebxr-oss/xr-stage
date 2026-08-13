@@ -134,6 +134,48 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Audio zones — proximity voice + zone isolation (4.4)** — no new deps; one new module
+`src/audio/zoneAudio.js`, layered OVER the stage voice (never forking it). ONE LiveKit room,
+no new tokens/rooms/server changes.
+- **The model.** Plaza/stage = stage voice only, unchanged (audience mics off). 🚬 **Smoking** =
+  enter → mic auto-publishes, everyone inside hears everyone, **proximity-scaled** (closer =
+  louder), leave → auto-unpublish; every occupant gets a lit 🚬 with a smoke puff. 🤝 **Networking**
+  = no open mic; **mutual permission** — tap a person → "Ask to talk" → they accept → a proximity
+  talk-link opens, either side ends it. **Isolation:** a zone track is audible only inside that
+  zone; the stage still carries everywhere (`config.zoneHearsStage`).
+- **Mechanism chosen (metadata + subscription).** Zone membership rides the **presence heartbeat**
+  (`state/presence.js` gains a `zone` field) — every client already knows each participant's zone,
+  so no LiveKit track-name/metadata plumbing is needed. Selective render = **local gain**: keep
+  LiveKit's auto-subscribe, then set each remote `<audio>` element's **volume** by (publisher's
+  zone == mine?) × smoothstep proximity falloff (silent by `zoneFalloffM = 9 m`); a publisher in
+  NO zone is the stage → always audible. Networking is additionally gated by an active **talk-link**
+  (request/accept/end over the same data channel). The element `.muted` stays owned by the stage
+  Listen toggle, so the two compose cleanly. Gain recompute is throttled to `zoneGainHz = 5`, not
+  per-frame.
+- **Composition, not a fork.** `voice/livekit.js` gains only compose hooks — capture the owning
+  participant on `TrackSubscribed`, `eachRemoteAudio(cb)`, and `setZoneMic(on)` — the stage
+  speaker/listener path is untouched. `zoneAudio` orchestrates publish/gain/links behind its seam.
+- **Occupancy is real now.** presence exposes `zoneCounts()`; `zones.setLiveOccupancy()` folds live
+  remote participants into the plaque counts (seeded mock population kept additive) — the 3.17
+  occupancy displays now move with real people.
+- **UX.** Entering Smoking without mic → a **confirm first** ("your mic turns ON in here —
+  continue?"); Continue grants the mic within that gesture and unblocks entry, decline soft-bounces
+  (reuses the zone access-clamp). Networking "Ask to talk" is a conditional profile-card action
+  (shown only when both are in Networking); an incoming request → toast + accept/decline (a DOM
+  dialog in flat, a **Requests page** on the in-world VR menu). Cigarette honors
+  `prefers-reduced-motion` (static wisp, no puff).
+- **Guardrails.** Stage voice path untouched (compose only); no new rooms/tokens/server. Config
+  constants for falloff/rate/flag. Quest-safe: gain throttled ~5 Hz, cigarette is cheap procedural
+  geometry with a transform-only puff. Clean build, no console errors.
+- **Verified headlessly:** the subscription/gain/metadata **decision logic** against a case table —
+  plaza never hears a smoking track (0), both-in-smoking scales with distance (1 at 0 m → 0 at 9 m,
+  closer > farther), networking silent without a link then audible with one, stage audible from
+  inside a zone; the cigarette prop rendered at the mouth (temporary spawn, screenshot, removed);
+  the mic-confirm dialog; no console errors; flat scene unregressed. **Needs ears / a real token
+  server (out of scope here):** actual mic capture + audible output + real distance attenuation, the
+  two-client subscription over a live SFU, and a **server publish grant** so non-speaker tokens may
+  publish a zone mic (the client calls are in place and no-op gracefully until then).
+
 **Headset bugs — sprint · X menu · exit-to-flat (4.3)** — no new deps; immersive-only fixes
 headless can't catch, so each carries its diagnosis:
 - **#1 VR sprint never engaged.** *Root cause:* `SPRINT_EDGE` was `0.92`, but a Quest thumbstick

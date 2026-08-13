@@ -19,7 +19,7 @@ import { drawKeyface } from '../identity/keyface.js';
 const $ = (id) => document.getElementById(id);
 const shortNpub = (npub) => (npub.length > 24 ? `${npub.slice(0, 16)}…${npub.slice(-6)}` : npub);
 
-export function createProfileCard({ onVisit, onFollow, onZap, onClose } = {}) {
+export function createProfileCard({ onVisit, onFollow, onZap, onAskTalk, onClose } = {}) {
   const el = {
     card: $('profile-card'),
     close: $('pc-close'),
@@ -27,6 +27,7 @@ export function createProfileCard({ onVisit, onFollow, onZap, onClose } = {}) {
     name: $('pc-name'),
     npub: $('pc-npub'),
     nip05: $('pc-nip05'),
+    ask: $('pc-ask'),
     visit: $('pc-visit'),
     follow: $('pc-follow'),
     zap: $('pc-zap'),
@@ -38,14 +39,17 @@ export function createProfileCard({ onVisit, onFollow, onZap, onClose } = {}) {
   el.visit.addEventListener('click', () => current && onVisit && onVisit(current));
   el.follow.addEventListener('click', () => current && onFollow && onFollow(current));
   el.zap.addEventListener('click', () => current && onZap && onZap(current));
+  // Ask to talk — only shown when both parties are in Networking (see open opts).
+  el.ask.addEventListener('click', () => current && onAskTalk && onAskTalk(current));
 
-  function open(profile, { following = false } = {}) {
+  function open(profile, { following = false, canAskTalk = false } = {}) {
     current = profile;
     // keyface (REAL: profile.picture when present)
     el.face.src = profile.picture || drawKeyface(profile.pubkey, 96).toDataURL();
     el.name.textContent = profile.name;
     el.npub.textContent = shortNpub(profile.npub);
     el.nip05.textContent = profile.nip05 || '';
+    el.ask.hidden = !canAskTalk;
     setFollowing(following);
     el.card.hidden = false;
   }

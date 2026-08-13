@@ -146,6 +146,9 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
       if (needsSignIn()) return;
       actions.topUp(); notice = `Topped up · balance ⚡ ${fmt(state.balance())}`; return render();
     }
+    if (id === 'requests') { page = 'requests'; notice = ''; return render(); }
+    if (id.startsWith('req-accept:')) { actions.acceptTalk(id.slice(11)); notice = 'Talk link opened'; page = 'main'; return render(); }
+    if (id.startsWith('req-decline:')) { actions.declineTalk(id.slice(12)); return render(); }
     if (id === 'boost') { actions.toggleBoost(); return render(); }
     if (id === 'voice') { render(); await actions.toggleVoice(); return render(); }
     if (id === 'zap') {
@@ -196,6 +199,7 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
     if (page === 'main') renderMain();
     else if (page === 'tickets') renderTickets();
     else if (page === 'keypad') renderKeypad();
+    else if (page === 'requests') renderRequests();
 
     if (notice) {
       g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -246,7 +250,30 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
     y += 74;
 
     // Zap the speaker
-    button('zap', PAD, y, full, 66, 'Zap the speaker ⚡ 21', { accent: true });
+    button('zap', PAD, y, full, 66, 'Zap the speaker ⚡ 21', { accent: true }); y += 78;
+
+    // Talk requests (Networking) — only when someone has asked to talk
+    const reqs = state.talkRequests ? state.talkRequests() : [];
+    if (reqs.length) button('requests', PAD, y, full, 58, '🤝 Talk requests', { right: `${reqs.length} ›`, accent: true });
+  }
+
+  function renderRequests() {
+    title('TALK REQUESTS', 'Networking · mutual permission');
+    button('back', PAD, 28, 150, 52, '‹ Back');
+    const reqs = state.talkRequests ? state.talkRequests() : [];
+    if (!reqs.length) {
+      g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = INK_DIM; g.font = `400 30px ${SANS}`;
+      g.fillText('No pending requests', CW / 2, 280);
+      return;
+    }
+    let y = 150; const full = CW - 2 * PAD, bw = (full - 16) / 2;
+    for (const r of reqs) {
+      g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillStyle = INK; g.font = `600 30px ${MONO}`;
+      g.fillText(clip(g, `${r.name || 'Someone'} wants to talk`, full - 20), PAD + 4, y + 18);
+      button(`req-accept:${r.id}`, PAD, y + 44, bw, 60, 'Accept', { accent: true });
+      button(`req-decline:${r.id}`, PAD + bw + 16, y + 44, bw, 60, 'Decline', { danger: true });
+      y += 132;
+    }
   }
 
   function renderTickets() {

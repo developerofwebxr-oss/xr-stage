@@ -23,12 +23,18 @@ const STALE_MS = 4000;             // drop avatars we haven't heard from in this
 export function createPresence(voice, scene, getPose, staticBodies = [], { onAvatarSpawn } = {}) {
   const pool = new AvatarPool(scene, { onSpawn: onAvatarSpawn });
   const lastSeen = new Map(); // id → timestamp
+  const peerZone = new Map(); // id → zoneId | null (which social zone each peer is in)
 
-  // Inbound: update/spawn a remote avatar for any presence message.
+  // Inbound: update/spawn a remote avatar for any presence message. The heartbeat now
+  // carries the sender's zone id (4.4) so every client knows who is in which social zone
+  // — this drives real occupancy counts AND the zone-audio subscription/gain decisions.
   voice.onData((id, msg) => {
     if (!msg || msg.t !== 'presence' || !Array.isArray(msg.p)) return;
     lastSeen.set(id, performance.now());
+    peerZone.set(id, msg.zone || null);
     pool.upsert(id, msg.p, typeof msg.yaw === 'number' ? msg.yaw : 0);
+    const e = pool.byId.get(id);
+    if (e) e.group.userData.pid = id;   // presence id on the group → target for talk requests
   });
 
   let sendAcc = 0;
@@ -46,6 +52,7 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
           t: 'presence',
           p: [round(pose.x), round(pose.y), round(pose.z)],
           yaw: round(pose.yaw),
+          zone: pose.zone || null,     // which social zone we're standing in (null = plaza/stage)
         });
       }
     }
@@ -54,11 +61,25 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
     const now = performance.now();
     const live = new Set();
     for (const [id, ts] of lastSeen) {
-      if (now - ts > STALE_MS) lastSeen.delete(id);
+      if (now - ts > STALE_MS) { lastSeen.delete(id); peerZone.delete(id); }
       else live.add(id);
     }
     pool.prune(live);
     pool.update(dt);
+  }
+
+  // Live remote peers with their zone, for the zone-audio gain pass: [{ id, group, zone }].
+  // id is the LiveKit participant identity (== the audio track owner == the talk-request
+  // address); group.position is the peer's world position for the distance falloff.
+  function peers() {
+    return [...pool.byId.entries()].map(([id, e]) => ({ id, group: e.group, zone: peerZone.get(id) || null }));
+  }
+  // Live head-count per social zone (real occupancy for participants; main adds the seeded
+  // mock population on top so the plaques still read as busy).
+  function zoneCounts() {
+    const counts = {};
+    for (const z of peerZone.values()) if (z) counts[z] = (counts[z] || 0) + 1;
+    return counts;
   }
 
   // Lightweight avatar separation (local-only, no physics). If `pos` is closer than
@@ -87,7 +108,7 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
     return [...pool.byId.values()].map((e) => e.group);
   }
 
-  return { update, separation, avatars };
+  return { update, separation, avatars, peers, zoneCounts };
 }
 
 // Trim to mm precision — keeps presence payloads tiny over the wire.

@@ -116,6 +116,64 @@ function makeCapsule(color, { withHead = true } = {}) {
   return group;
 }
 
+// ── Smoking-zone cigarette prop (Prompt 4.4) ─────────────────────────────────────
+// A cheap lit cigarette at the mouth of each Smoking occupant: a white stick + glowing
+// ember + a soft smoke puff that rises and fades (a STATIC wisp under prefers-reduced-
+// motion). Purely a LOCAL render keyed to the peer's broadcast zone — no networking
+// beyond zone presence. attach/detach is idempotent; ticked only for those in-zone.
+const REDUCE_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let _smokeTex = null;
+function smokeTexture() {
+  if (_smokeTex) return _smokeTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(210,210,220,0.5)'); grad.addColorStop(1, 'rgba(210,210,220,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+  _smokeTex = new THREE.CanvasTexture(c); _smokeTex.colorSpace = THREE.SRGBColorSpace;
+  return _smokeTex;
+}
+
+export function setCigarette(group, on) {
+  const head = group.getObjectByName('faceMount')?.parent;
+  if (!head) return;
+  const existing = head.getObjectByName('cigarette');
+  if (!!on === !!existing) return;                 // idempotent
+  if (!on) { head.remove(existing); existing.traverse((o) => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); return; }
+
+  const cig = new THREE.Group(); cig.name = 'cigarette';
+  cig.position.set(0.04, -0.055, -0.14);           // at the mouth: front of the flat face, a touch low
+  cig.rotation.set(-0.35, 0, 0.12);                // angled down + out
+  const stick = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.011, 0.011, 0.12, 8),
+    new THREE.MeshStandardMaterial({ color: 0xf4efe6, emissive: 0x201a12, roughness: 0.9 }),
+  );
+  stick.rotation.x = Math.PI / 2; stick.position.z = -0.06; cig.add(stick);
+  const ember = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.013, 0.013, 0.018, 8),
+    new THREE.MeshBasicMaterial({ color: 0xff5a1e }),   // glowing tip (unlit basic = always bright)
+  );
+  ember.rotation.x = Math.PI / 2; ember.position.z = -0.12; cig.add(ember);
+  const smoke = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTexture(), transparent: true, depthWrite: false, opacity: 0.5 }));
+  smoke.scale.setScalar(0.08); smoke.position.set(0, 0.04, -0.11); cig.add(smoke);
+  if (!REDUCE_MOTION) {
+    let t = Math.random();
+    cig.userData.tick = (dt) => {                  // transform-only puff loop (cheap; no per-frame canvas)
+      t += dt * 0.6; if (t > 1) t -= 1;
+      smoke.position.y = 0.04 + t * 0.12;
+      smoke.material.opacity = 0.5 * (1 - t);
+      smoke.scale.setScalar(0.06 + t * 0.06);
+    };
+  } else {
+    smoke.material.opacity = 0.22;                 // static wisp, no motion
+  }
+  head.add(cig);
+}
+// Advance the smoke puff for one in-zone avatar (no-op if it has no cigarette / reduced motion).
+export function tickCigarette(group, dt) {
+  group.getObjectByName('faceMount')?.parent?.getObjectByName('cigarette')?.userData.tick?.(dt);
+}
+
 // The local player's own body. Headless on purpose (see makeCapsule): the camera
 // is at head height, so the torso reads as "you" when you look down / in VR while
 // keeping the forward view clear. Remote viewers see our FULL capsule via their

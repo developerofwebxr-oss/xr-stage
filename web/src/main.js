@@ -6,7 +6,8 @@ import { tickets } from './tickets/tickets.js';
 import { createTicketUI } from './ui/ticketUI.js';
 import { createEventPrompt } from './ui/eventPrompt.js';
 import { STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
-import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP } from './room/avatars.js';
+import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP, setCigarette, tickCigarette } from './room/avatars.js';
+import { createZoneAudio } from './audio/zoneAudio.js';
 import { identity } from './identity/identity.js';
 import { drawKeyface } from './identity/keyface.js';
 import { createLocomotion } from './xr/locomotion.js';
@@ -167,6 +168,9 @@ let _lastBlocked = null;
 function onZoneBlocked(zn) {
   if (_lastBlocked === zn.id) return;   // already prompted this approach — don't nag every frame
   _lastBlocked = zn.id;
+  // Smoking with access but mic not yet granted → the "your mic turns ON" confirm (4.4),
+  // NOT a purchase. Accepting unblocks entry; declining leaves the soft bounce in place.
+  if (zn.id === 'smoking' && tickets.flags().smokingAccess && !smokingMicOk) { askSmokingMic(); return; }
   if (tickets.tier() === 'ghost') {
     hud.toast(`${zn.emoji} ${zn.name} needs a ticket`);
     openTicketChooser();
@@ -501,17 +505,68 @@ const _headQuat = new THREE.Quaternion();
 const _headEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 const presence = createPresence(voice, scene, () => {
   if (!embodied()) return null;
+  const zone = zones.current()?.id || null;   // broadcast our zone → real occupancy + zone audio
   if (renderer.xr.isPresenting) {
     camera.getWorldPosition(_headWorld);
     _headEuler.setFromQuaternion(camera.getWorldQuaternion(_headQuat), 'YXZ');
-    return { x: _headWorld.x, y: rig.position.y, z: _headWorld.z, yaw: _headEuler.y };
+    return { x: _headWorld.x, y: rig.position.y, z: _headWorld.z, yaw: _headEuler.y, zone };
   }
-  return { x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y };
+  return { x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y, zone };
 }, staticBodies, {
   // Each remote peer gets a mock identity (face + name) keyed by its presence id.
   // REAL: presence carries the peer's pubkey; this becomes getProfile(pubkey).
   onAvatarSpawn: (id, group) => identifyAvatar(group, id),
 });
+
+// ── Zone audio (Prompt 4.4) ──────────────────────────────────────────────────────
+// Proximity voice + zone isolation, layered over the stage voice via zoneAudio. It
+// reads presence peers/positions and drives per-participant gain; enter/leave is fed
+// from the zone seam below. Nothing here touches the stage speaker/listener path.
+const zoneAudio = createZoneAudio({
+  voice,
+  myIdentity: config.identity,
+  getLocalPos: () => ({ x: rig.position.x, z: rig.position.z }),
+  getPeers: () => presence.peers(),
+  toast: (m) => hud.toast(m),
+  onTalkRequest: ({ from, name }) => onIncomingTalk(from, name),
+});
+// Zone enter/leave → publish/unpublish + gain scope. (Smoking entry is already gated on
+// the mic confirm via accessClamp below, so by the time this fires consent is given.)
+zones.onChange((zone) => zoneAudio.setZone(zone?.id || null));
+
+// Networking incoming talk request → accept/decline. Flat: a DOM dialog; VR: the in-world
+// menu Requests page (badge + toast here). Either side can decline/end.
+const _talkReq = {
+  root: document.getElementById('talk-request'), body: document.getElementById('tr-body'),
+  accept: document.getElementById('tr-accept'), decline: document.getElementById('tr-decline'),
+};
+let _pendingReq = null;
+function onIncomingTalk(fromId, name) {
+  _pendingReq = fromId;
+  if (renderer.xr.isPresenting) { hud.toast(`🤝 ${name || 'Someone'} wants to talk — open the menu`); return; }
+  _talkReq.body.textContent = `${name || 'Someone'} in Networking wants to talk. Open a talk link?`;
+  _talkReq.root.hidden = false;
+}
+const _resolveReq = (accept) => { _talkReq.root.hidden = true; if (_pendingReq) (accept ? zoneAudio.acceptTalk : zoneAudio.declineTalk)(_pendingReq); _pendingReq = null; };
+_talkReq.accept.addEventListener('click', () => _resolveReq(true));
+_talkReq.decline.addEventListener('click', () => _resolveReq(false));
+_talkReq.root.addEventListener('click', (e) => { if (e.target === _talkReq.root) _resolveReq(false); });
+
+// Smoking mic confirm — the "your mic turns ON in here" moment. Shown when a ticketed
+// player first reaches the Smoking edge (accessClamp keeps them out until they grant it).
+// Continue grants the mic within this click gesture and unblocks entry; Not-now bounces.
+const _micConfirm = { root: document.getElementById('zone-confirm'), yes: document.getElementById('zc-yes'), no: document.getElementById('zc-no') };
+let smokingMicOk = false;
+function askSmokingMic() { _micConfirm.root.hidden = false; }
+_micConfirm.yes.addEventListener('click', async () => {
+  _micConfirm.root.hidden = true;
+  smokingMicOk = true;                 // unblocks the accessClamp gate → they can walk in
+  _lastBlocked = null;                 // allow the pill to fire on the legitimate entry
+  try { if (!voice.isConnected) { await voice.connect(); await voice.setListening(true); } }
+  catch { /* connect failure already surfaced; entry allowed, mic just silent (needs a server publish grant) */ }
+});
+_micConfirm.no.addEventListener('click', () => { _micConfirm.root.hidden = true; });
+_micConfirm.root.addEventListener('click', (e) => { if (e.target === _micConfirm.root) _micConfirm.root.hidden = true; });
 
 // ── Click an avatar → fixed profile card (Phase 2.2 → 2.3) ───────────────────────
 // Plain click raycasts to an avatar (the click stays free — never pointer-locks);
@@ -545,14 +600,25 @@ function onZap(profile) {
   // unified zap-avatar flow (flat/mobile → amount picker, VR → quick-zap).
   zapAvatar(profile.pubkey, profile.name);
 }
+// Networking: ask a live person (both in Networking) for a mutual talk link (4.4).
+function onAskTalk() {
+  const pid = selectedGroup?.userData.pid;
+  if (!pid) return hud.toast('Can only ask live people to talk');
+  if (!requireSignedIn('talk')) return;
+  zoneAudio.requestTalk(pid, identity.current()?.name);
+}
+// The selected peer's live zone (from presence), for the "Ask to talk" gate.
+const peerZoneOf = (group) => (group?.userData.pid ? presence.peers().find((p) => p.id === group.userData.pid)?.zone : null) || null;
 
-const card = createProfileCard({ onVisit, onFollow, onZap, onClose: deselect });
+const card = createProfileCard({ onVisit, onFollow, onZap, onAskTalk, onClose: deselect });
 
 function selectAvatar(group, profile) {
   group.add(selectionRing);              // ring follows the avatar
   selectionRing.position.set(0, 0.06, 0);
   selectedGroup = group;
-  card.open(profile, { following: identity.isFollowing(profile.pubkey) });
+  // Ask-to-talk shows only when I AND the picked live peer are both in Networking.
+  const canAskTalk = !!identity.current() && zones.current()?.id === 'networking' && peerZoneOf(group) === 'networking';
+  card.open(profile, { following: identity.isFollowing(profile.pubkey), canAskTalk });
 }
 function deselect() {
   if (selectionRing.parent) selectionRing.parent.remove(selectionRing);
@@ -1290,6 +1356,8 @@ xrMenu = createXrMenu(scene, {
     setComfort: (key, on) => comfort.set(key, on),
     toggleVoice: () => toggleVoice(),
     zapSpeaker: () => { const gr = stageSpeakerGroup(); if (!gr) return hud.toast('No one on stage to zap'); const id = gr.userData.identity; zapAvatar(id.pubkey, id.name); },
+    acceptTalk: (id) => zoneAudio.acceptTalk(id),      // Networking talk-request accept (VR)
+    declineTalk: (id) => zoneAudio.declineTalk(id),
   },
   state: {
     signedIn: () => !!identity.current(),
@@ -1306,6 +1374,7 @@ xrMenu = createXrMenu(scene, {
     voiceOn: () => active,
     voiceVerb: verb,
     speakerPresent: () => !!stageSpeakerGroup(),
+    talkRequests: () => zoneAudio.pendingIncoming(),   // [{ id, name }] pending Networking asks
   },
 });
 
@@ -1330,6 +1399,16 @@ function updateMenu() {
     if (h) { hit = h.point; break; }
   }
   xrMenu.hoverAt(hit);
+}
+
+// Lit cigarette on every Smoking occupant (local render, keyed to each peer's broadcast
+// zone — no networking beyond presence). Idempotent per frame; puff ticks only in-zone.
+function updateCigarettes(dt) {
+  for (const p of presence.peers()) {
+    const smoking = p.zone === 'smoking';
+    setCigarette(p.group, smoking);
+    if (smoking) tickCigarette(p.group, dt);
+  }
 }
 
 // ── Frame loop ──────────────────────────────────────────────────────────────────
@@ -1360,12 +1439,18 @@ renderer.setAnimationLoop(() => {
   // Zone-entry access GATE: if we've wandered into a zone our ticket doesn't allow, softly
   // clamp us back to just outside its boundary (no hard teleport) and prompt the purchase.
   // Runs BEFORE zones.update, so the HUD pill only fires when we're LEGITIMATELY inside.
-  const gate = accessClamp(rig.position.x, rig.position.z, (zn) => !!tickets.flags()[zn.requires]);
+  // Smoking additionally needs the mic-ON confirm (smokingMicOk); until then a ticketed
+  // player is soft-bounced at its edge exactly like a no-access door.
+  const gate = accessClamp(rig.position.x, rig.position.z, (zn) => !!tickets.flags()[zn.requires] && (zn.id !== 'smoking' || smokingMicOk));
   if (gate.blocked) { rig.position.x = gate.x; rig.position.z = gate.z; onZoneBlocked(gate.blocked); }
   else _lastBlocked = null;
 
   _prevPos.copy(rig.position);
   zones.update(rig.position.x, rig.position.z); // social-zone enter/leave seam (self-gates on movement)
+
+  zoneAudio.update(dt);                     // proximity gain + zone render-gating (self-throttled ~5Hz)
+  zones.setLiveOccupancy(presence.zoneCounts()); // real occupancy (re-textures plaques only on change)
+  updateCigarettes(dt);                     // lit cigarette on every Smoking occupant
 
   zapFx.update(dt);           // in-world zap bursts (no-op when none are active)
   commentBoard.update(dt);    // live-feed scroll + sticky top-wall refresh

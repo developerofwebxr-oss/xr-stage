@@ -395,7 +395,7 @@
       /* ── Modal surfaces: spend hub · amount picker · You · Stage · panels ──────── */
       #spend-menu, #zap-picker, #you-menu, #stage-menu, #instructions, #booking,
       #compose, #activity, #micform, #speaker-hub, #session-code, #session-redeem,
-      #ticket-menu, #access-menu, #event-prompt {
+      #ticket-menu, #access-menu, #event-prompt, #zone-confirm, #talk-request {
         position: fixed; inset: 0; z-index: 20; pointer-events: auto;
         display: flex; align-items: center; justify-content: center;
         background: rgba(3, 4, 8, 0.55);
@@ -404,7 +404,14 @@
       #spend-menu[hidden], #zap-picker[hidden], #you-menu[hidden],
       #stage-menu[hidden], #instructions[hidden], #booking[hidden],
       #compose[hidden], #activity[hidden], #micform[hidden], #speaker-hub[hidden],
-      #session-code[hidden], #session-redeem[hidden], #ticket-menu[hidden], #access-menu[hidden], #event-prompt[hidden] { display: none; }
+      #session-code[hidden], #session-redeem[hidden], #ticket-menu[hidden], #access-menu[hidden],
+      #event-prompt[hidden], #zone-confirm[hidden], #talk-request[hidden] { display: none; }
+      #zone-confirm .bar, #talk-request .bar {
+        flex-direction: column; align-items: stretch; gap: 9px;
+        width: min(340px, calc(100vw - 32px)); padding: 18px;
+      }
+      #zone-confirm .ctl, #talk-request .ctl { text-align: center; }
+      #zone-confirm .pm-section, #talk-request .pm-section { text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--ink); }
       #spend-panel, #zap-picker-panel, #you-panel, #stage-panel, #instructions-panel,
       #booking-panel, #compose-panel, #activity-panel, #micform-panel, #speaker-hub-panel,
       #session-code-panel, #session-redeem-panel, #ticket-panel, #access-panel, #event-prompt-panel {
@@ -660,6 +667,7 @@
           </div>
         </div>
         <div class="pc-actions">
+          <button class="ctl" id="pc-ask" hidden>🤝 Ask to talk</button>
           <button class="ctl" id="pc-visit">Visit profile</button>
           <button class="ctl" id="pc-follow">Follow</button>
           <button class="ctl" id="pc-zap">⚡ Zap</button>
@@ -678,6 +686,26 @@
           <label class="pm-toggle"><input type="checkbox" id="pm-vignette" /> <span>Vignette while moving</span></label>
           <label class="pm-toggle"><input type="checkbox" id="pm-snapTurn" /> <span>Snap turn (instead of smooth)</span></label>
           <label class="pm-toggle"><input type="checkbox" id="pm-haptics" /> <span>Haptics (fire · grab · land)</span></label>
+        </div>
+      </div>
+
+      <!-- Zone mic confirm (entering Smoking) — the "your mic turns ON" moment (4.4). -->
+      <div id="zone-confirm" hidden>
+        <div class="bar" role="dialog" aria-modal="true" aria-label="Zone mic">
+          <div class="pm-title" id="zc-title">🚬 Smoking Area</div>
+          <div class="pm-section" id="zc-body">Your mic turns <b>ON</b> in here so people nearby can hear you — and you hear them, louder the closer you stand. Continue?</div>
+          <button class="ctl" id="zc-yes">Continue — turn my mic on</button>
+          <button class="ctl" id="zc-no">Not now</button>
+        </div>
+      </div>
+
+      <!-- Incoming talk request (Networking) — accept/decline (4.4). -->
+      <div id="talk-request" hidden>
+        <div class="bar" role="dialog" aria-modal="true" aria-label="Talk request">
+          <div class="pm-title">🤝 Talk request</div>
+          <div class="pm-section" id="tr-body">Someone wants to talk.</div>
+          <button class="ctl" id="tr-accept">Accept — open talk link</button>
+          <button class="ctl" id="tr-decline">Decline</button>
         </div>
       </div>
 

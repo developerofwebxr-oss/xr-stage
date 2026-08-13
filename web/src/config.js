@@ -43,4 +43,12 @@ export const config = {
   // wired on all three realities, so flipping this to true enables it everywhere.
   // Overridable for testing with ?fly=1.
   enableFly: params.get('fly') === '1',
+
+  // ── Zone audio (Prompt 4.4) ─────────────────────────────────────────────────────
+  // Proximity voice inside the social zones. Falloff: per-participant gain fades from 1
+  // at the source to 0 by ZONE_FALLOFF_M metres (smoothstep). ZONE_HEARS_STAGE keeps the
+  // stage audible everywhere (it's a venue — the talk carries into the zones).
+  zoneFalloffM: 9,          // distance at which a zone voice fades to silence
+  zoneGainHz: 5,            // proximity-gain recompute rate (throttled, NOT per-frame)
+  zoneHearsStage: true,     // ZONE_HEARS_STAGE — stage voice still reaches people in zones
 };
