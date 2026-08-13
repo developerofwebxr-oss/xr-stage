@@ -16,11 +16,13 @@ const $ = (id) => document.getElementById(id);
 const fmt = (n) => Number(n).toLocaleString('en-US');
 const CRITERIA = [['money', 'Money'], ['activity', 'Activity'], ['manual', 'Manual']];
 
-export function createSpeakerHub({ toast, onCancelBooking, onSetCriteria, onPick, onNext } = {}) {
+export function createSpeakerHub({ toast, onCancelBooking, onSetCriteria, onPick, onNext, onAddCoSpeaker } = {}) {
   const el = {
     root: $('speaker-hub'), pool: $('hub-pool'), slot: $('hub-slot'), cancel: $('hub-cancel'),
     criteria: $('hub-criteria'), queue: $('hub-queue'), next: $('hub-next'), close: $('hub-close'),
+    addCoSpeaker: $('hub-add-cospeaker'),
   };
+  el.addCoSpeaker?.addEventListener('click', () => onAddCoSpeaker && onAddCoSpeaker());
   let mySlot = null;
   let criteria = 'money';
 

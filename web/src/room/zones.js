@@ -63,6 +63,33 @@ export const SCREEN = {
   z: STAGE_POS.z - STAGE_RADIUS - 0.4,   // just behind the stage's back
 };
 
+// ── Backstage green room (4.5): an enclosed room BEHIND the screen wall, reached down a
+// stage-LEFT approach lane. Speakers-only (backstageAccess); non-holders are walled out at
+// the stage-front line, so the interior never leaks to the plaza. Floor level (y=0). ────
+export const BACKSTAGE = { cx: -1.0, cz: -15.0, w: 8.0, d: 5.0, h: 3.0, doorHalf: 0.9 };
+const BS_XMIN = BACKSTAGE.cx - BACKSTAGE.w / 2, BS_XMAX = BACKSTAGE.cx + BACKSTAGE.w / 2; // -5 .. 3
+const BS_ZMIN = BACKSTAGE.cz - BACKSTAGE.d / 2, BS_ZMAX = BACKSTAGE.cz + BACKSTAGE.d / 2; // -17.5 .. -12.5
+export const BACKSTAGE_DOOR = { x: BS_XMIN, z: BACKSTAGE.cz };  // door in the −x (stage-left) wall
+// Approach lane: a corridor stage-LEFT of the disc joining the plaza to the room door.
+const LANE_XMIN = -7.0, LANE_XMAX = -5.0, LANE_ZMIN = BS_ZMAX - 0.5, LANE_ZMAX = -3.0;
+// Detection centre (for the zone pill/audio) — inside the room.
+export const BACKSTAGE_CENTER = { x: BACKSTAGE.cx, z: BACKSTAGE.cz, r: 3.0 };
+
+const inRect = (x, z, x0, x1, z0, z1) => x >= x0 && x <= x1 && z >= z0 && z <= z1;
+// Keep a backstage holder inside the L-shaped yard (lane ∪ room), at floor level. Rough but
+// contiguous through the door seam (the rects overlap there).
+function clampYard(x, z) {
+  const r = BODY_RADIUS;
+  const inLane = inRect(x, z, LANE_XMIN, LANE_XMAX, LANE_ZMIN, LANE_ZMAX);
+  const inRoom = inRect(x, z, BS_XMIN + r, BS_XMAX - r, BS_ZMIN + r, BS_ZMAX - r);
+  if (inLane || inRoom) return { x, z, hit: false };
+  if (z > BS_ZMAX - r) {                                   // up in the lane column → lane clamp
+    return { x: clamp(x, LANE_XMIN, LANE_XMAX), z: clamp(z, LANE_ZMIN, LANE_ZMAX), hit: true };
+  }
+  return { x: clamp(x, BS_XMIN + r, BS_XMAX - r), z: clamp(z, BS_ZMIN + r, BS_ZMAX - r), hit: true };
+}
+const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
 // ── Movement clamp ───────────────────────────────────────────────────────────────
 // constrainPosition(who, x, z, ar=false) → { x, z, y, hit }
 //   who: { role:'speaker'|'listener', isNextUp:boolean }
@@ -73,9 +100,17 @@ export const SCREEN = {
 // Every edge is offset by BODY_RADIUS so the avatar stops cleanly against geometry
 // (kept inside by the radius; pushed outside by the radius) — no mesh clipping.
 export function constrainPosition(who, x, z, ar = false) {
-  // Speaker: confined to the MAIN STAGE top (inside the disc) at STAGE_TOP_Y.
-  if (who.role === 'speaker') {
-    return clampInsideCircle(STAGE_POS, x, z, STAGE_RADIUS - BODY_RADIUS, STAGE_TOP_Y);
+  // Stage-role = any event speaker (URL ?role=speaker OR a granted speaker pass, main sets
+  // who.speaker). Backstage = holders of backstageAccess (speakers). These extend, not
+  // replace, the audience model: speakers may STEP onto the raised stage (chairs live there
+  // for panels) and roam off it; backstage holders may pass behind into the green room.
+  const stageRole = who.role === 'speaker' || who.speaker;
+  const canBackstage = !!who.backstage;
+
+  // Backstage yard (green room + its stage-left lane) — holders only, floor level.
+  if (canBackstage && z < STAGE_POS.z && inYard(x, z)) {
+    const c = clampYard(x, z);
+    return { x: c.x, z: c.z, y: 0, hit: c.hit };
   }
 
   // Next-up: confined to the MIC PLATFORM standing area, at MIC_PLATFORM_TOP.
@@ -87,36 +122,49 @@ export function constrainPosition(who, x, z, ar = false) {
     return { x, z, y: MIC_PLATFORM_TOP, hit };
   }
 
-  // Audience: kept OUT of the stage disc AND the mic-platform footprint (each by the
-  // body radius), inside the outer bound, and in front of the stage.
+  // Audience / off-stage. Stage-role players may STAND on the raised stage disc (y rises to
+  // the top — chairs sit here for panels); everyone else is pushed off it. Mic-platform +
+  // outer bounds + front-of-stage wall as before.
   let hit = false;
   const dx = x - STAGE_POS.x, dz = z - STAGE_POS.z;
   const dist = Math.hypot(dx, dz) || 1e-6;
-  const min = STAGE_RADIUS + BODY_RADIUS;
-  if (dist < min) { const k = min / dist; x = STAGE_POS.x + dx * k; z = STAGE_POS.z + dz * k; hit = true; }
+  let y = 0;
+  if (stageRole) {
+    if (dist <= STAGE_RADIUS - BODY_RADIUS) y = STAGE_TOP_Y;   // standing on the stage top
+  } else {
+    const min = STAGE_RADIUS + BODY_RADIUS;
+    if (dist < min) { const k = min / dist; x = STAGE_POS.x + dx * k; z = STAGE_POS.z + dz * k; hit = true; }
 
-  // Push off the mic-platform footprint (exit via the nearest of front/left/right),
-  // offset by the body radius so the capsule rests flush against the platform side.
-  const pMinX = STAGE_POS.x - MIC_PLATFORM_W / 2 - BODY_RADIUS;
-  const pMaxX = STAGE_POS.x + MIC_PLATFORM_W / 2 + BODY_RADIUS;
-  const pMaxZ = MIC_PLATFORM_FRONT_Z + BODY_RADIUS;
-  if (x > pMinX && x < pMaxX && z > MIC_PLATFORM_BACK_Z && z < pMaxZ) {
-    const dFront = pMaxZ - z, dLeft = x - pMinX, dRight = pMaxX - x;
-    const m = Math.min(dFront, dLeft, dRight);
-    if (m === dFront) z = pMaxZ; else if (m === dLeft) x = pMinX; else x = pMaxX;
-    hit = true;
+    // Push off the mic-platform footprint (audience only) — nearest of front/left/right.
+    const pMinX = STAGE_POS.x - MIC_PLATFORM_W / 2 - BODY_RADIUS;
+    const pMaxX = STAGE_POS.x + MIC_PLATFORM_W / 2 + BODY_RADIUS;
+    const pMaxZ = MIC_PLATFORM_FRONT_Z + BODY_RADIUS;
+    if (x > pMinX && x < pMaxX && z > MIC_PLATFORM_BACK_Z && z < pMaxZ) {
+      const dFront = pMaxZ - z, dLeft = x - pMinX, dRight = pMaxX - x;
+      const m = Math.min(dFront, dLeft, dRight);
+      if (m === dFront) z = pMaxZ; else if (m === dLeft) x = pMinX; else x = pMaxX;
+      hit = true;
+    }
   }
 
-  // Room BOUNDS (outer radius + the front-of-stage wall) — dropped in AR, where the
-  // real room is the boundary and the per-prop exclusions above are enough.
+  // Room BOUNDS (outer radius + the front-of-stage wall) — dropped in AR. The front wall
+  // opens for backstage holders in the stage-LEFT lane mouth (their route behind).
   if (!ar) {
     const ox = x - STAGE_POS.x, oz = z - STAGE_POS.z;
     const od = Math.hypot(ox, oz);
     if (od > AUDIENCE_RADIUS) { const k = AUDIENCE_RADIUS / od; x = STAGE_POS.x + ox * k; z = STAGE_POS.z + oz * k; hit = true; }
-    if (z < STAGE_POS.z) { z = STAGE_POS.z; hit = true; }
+    const inLaneMouth = canBackstage && x > LANE_XMIN && x < LANE_XMAX;
+    if (z < STAGE_POS.z && !inLaneMouth) { z = STAGE_POS.z; hit = true; }
   }
 
-  return { x, z, y: 0, hit };
+  return { x, z, y, hit };
+}
+
+// Inside the L-shaped backstage yard (lane ∪ room)?
+function inYard(x, z) {
+  const r = BODY_RADIUS;
+  return inRect(x, z, LANE_XMIN, LANE_XMAX, LANE_ZMIN, LANE_ZMAX)
+      || inRect(x, z, BS_XMIN + r, BS_XMAX - r, BS_ZMIN + r, BS_ZMAX - r);
 }
 
 function clampInsideCircle(centre, x, z, max, y) {

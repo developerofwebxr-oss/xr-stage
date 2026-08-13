@@ -147,14 +147,17 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
       actions.topUp(); notice = `Topped up · balance ⚡ ${fmt(state.balance())}`; return render();
     }
     if (id === 'requests') { page = 'requests'; notice = ''; return render(); }
+    if (id.startsWith('zap-spk:')) { actions.zapPickedSpeaker(id.slice(8)); notice = '⚡ Zapped'; page = 'main'; return render(); }
     if (id.startsWith('req-accept:')) { actions.acceptTalk(id.slice(11)); notice = 'Talk link opened'; page = 'main'; return render(); }
     if (id.startsWith('req-decline:')) { actions.declineTalk(id.slice(12)); return render(); }
     if (id === 'boost') { actions.toggleBoost(); return render(); }
     if (id === 'voice') { render(); await actions.toggleVoice(); return render(); }
     if (id === 'zap') {
       if (needsSignIn()) return;
+      const spks = state.zapSpeakers ? state.zapSpeakers() : [];
+      if (spks.length > 1) { page = 'speakers'; notice = ''; return render(); }  // panel → picker page
       actions.zapSpeaker();
-      notice = state.speakerPresent() ? '⚡ Zapped the speaker' : 'No one on stage to zap';
+      notice = state.speakerPresent() || spks.length ? '⚡ Zapped the speaker' : 'No one on stage to zap';
       return render();
     }
     if (id.startsWith('comfort:')) { const k = id.slice(8); actions.setComfort(k, !state.comfort()[k]); return render(); }
@@ -200,6 +203,7 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
     else if (page === 'tickets') renderTickets();
     else if (page === 'keypad') renderKeypad();
     else if (page === 'requests') renderRequests();
+    else if (page === 'speakers') renderSpeakers();
 
     if (notice) {
       g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -255,6 +259,14 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
     // Talk requests (Networking) — only when someone has asked to talk
     const reqs = state.talkRequests ? state.talkRequests() : [];
     if (reqs.length) button('requests', PAD, y, full, 58, '🤝 Talk requests', { right: `${reqs.length} ›`, accent: true });
+  }
+
+  function renderSpeakers() {
+    title('WHICH SPEAKER?', 'panel — tap to zap');
+    button('back', PAD, 28, 150, 52, '‹ Back');
+    const spks = state.zapSpeakers ? state.zapSpeakers() : [];
+    let y = 150; const full = CW - 2 * PAD;
+    for (const s of spks) { button(`zap-spk:${s.pubkey}`, PAD, y, full, 74, `⚡ ${s.label}`, { accent: true }); y += 88; }
   }
 
   function renderRequests() {
@@ -383,6 +395,7 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
 
   return {
     open: openMenu, close: closeMenu, toggle, isOpen: () => open,
+    openSpeakers: () => { if (!open) openMenu(); page = 'speakers'; notice = ''; render(); },
     targets, pressWorld, hoverAt, update, dispose,
   };
 }

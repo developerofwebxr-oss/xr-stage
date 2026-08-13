@@ -395,7 +395,7 @@
       /* ── Modal surfaces: spend hub · amount picker · You · Stage · panels ──────── */
       #spend-menu, #zap-picker, #you-menu, #stage-menu, #instructions, #booking,
       #compose, #activity, #micform, #speaker-hub, #session-code, #session-redeem,
-      #ticket-menu, #access-menu, #event-prompt, #zone-confirm, #talk-request {
+      #ticket-menu, #access-menu, #event-prompt, #zone-confirm, #talk-request, #speaker-picker {
         position: fixed; inset: 0; z-index: 20; pointer-events: auto;
         display: flex; align-items: center; justify-content: center;
         background: rgba(3, 4, 8, 0.55);
@@ -405,7 +405,11 @@
       #stage-menu[hidden], #instructions[hidden], #booking[hidden],
       #compose[hidden], #activity[hidden], #micform[hidden], #speaker-hub[hidden],
       #session-code[hidden], #session-redeem[hidden], #ticket-menu[hidden], #access-menu[hidden],
-      #event-prompt[hidden], #zone-confirm[hidden], #talk-request[hidden] { display: none; }
+      #event-prompt[hidden], #zone-confirm[hidden], #talk-request[hidden], #speaker-picker[hidden] { display: none; }
+      #speaker-picker .bar { flex-direction: column; align-items: stretch; gap: 8px; width: min(320px, calc(100vw - 32px)); padding: 18px; }
+      #speaker-picker .ctl { text-align: left; display: flex; align-items: center; gap: 9px; }
+      .sp-pick-list { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow-y: auto; }
+      .sp-pick-list img { width: 24px; height: 24px; border-radius: 6px; flex: 0 0 auto; }
       #zone-confirm .bar, #talk-request .bar {
         flex-direction: column; align-items: stretch; gap: 9px;
         width: min(340px, calc(100vw - 32px)); padding: 18px;
@@ -709,6 +713,16 @@
         </div>
       </div>
 
+      <!-- Which-speaker picker (panels, 4.5): choose one of the event's speakers to zap, or
+           a present participant to add as a co-speaker. Rows injected from main. -->
+      <div id="speaker-picker" hidden>
+        <div class="bar" role="dialog" aria-modal="true" aria-label="Choose a speaker">
+          <div class="pm-title" id="sp-pick-title">🎙 Which speaker?</div>
+          <div id="sp-pick-list" class="sp-pick-list"></div>
+          <button class="ctl" id="sp-pick-cancel">Cancel</button>
+        </div>
+      </div>
+
       <!-- Spend-menu hub (control-bar Zap): ROOM-level sats actions only. -->
       <div id="spend-menu" hidden>
         <div id="spend-panel" class="bar" role="dialog" aria-modal="true" aria-label="Sats">
@@ -866,6 +880,8 @@
           <div class="pm-section">My slot</div>
           <div id="hub-slot"></div>
           <div id="hub-cancel"></div>
+          <div class="pm-section">Panel · speakers</div>
+          <button class="ctl" id="hub-add-cospeaker">➕ Add co-speaker</button>
           <div class="pm-section">Mic queue · ordering</div>
           <div id="hub-criteria"></div>
           <div id="hub-queue"></div>

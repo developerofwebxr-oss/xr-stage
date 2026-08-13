@@ -119,12 +119,18 @@ let boundaryGlow = 0;
 // when an AR session is active so locomotion's clamp lets the player roam the real room.
 let arActive = false;
 let xrMenu = null; // the in-world VR/AR menu (created near the frame loop); null in flat-only load
+let _seatIdx = null; // which stage chair the local player sits in (panels, 4.5), or null
 
 const { rig, update: updateLocomotion, setFreeLook, setMoveInput, jump, resetFlatView } =
   createLocomotion(camera, renderer.domElement, {
     spawn,
     isMobile,
-    constrain: (x, z) => constrainPosition(who, x, z, arActive),
+    // who is dynamic now (4.5): stage access + backstage follow the LIVE speaker-pass state
+    // (URL ?role=speaker OR a granted co-speaker pass), so panels/backstage just work.
+    constrain: (x, z) => constrainPosition(
+      { role: config.role, isNextUp: who.isNextUp, speaker: tickets.speakerPass(), backstage: config.role === 'speaker' || !!tickets.flags().backstageAccess },
+      x, z, arActive,
+    ),
     onBoundary: () => { boundaryGlow = 1; }, // soft edge stop + glow, no snap-back
     // Pointer lock dropped on its own (e.g. Esc) → reflect it in the toggle + hide
     // the ESC hint, so the button and pointer-lock state never get out of sync.
@@ -168,9 +174,11 @@ let _lastBlocked = null;
 function onZoneBlocked(zn) {
   if (_lastBlocked === zn.id) return;   // already prompted this approach — don't nag every frame
   _lastBlocked = zn.id;
+  // Backstage is speakers-only and NOT purchasable — money can't buy the green room.
+  if (zn.id === 'backstage') { hud.toast('🎬 Backstage — speakers only'); return; }
   // Smoking with access but mic not yet granted → the "your mic turns ON" confirm (4.4),
   // NOT a purchase. Accepting unblocks entry; declining leaves the soft bounce in place.
-  if (zn.id === 'smoking' && tickets.flags().smokingAccess && !smokingMicOk) { askSmokingMic(); return; }
+  if (zn.id === 'smoking' && tickets.flags().smokingAccess && !micOk.has('smoking')) { askMicConfirm('smoking'); return; }
   if (tickets.tier() === 'ghost') {
     hud.toast(`${zn.emoji} ${zn.name} needs a ticket`);
     openTicketChooser();
@@ -506,12 +514,13 @@ const _headEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 const presence = createPresence(voice, scene, () => {
   if (!embodied()) return null;
   const zone = zones.current()?.id || null;   // broadcast our zone → real occupancy + zone audio
+  const seatIdx = _seatIdx;                    // broadcast our stage chair → peers see who sits where
   if (renderer.xr.isPresenting) {
     camera.getWorldPosition(_headWorld);
     _headEuler.setFromQuaternion(camera.getWorldQuaternion(_headQuat), 'YXZ');
-    return { x: _headWorld.x, y: rig.position.y, z: _headWorld.z, yaw: _headEuler.y, zone };
+    return { x: _headWorld.x, y: rig.position.y, z: _headWorld.z, yaw: _headEuler.y, zone, seatIdx };
   }
-  return { x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y, zone };
+  return { x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y, zone, seatIdx };
 }, staticBodies, {
   // Each remote peer gets a mock identity (face + name) keyed by its presence id.
   // REAL: presence carries the peer's pubkey; this becomes getProfile(pubkey).
@@ -532,7 +541,15 @@ const zoneAudio = createZoneAudio({
 });
 // Zone enter/leave → publish/unpublish + gain scope. (Smoking entry is already gated on
 // the mic confirm via accessClamp below, so by the time this fires consent is given.)
-zones.onChange((zone) => zoneAudio.setZone(zone?.id || null));
+zones.onChange((zone) => {
+  const id = zone?.id || null;
+  // Open-mic zones (Smoking / Backstage) publish only AFTER the mic-ON confirm. Smoking is
+  // confirmed at its access edge (below); Backstage confirms on entry (no pre-entry gate).
+  if (id === 'smoking' || id === 'backstage') {
+    if (micOk.has(id)) zoneAudio.setZone(id);
+    else { zoneAudio.setZone(null); askMicConfirm(id); }   // silent until they confirm
+  } else zoneAudio.setZone(id);                             // networking / plaza
+});
 
 // Networking incoming talk request → accept/decline. Flat: a DOM dialog; VR: the in-world
 // menu Requests page (badge + toast here). Either side can decline/end.
@@ -552,21 +569,38 @@ _talkReq.accept.addEventListener('click', () => _resolveReq(true));
 _talkReq.decline.addEventListener('click', () => _resolveReq(false));
 _talkReq.root.addEventListener('click', (e) => { if (e.target === _talkReq.root) _resolveReq(false); });
 
-// Smoking mic confirm — the "your mic turns ON in here" moment. Shown when a ticketed
-// player first reaches the Smoking edge (accessClamp keeps them out until they grant it).
-// Continue grants the mic within this click gesture and unblocks entry; Not-now bounces.
-const _micConfirm = { root: document.getElementById('zone-confirm'), yes: document.getElementById('zc-yes'), no: document.getElementById('zc-no') };
-let smokingMicOk = false;
-function askSmokingMic() { _micConfirm.root.hidden = false; }
+// Open-mic zone confirm — the "your mic turns ON in here" moment, shared by Smoking (shown
+// at its access edge) and Backstage (shown on entry). Continue grants the mic within this
+// click gesture; Not-now leaves the soft bounce / keeps you silent.
+const _micConfirm = {
+  root: document.getElementById('zone-confirm'), title: document.getElementById('zc-title'),
+  body: document.getElementById('zc-body'), yes: document.getElementById('zc-yes'), no: document.getElementById('zc-no'),
+};
+const micOk = new Set();          // zones whose mic-ON confirm has been accepted this session
+let _pendingMicZone = null;
+const ZONE_MIC_COPY = {
+  smoking:   { title: '🚬 Smoking Area', body: 'Your mic turns ON in here so people nearby can hear you — and you hear them, louder the closer you stand. Continue?' },
+  backstage: { title: '🎬 Backstage', body: 'Backstage is an open mic — the other panelists here hear you (proximity), and you still hear the stage so you know when you’re up. Turn your mic on?' },
+};
+function askMicConfirm(zoneId) {
+  if (micOk.has(zoneId)) return;
+  _pendingMicZone = zoneId;
+  const c = ZONE_MIC_COPY[zoneId] || ZONE_MIC_COPY.smoking;
+  _micConfirm.title.textContent = c.title; _micConfirm.body.textContent = c.body;
+  _micConfirm.root.hidden = false;
+}
 _micConfirm.yes.addEventListener('click', async () => {
   _micConfirm.root.hidden = true;
-  smokingMicOk = true;                 // unblocks the accessClamp gate → they can walk in
-  _lastBlocked = null;                 // allow the pill to fire on the legitimate entry
+  const z = _pendingMicZone; _pendingMicZone = null;
+  if (z) micOk.add(z);
+  _lastBlocked = null;                 // let the pill fire on the legitimate entry
   try { if (!voice.isConnected) { await voice.connect(); await voice.setListening(true); } }
-  catch { /* connect failure already surfaced; entry allowed, mic just silent (needs a server publish grant) */ }
+  catch { /* connect failure already surfaced; entry allowed, mic silent until a server publish grant */ }
+  if (z === 'backstage' && zones.current()?.id === 'backstage') zoneAudio.setZone('backstage'); // already inside → publish now
 });
-_micConfirm.no.addEventListener('click', () => { _micConfirm.root.hidden = true; });
-_micConfirm.root.addEventListener('click', (e) => { if (e.target === _micConfirm.root) _micConfirm.root.hidden = true; });
+const _closeMic = () => { _micConfirm.root.hidden = true; _pendingMicZone = null; };
+_micConfirm.no.addEventListener('click', _closeMic);
+_micConfirm.root.addEventListener('click', (e) => { if (e.target === _micConfirm.root) _closeMic(); });
 
 // ── Click an avatar → fixed profile card (Phase 2.2 → 2.3) ───────────────────────
 // Plain click raycasts to an avatar (the click stays free — never pointer-locks);
@@ -641,11 +675,12 @@ function pickFromRaycaster() {
     if (mh) xrMenu.pressWorld(mh.point);
     return;
   }
-  const targets = pickables().concat(commentBoard.pickables());
+  const targets = pickables().concat(commentBoard.pickables()).concat(_chairs.map((c) => c.group));
   const hits = raycaster.intersectObjects(targets, true);
   for (const h of hits) {
     let o = h.object;
     while (o) {
+      if (o.userData && o.userData.chairIdx != null) { toggleSeat(o.userData.chairIdx); return; } // sit/stand
       if (o.userData && o.userData.commentId) { tapBoost(o.userData.commentId, h.point.clone()); return; }
       if (o.userData && o.userData.identity) {
         if (o === selectedGroup) deselect();                 // same avatar → close
@@ -816,12 +851,7 @@ const zapNote = () => `Zap from ${identity.current()?.name || 'anon'}`;
 // picker/onPickAmount path is shared with the card's per-person zap.
 const zapUI = createZapUI({
   toast: (m) => hud.toast(m),
-  onZapSpeaker: () => {
-    const g = stageSpeakerGroup();
-    if (!g) return hud.toast('No one on stage to zap');
-    const id = g.userData.identity;
-    zapAvatar(id.pubkey, id.name); // for now single-speaker → direct; "which speaker" picker is later
-  },
+  onZapSpeaker: () => zapSpeakerFlow(),   // single-speaker → direct; panel → which-speaker picker (4.5)
   onZapComment: () => openCompose(),   // spend hub → post a comment (costs a zap)
   onTakeMic: () => openMicForm(),      // spend hub → join / top up the paid mic queue
   onToggleBoost: () => { setBoostByTap(!boostByTap()); zapUI.setBoost(boostByTap()); }, // accidental-zap toggle
@@ -886,9 +916,15 @@ function welcomeZap() {
   if (!requireSignedIn('zap the speaker')) return;
   const ev = booking.currentEvent() || booking.nextEvent();
   if (!ev) return hud.toast('No event to zap right now');
-  const spk = ev.speakers[0] || ev.ownerPubkey;
-  wallet.zap({ toPubkey: spk, amountSats: WELCOME_ZAP, note: `Welcome zap · ${ev.title}` });
-  hud.toast(`⚡ Welcome zap — ${WELCOME_ZAP} to ${ev.title}'s speaker`);
+  const spks = ev.speakers.slice(0, booking.MAX_SPEAKERS);
+  const zapOne = (pk) => { wallet.zap({ toPubkey: pk, amountSats: WELCOME_ZAP, note: `Welcome zap · ${ev.title}` }); hud.toast(`⚡ Welcome zap — ${WELCOME_ZAP} to @${pk.slice(0, 8)}`); };
+  if (spks.length > 1) {   // panel → name all, zap the picked one
+    const names = spks.map((pk) => `@${pk.slice(0, 8)}`).join(', ');
+    hud.toast(`Panel: ${names} — pick who to welcome-zap`);
+    if (renderer.xr.isPresenting) return xrMenu?.openSpeakers?.();
+    return openPickerFlat('⚡ Welcome-zap which speaker?', spks.map((pk) => ({ pubkey: pk, label: `@${pk.slice(0, 8)}` })), zapOne);
+  }
+  zapOne(spks[0] || ev.ownerPubkey);
 }
 // Continue as ghost — an embodied non-holder lapses now (credits + identity + history kept).
 function continueAsGhost() {
@@ -1079,6 +1115,7 @@ const speakerHub = createSpeakerHub({
   onSetCriteria: (c) => { queue.setCriteria(c); refreshHub(); }, // re-ranks the pedestal panel too (queue.onChange)
   onPick: (pubkey) => queue.next(pubkey),                        // Manual: advance THIS entrant → you're-up cue
   onNext: () => queue.next(),                                    // advance by current criteria → you're-up cue
+  onAddCoSpeaker: () => addCoSpeakerFlow(),                      // panels: pick a present participant → co-speaker
 });
 
 // Entrant rows for the hub queue list, with names resolved via identity (async).
@@ -1355,7 +1392,8 @@ xrMenu = createXrMenu(scene, {
     toggleBoost: () => { setBoostByTap(!boostByTap()); zapUI.setBoost(boostByTap()); },
     setComfort: (key, on) => comfort.set(key, on),
     toggleVoice: () => toggleVoice(),
-    zapSpeaker: () => { const gr = stageSpeakerGroup(); if (!gr) return hud.toast('No one on stage to zap'); const id = gr.userData.identity; zapAvatar(id.pubkey, id.name); },
+    zapSpeaker: () => zapSpeakerFlow(),                 // panel → in-world Speakers page
+    zapPickedSpeaker: (pk) => zapAvatar(pk, `@${pk.slice(0, 8)}`),
     acceptTalk: (id) => zoneAudio.acceptTalk(id),      // Networking talk-request accept (VR)
     declineTalk: (id) => zoneAudio.declineTalk(id),
   },
@@ -1375,6 +1413,7 @@ xrMenu = createXrMenu(scene, {
     voiceVerb: verb,
     speakerPresent: () => !!stageSpeakerGroup(),
     talkRequests: () => zoneAudio.pendingIncoming(),   // [{ id, name }] pending Networking asks
+    zapSpeakers: () => currentEventSpeakers().map((pk) => ({ pubkey: pk, label: `@${pk.slice(0, 8)}` })), // panel picker rows
   },
 });
 
@@ -1411,6 +1450,128 @@ function updateCigarettes(dt) {
   }
 }
 
+// ── Panels: chairs + seating + which-speaker picker (4.5) ────────────────────────
+// Chairs are cheap stage furniture (visible in AR — added to the scene, not the shell),
+// spawned only when the current event is a PANEL (2+ speakers), auto-centred by count.
+const CHAIR_SEAT_Y = 0.42, SEAT_DROP = 0.28;
+function makeChair() {
+  const g = new THREE.Group();
+  const body = new THREE.MeshStandardMaterial({ color: 0x1b2130, roughness: 0.75, metalness: 0.1 });
+  const accent = new THREE.MeshBasicMaterial({ color: 0xf7931a, transparent: true, opacity: 0.85 });
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.5), body); seat.position.y = CHAIR_SEAT_Y; g.add(seat);
+  const back = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.08), body); back.position.set(0, CHAIR_SEAT_Y + 0.29, -0.21); g.add(back);
+  const trim = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.045, 0.05), accent); trim.position.set(0, CHAIR_SEAT_Y + 0.52, -0.21); g.add(trim);
+  for (const sx of [-0.2, 0.2]) for (const sz of [-0.2, 0.2]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, CHAIR_SEAT_Y, 6), body);
+    leg.position.set(sx, CHAIR_SEAT_Y / 2, sz); g.add(leg);
+  }
+  return g;
+}
+let _chairs = [];      // [{ group, x, z }]
+let _chairKey = '';
+function buildChairs(n) {
+  for (const c of _chairs) { scene.remove(c.group); c.group.traverse((o) => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); }
+  _chairs = [];
+  if (_seatIdx != null && _seatIdx >= n) _seatIdx = null;
+  const spacing = 1.3, z = STAGE_POS.z + 0.7, x0 = STAGE_POS.x - (n - 1) * spacing / 2;
+  for (let i = 0; i < n; i++) {
+    const g = makeChair();
+    const x = x0 + i * spacing;
+    g.position.set(x, STAGE_TOP_Y, z);        // on the raised stage top, facing the audience (+z)
+    g.userData.chairIdx = i;
+    scene.add(g);
+    _chairs.push({ group: g, x, z });
+  }
+}
+function updateChairs() {
+  const ev = booking.currentEvent();
+  const n = ev && ev.speakers.length >= 2 ? Math.min(ev.speakers.length, booking.MAX_SPEAKERS) : 0;
+  const key = `${ev?.id || ''}:${n}`;
+  if (key !== _chairKey) { _chairKey = key; buildChairs(n); }
+}
+
+// Seat-snap v1 (no animation): walk to a chair + select → snap onto it (position + a seated
+// drop, facing the audience) + broadcast seatIdx; select again OR walk off → stand.
+const canSit = () => config.role === 'speaker' || tickets.speakerPass();
+function toggleSeat(idx) {
+  if (_seatIdx === idx) { _seatIdx = null; return; }
+  if (!canSit()) return hud.toast('Only speakers sit on stage');
+  const ch = _chairs[idx]; if (!ch) return;
+  rig.position.set(ch.x, STAGE_TOP_Y, ch.z);
+  rig.rotation.y = Math.PI;                    // face the audience
+  _seatIdx = idx;
+  hud.toast('Seated — select the chair again or walk off to stand');
+}
+function updateSeat() {
+  if (_seatIdx == null) return;
+  const ch = _chairs[_seatIdx];
+  if (!ch) { _seatIdx = null; return; }
+  if (Math.hypot(rig.position.x - ch.x, rig.position.z - ch.z) > 0.5) { _seatIdx = null; return; } // walked off → stand
+  rig.position.y = STAGE_TOP_Y - SEAT_DROP;    // lowered onto the chair
+}
+
+// Which-speaker picker. Single-speaker → direct; panel → a chooser (flat DOM here, the
+// in-world menu Speakers page in VR). Also reused to pick a present participant to add as a
+// co-speaker. `mode`: 'zap' | 'cospeaker'.
+const _spPick = {
+  root: document.getElementById('speaker-picker'), title: document.getElementById('sp-pick-title'),
+  list: document.getElementById('sp-pick-list'), cancel: document.getElementById('sp-pick-cancel'),
+};
+_spPick.cancel.addEventListener('click', () => { _spPick.root.hidden = true; });
+_spPick.root.addEventListener('click', (e) => { if (e.target === _spPick.root) _spPick.root.hidden = true; });
+const spkLabel = (pk) => `@${pk.slice(0, 8)}`;
+function openPickerFlat(title, rows, onPick) {   // rows: [{ pubkey, label }]
+  _spPick.title.textContent = title;
+  _spPick.list.innerHTML = '';
+  for (const r of rows) {
+    const b = document.createElement('button'); b.className = 'ctl';
+    b.innerHTML = `<img src="${drawKeyface(r.pubkey, 44).toDataURL()}" alt=""><span>${r.label}</span>`;
+    b.addEventListener('click', () => { _spPick.root.hidden = true; onPick(r.pubkey); });
+    _spPick.list.appendChild(b);
+  }
+  _spPick.root.hidden = false;
+}
+const currentEventSpeakers = () => { const ev = booking.currentEvent(); return ev ? ev.speakers.slice(0, booking.MAX_SPEAKERS) : []; };
+// The ONE "zap the speaker" entry (spend hub · in-world menu · welcome zap): direct for a
+// single speaker, a picker for a panel.
+function zapSpeakerFlow() {
+  const spks = currentEventSpeakers();
+  if (spks.length > 1) {
+    if (renderer.xr.isPresenting) { xrMenu?.openSpeakers?.(); return; }   // VR → in-world Speakers page
+    return openPickerFlat('🎙 Which speaker?', spks.map((pk) => ({ pubkey: pk, label: spkLabel(pk) })), (pk) => zapAvatar(pk, spkLabel(pk)));
+  }
+  const pk = spks[0];
+  if (pk) return zapAvatar(pk, spkLabel(pk));
+  const g = stageSpeakerGroup();
+  if (g) return zapAvatar(g.userData.identity.pubkey, g.userData.identity.name);
+  hud.toast('No one on stage to zap');
+}
+
+// Co-speaker (organizer): pick a PRESENT participant → add to the event.speakers[] locally +
+// broadcast so every client converges, and the picked participant self-grants the pass.
+function addCoSpeakerFlow() {
+  const ev = booking.mine()[0] || booking.activeOrNextEvent();
+  if (!ev) return hud.toast('No event of yours to add to');
+  if (ev.speakers.length >= booking.MAX_SPEAKERS) return hud.toast(`Panels cap at ${booking.MAX_SPEAKERS} speakers`);
+  const present = presence.avatars()
+    .map((gr) => gr.userData.identity)
+    .filter((id) => id && !ev.speakers.includes(id.pubkey));
+  if (!present.length) return hud.toast('No present participants to add');
+  openPickerFlat('➕ Add co-speaker', present.map((id) => ({ pubkey: id.pubkey, label: id.name || spkLabel(id.pubkey) })), (pk) => grantCoSpeaker(ev.id, pk));
+}
+function grantCoSpeaker(eventId, pubkey) {
+  if (!booking.addSpeaker(eventId, pubkey)) return hud.toast(`Panels cap at ${booking.MAX_SPEAKERS} speakers`);
+  voice.sendData({ t: 'cospeaker', eventId, pubkey }, { reliable: true });   // converge peers
+  hud.toast(`Added ${spkLabel(pubkey)} as a co-speaker`);
+}
+// Inbound co-speaker signal: mirror the roster on every client; if it's ME, self-grant the
+// event-scoped speaker pass (badge + backstage + stage access all flow from tickets).
+voice.onData((_id, msg) => {
+  if (!msg || msg.t !== 'cospeaker') return;
+  booking.addSpeaker(msg.eventId, msg.pubkey);
+  if (identity.current()?.pubkey === msg.pubkey) { tickets.grantSpeakerPass(msg.eventId); refreshEmbodiment(); hud.toast('🎙 You were added as a co-speaker'); }
+});
+
 // ── Frame loop ──────────────────────────────────────────────────────────────────
 const clock = new THREE.Clock();
 const _prevPos = new THREE.Vector3().copy(rig.position); // for the movement vignette
@@ -1420,6 +1581,7 @@ renderer.setAnimationLoop(() => {
   updateScene(dt);            // scene mood: ring spread + star flicker (GPU clocks)
   updateLocomotion(dt, renderer);
   followBody();               // #5: pin the local body under the head in immersive modes
+  updateSeat();               // panels: hold the seated drop / stand on walk-off (before broadcast)
   presence.update(dt);
   // Nudge the local rig out of the deepest overlap with any body (live or static),
   // keeping centres >= MIN_BODY_GAP (heads never intersect), then re-clamp so the
@@ -1441,7 +1603,7 @@ renderer.setAnimationLoop(() => {
   // Runs BEFORE zones.update, so the HUD pill only fires when we're LEGITIMATELY inside.
   // Smoking additionally needs the mic-ON confirm (smokingMicOk); until then a ticketed
   // player is soft-bounced at its edge exactly like a no-access door.
-  const gate = accessClamp(rig.position.x, rig.position.z, (zn) => !!tickets.flags()[zn.requires] && (zn.id !== 'smoking' || smokingMicOk));
+  const gate = accessClamp(rig.position.x, rig.position.z, (zn) => !!tickets.flags()[zn.requires] && (zn.id !== 'smoking' || micOk.has('smoking')));
   if (gate.blocked) { rig.position.x = gate.x; rig.position.z = gate.z; onZoneBlocked(gate.blocked); }
   else _lastBlocked = null;
 
@@ -1451,6 +1613,7 @@ renderer.setAnimationLoop(() => {
   zoneAudio.update(dt);                     // proximity gain + zone render-gating (self-throttled ~5Hz)
   zones.setLiveOccupancy(presence.zoneCounts()); // real occupancy (re-textures plaques only on change)
   updateCigarettes(dt);                     // lit cigarette on every Smoking occupant
+  updateChairs();                           // panels: spawn/arrange stage chairs for 2+ speakers
 
   zapFx.update(dt);           // in-world zap bursts (no-op when none are active)
   commentBoard.update(dt);    // live-feed scroll + sticky top-wall refresh

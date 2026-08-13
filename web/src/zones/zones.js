@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { STAGE_POS } from '../room/zones.js';
+import { STAGE_POS, BACKSTAGE, BACKSTAGE_CENTER } from '../room/zones.js';
 
 // zones/zones.js — the SOCIAL zones as ENCLOSED destination buildings across the plaza behind
 // the audience, the detection + access SEAMS, a night FOREST backdrop, and live OCCUPANCY.
@@ -62,6 +62,14 @@ export const ZONE_DEFS = [
     lettersText: 'NETWORKING', lettersH: 2.6,
     plaque: 'Meet people. Ask to talk — mic by mutual permission. Entry with ticket.',
   },
+  {
+    // Backstage green room (4.5) — SPEAKERS ONLY. Behind the screen wall; no public plaque
+    // (it's not a destination). accessKind null → not purchasable (money can't buy it).
+    id: 'backstage', name: 'Backstage', emoji: '🎬', hue: 0xffb454,
+    cx: BACKSTAGE_CENTER.x, cz: BACKSTAGE_CENTER.z, r: BACKSTAGE_CENTER.r,
+    requires: 'backstageAccess', accessKind: null,
+    private: true,               // no entrance plaque / occupancy sign
+  },
 ];
 
 // Per-zone arc geometry (radius + bearing from the stage), computed once.
@@ -104,6 +112,7 @@ export function accessClamp(x, z, allow) {
 const MOCK_POP = {
   networking: { count: 11, patron: 3, supporter: 4, speaker: 1 },
   smoking:    { count: 6,  patron: 1, supporter: 2, speaker: 2 },
+  backstage:  { count: 1,  patron: 0, supporter: 0, speaker: 1 }, // a co-panelist waiting
 };
 let _localBadge = { badge: null, speaker: false }; // the local player's marks (set by main)
 let _liveCounts = {};                               // real live remote occupants per zone (4.4)
@@ -157,7 +166,7 @@ export const zones = {
 //   zoneAnchors.networking = { walls:[back,left,right], floor, ceiling, propSpawns:[Object3D…] }
 //   zoneAnchors.smoking    = { ground, perimeter:[back,left,right,frontL,frontR], propSpawns:[…] }
 // walls/ground are also the future SPONSOR-screen mounts — kept clear.
-export const zoneAnchors = { networking: null, smoking: null };
+export const zoneAnchors = { networking: null, smoking: null, backstage: null };
 
 // ── Shared materials ──────────────────────────────────────────────────────────────────
 const M = {
@@ -169,6 +178,7 @@ const M = {
   post:     new THREE.MeshBasicMaterial({ color: 0x11151f }),
   teal:     new THREE.MeshBasicMaterial({ color: TEAL, transparent: true, opacity: 0.9 }),
   ember:    new THREE.MeshBasicMaterial({ color: EMBER, transparent: true, opacity: 0.9 }),
+  gold:     new THREE.MeshBasicMaterial({ color: 0xffb454, transparent: true, opacity: 0.9 }),
   canopy:   new THREE.MeshBasicMaterial({ color: 0xffffff }), // tinted per-instance (instanceColor)
   trunk:    new THREE.MeshBasicMaterial({ color: 0x0a0806 }),
 };
@@ -195,10 +205,12 @@ export function buildZoneScenery(scene) {
   group.name = 'zoneScenery';
   const net = buildNetworking(ZONE_DEFS[1]);
   const smk = buildSmoking(ZONE_DEFS[0]);
-  group.add(net.group, smk.group);
+  const bs = buildBackstage();
+  group.add(net.group, smk.group, bs.group);
   group.add(buildForest());              // night forest backdrop OUTSIDE both zones
   zoneAnchors.networking = net.anchors;
   zoneAnchors.smoking = smk.anchors;
+  zoneAnchors.backstage = bs.anchors;
   scene.add(group);
   for (const fn of _plaqueRedraws) fn(); // initial occupancy draw
   return group;
@@ -291,6 +303,41 @@ function buildSmoking(zn) {
   g.add(placePlaque(zn, R, th + gateHalf + 0.12));
 
   return { group: g, anchors: { ground, perimeter: [back, leftH, rightH, frontL, frontR], propSpawns } };
+}
+
+// BACKSTAGE — an enclosed green room behind the screen wall; door on the stage-LEFT (−x)
+// wall aligned to the approach lane. Solid walls + ceiling → the interior never leaks to the
+// plaza (3.13c enclosure). Speakers only; texture-ready planes + couch/table prop anchors.
+function buildBackstage() {
+  const g = new THREE.Group();
+  const { cx, cz, w, h, d, doorHalf } = BACKSTAGE;
+  const x0 = cx - w / 2, x1 = cx + w / 2, z0 = cz - d / 2, z1 = cz + d / 2;
+
+  const floor = plane(w, d, M.floorNet); floor.rotation.x = -Math.PI / 2; floor.position.set(cx, 0.02, cz);
+  const ceil  = plane(w, d, M.interior); ceil.rotation.x = Math.PI / 2;  ceil.position.set(cx, h, cz);
+  const back  = plane(w, h, M.wall);     back.position.set(cx, h / 2, z0);
+  const front = plane(w, h, M.wall);     front.position.set(cx, h / 2, z1);          // faces the screen wall
+  const right = plane(d, h, M.wall);     right.rotation.y = -Math.PI / 2; right.position.set(x1, h / 2, cz);
+  // −x wall (stage-left) split around the doorway (aligned to the lane at cz).
+  const segD = (d - 2 * doorHalf) / 2;
+  const leftA = plane(segD, h, M.wall);  leftA.rotation.y = Math.PI / 2; leftA.position.set(x0, h / 2, z0 + segD / 2);
+  const leftB = plane(segD, h, M.wall);  leftB.rotation.y = Math.PI / 2; leftB.position.set(x0, h / 2, z1 - segD / 2);
+  g.add(floor, ceil, back, front, right, leftA, leftB);
+
+  for (const s of [-1, 1]) {                                   // door jambs
+    const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.12, h, 0.12), M.gold);
+    jamb.position.set(x0, h / 2, cz + s * doorHalf); g.add(jamb);
+  }
+  const sign = makeLettersPlane('BACKSTAGE', 0xffb454, 0.34);  // subtle, not a landmark
+  sign.position.set(x0 - 0.05, h - 0.5, cz); sign.rotation.y = -Math.PI / 2; g.add(sign);
+
+  const propSpawns = [
+    addAnchor(g, cx, cz + 1.0, 'bs-couch'),
+    addAnchor(g, cx - 2.5, cz, 'bs-chair-L'),
+    addAnchor(g, cx + 2.5, cz, 'bs-chair-R'),
+    addAnchor(g, cx, cz - 1.5, 'bs-table'),
+  ];
+  return { group: g, anchors: { walls: [back, front, right, leftA, leftB], floor, ceiling: ceil, propSpawns } };
 }
 
 // A curved wall arc = an open-ended cylinder segment centred on the stage.

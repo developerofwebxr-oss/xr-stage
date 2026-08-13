@@ -27,6 +27,7 @@ const N_SLOTS = 12;                 // upcoming grid
 const PENDING_MS = 1000;            // mock external-payment settle
 const TITLE_MAX = 60;
 const MAX_EVENT_SLOTS = 3;          // book up to 3 consecutive slots as ONE event (minimal grouping)
+const MAX_SPEAKERS = 5;             // panels cap at 5 speakers per event (4.5)
 const priceFor = (durationMin) => Math.round((durationMin / 10) * SLOT_PRICE_PER_10MIN);
 
 // ── Mock clock ────────────────────────────────────────────────────────────────────────
@@ -63,11 +64,21 @@ function makeEvent({ title, ownerPubkey, slotList }) {
 }
 
 // Seed a few mock events so the schedule + event transitions have content out of the box.
+// Two are PANELS (4.5): 'Lightning & Nostr' = 2 speakers, 'Fireside' = 5 speakers, so chairs
+// + the which-speaker picker have content. ?panel=N also makes the CURRENT event an N-panel.
+const spk = (i) => identity.pubkeyFromSeed(`speaker-${i}`);
 (function seed() {
-  const spk = (i) => identity.pubkeyFromSeed(`speaker-${i}`);
   makeEvent({ title: 'Opening Keynote', ownerPubkey: spk(0), slotList: [_slots[0]] });
-  makeEvent({ title: 'Lightning & Nostr', ownerPubkey: spk(1), slotList: [_slots[1]] });
-  makeEvent({ title: 'Fireside: self-custody', ownerPubkey: spk(2), slotList: [_slots[2], _slots[3]] }); // 20-min
+  const e2 = makeEvent({ title: 'Lightning & Nostr', ownerPubkey: spk(1), slotList: [_slots[1]] });
+  e2.speakers.push(spk(11));                                   // → 2-speaker panel
+  const e3 = makeEvent({ title: 'Fireside: self-custody', ownerPubkey: spk(2), slotList: [_slots[2], _slots[3]] });
+  for (let i = 0; i < 4; i++) e3.speakers.push(spk(20 + i));   // → 5-speaker panel
+  // DEV: ?panel=N seeds the CURRENT event with N speakers so chairs are visible at spawn.
+  const panelN = Number(new URLSearchParams(location.search).get('panel')) || 0;
+  if (panelN > 1) {
+    const cur = [..._events.values()].find((e) => e.startsAt <= now() && now() < e.endsAt);
+    if (cur) for (let i = 1; i < Math.min(panelN, MAX_SPEAKERS); i++) cur.speakers.push(spk(50 + i));
+  }
 })();
 
 const copy = (e) => (e ? { ...e, speakers: [...e.speakers], slotIds: [...e.slotIds] } : null);
@@ -109,6 +120,19 @@ export const booking = {
     tickets.grantSpeakerPass(ev.id);      // booking IS the speaker's ticket — scoped to THIS event
     emit();
     return { state: 'confirmed', price: rent, eventId: ev.id, event: copy(ev) };
+  },
+
+  MAX_SPEAKERS,
+  // Add a co-speaker to an event (panels, 4.5) — organizer-driven, capped at MAX_SPEAKERS.
+  // Deduped + idempotent; peers converge via a broadcast that re-calls this on each client.
+  addSpeaker(eventId, pubkey) {
+    const ev = _events.get(eventId);
+    if (!ev || !pubkey) return false;
+    if (ev.speakers.includes(pubkey)) return true;
+    if (ev.speakers.length >= MAX_SPEAKERS) return false;
+    ev.speakers.push(pubkey);
+    emit();
+    return true;
   },
 
   mine() {

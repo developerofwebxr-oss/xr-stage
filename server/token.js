@@ -47,7 +47,14 @@ export async function tokenHandler(req, res) {
     at.addGrant({
       roomJoin: true,
       room,
-      canPublish: role === 'speaker', // listeners cannot publish audio
+      // canPublish is granted to EVERYONE now (4.5): the zone mics (Smoking / Networking /
+      // Backstage — audio/zoneAudio.js) need any participant to publish their mic, not just
+      // stage speakers. TRADE-OFF: with an open publish grant, "who may be heard where" is
+      // enforced APP-SIDE — the stage mic still gates on config.role (livekit.setMicEnabled),
+      // and zone audio gates by zone membership + proximity + talk-links. At go-real, tighten
+      // this back to per-role/per-zone server grants (issue scoped tokens, or use the LiveKit
+      // server API to mute/allow) so publish can't be forged past the app layer.
+      canPublish: true,
       canSubscribe: true,             // everyone hears the room
       canPublishData: true,           // everyone can send presence / shared state
     });

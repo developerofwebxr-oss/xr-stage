@@ -57,11 +57,11 @@ export function createZoneAudio({ voice, myIdentity, getLocalPos, getPeers, onTa
   const send = (to, kind, extra = {}) => voice.sendData({ t: 'talk', to, kind, from: myIdentity, ...extra }, { reliable: true });
   const notifyLinks = () => onLinksChanged && onLinksChanged([...links]);
 
-  // My mic should publish when I'm in Smoking (open mic) OR in Networking with ≥1 live
-  // talk-link. Plaza/stage never auto-publish here (the stage mic is the speaker's own
-  // Speak toggle). Connects on demand within the entry gesture.
+  // My mic should publish in an OPEN-MIC zone (Smoking or Backstage), OR in Networking with
+  // ≥1 live talk-link. Plaza/stage never auto-publish here (the stage mic is the speaker's
+  // own Speak toggle). Connects on demand within the entry gesture.
   function shouldPublish() {
-    return myZone === 'smoking' || (myZone === 'networking' && links.size > 0);
+    return myZone === 'smoking' || myZone === 'backstage' || (myZone === 'networking' && links.size > 0);
   }
   async function updateMic() {
     const want = shouldPublish();

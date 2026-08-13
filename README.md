@@ -134,6 +134,51 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Panels + Backstage + token grant (4.5)** — multi-speaker events, a gated green room, and the
+server publish grant 4.4 flagged. No new deps.
+- **Part A — Backstage (a real, gated building).** An enclosed green room BEHIND the screen wall
+  (`room/zones.js` `BACKSTAGE`), solid walls + ceiling + a stage-left doorway, reached down a
+  stage-LEFT approach lane; the interior never leaks to the plaza (non-speakers are walled at the
+  stage-front line). **Gate:** speakers-only via the `backstageAccess` flag (the speaker pass —
+  Patron does NOT include it, money can't buy it); non-holders soft-bounce with "Speakers only".
+  **Gate matrix: speaker ✓ / patron ✗ / ghost ✗.** **Audio:** a third open-mic zone in `zoneAudio`
+  (mic-confirm on entry, auto-publish inside, proximity gain) — fully isolated from plaza/stage,
+  but backstage occupants still hear the stage (`zoneHearsStage`) so panelists know when they're
+  up. `zoneId:'backstage'` flows through zones/presence/occupancy (real+mock); the pill shows it;
+  no entrance plaque (private room). `constrainPosition` gained the holder yard/lane + let all
+  stage-role players stand on the raised stage.
+- **Part B — Panels (up to 5 speakers).** `booking.addSpeaker(eventId, pubkey)` (cap 5) + a
+  cross-client **co-speaker broadcast** (`{t:'cospeaker'}` over the data channel): every client
+  mirrors the roster and the picked participant **self-grants** the event-scoped speaker pass
+  (badge + backstage + stage access all flow from `tickets`). The organizer adds one from the
+  **Speaker hub** ("➕ Add co-speaker" → present-participant picker). **Chairs:** cheap stage
+  furniture (visible in AR), spawned only for a 2+ speaker event, auto-centred by count (1-speaker
+  events keep the bare stage). **Seat-snap v1 (no animation):** walk to a chair + select → snap
+  onto it (position + a seated drop, facing the audience) + broadcast a `seatIdx` presence field;
+  select again OR walk off → stand. **Which-speaker picker:** single speaker → direct as now; a
+  panel opens a chooser — a flat DOM list (`#speaker-picker`) or the in-world menu **Speakers page**
+  in VR — feeding Zap-the-speaker (spend hub · in-world menu · welcome-zap, which now names all
+  panelists). Speaker pool unchanged (per-event pot already covers panels; equal split within a
+  panel is the payout seam). Seeds: 'Lightning & Nostr' = 2-speaker, 'Fireside' = 5-speaker;
+  `?panel=N` makes the current event an N-panel for testing.
+- **Part C — Server token grant.** `server/token.js` now grants `canPublish: true` to EVERYONE
+  (the zone mics need it). **Trade-off:** publish is open at the token layer, so "who may be heard
+  where" is enforced app-side (stage mic still gates on `config.role`; zone audio gates by zone +
+  proximity + talk-links). At go-real, tighten back to per-role/per-zone server grants. Redeploy
+  rides the push (Railway `start: node server.js`).
+- **Seat-snap mechanics:** position snap (no animation) + a `seatIdx` presence field peers read;
+  standing = re-select or walk >0.5 m off the chair. **Picker surfaces:** flat `#speaker-picker`
+  DOM list; VR in-world menu Speakers page (mirrors the Requests page).
+- **Guardrails.** Chairs/building are cheap procedural geometry (Quest-safe); zoneAudio stays
+  composition-only; no payout logic; no per-event pricing UI. Clean build, no console errors, stage
+  voice untouched.
+- **Verified headlessly:** 5 chairs spawn + auto-centre on stage (`?panel=5`, screenshot); the
+  backstage **gate-matrix rule** (speaker reaches the lane; patron/ghost walled) against a case
+  table; no backstage leak from the plaza (enclosure); no console errors; clean build. **Needs a
+  desktop walk / device / real token server:** walking a speaker into the backstage interior and
+  the mic-confirm-on-entry, the two-client co-speaker converge + seat broadcast (peers seeing who
+  sits where), real audible zone mics now that the grant is live, and AR chair visibility.
+
 **Audio zones — proximity voice + zone isolation (4.4)** — no new deps; one new module
 `src/audio/zoneAudio.js`, layered OVER the stage voice (never forking it). ONE LiveKit room,
 no new tokens/rooms/server changes.

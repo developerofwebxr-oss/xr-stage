@@ -24,6 +24,7 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
   const pool = new AvatarPool(scene, { onSpawn: onAvatarSpawn });
   const lastSeen = new Map(); // id → timestamp
   const peerZone = new Map(); // id → zoneId | null (which social zone each peer is in)
+  const peerSeat = new Map(); // id → seatIdx | null (which stage chair each peer sits in)
 
   // Inbound: update/spawn a remote avatar for any presence message. The heartbeat now
   // carries the sender's zone id (4.4) so every client knows who is in which social zone
@@ -32,6 +33,7 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
     if (!msg || msg.t !== 'presence' || !Array.isArray(msg.p)) return;
     lastSeen.set(id, performance.now());
     peerZone.set(id, msg.zone || null);
+    peerSeat.set(id, typeof msg.seatIdx === 'number' ? msg.seatIdx : null);
     pool.upsert(id, msg.p, typeof msg.yaw === 'number' ? msg.yaw : 0);
     const e = pool.byId.get(id);
     if (e) e.group.userData.pid = id;   // presence id on the group → target for talk requests
@@ -53,6 +55,7 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
           p: [round(pose.x), round(pose.y), round(pose.z)],
           yaw: round(pose.yaw),
           zone: pose.zone || null,     // which social zone we're standing in (null = plaza/stage)
+          seatIdx: typeof pose.seatIdx === 'number' ? pose.seatIdx : null, // stage chair, or null
         });
       }
     }
@@ -61,7 +64,7 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
     const now = performance.now();
     const live = new Set();
     for (const [id, ts] of lastSeen) {
-      if (now - ts > STALE_MS) { lastSeen.delete(id); peerZone.delete(id); }
+      if (now - ts > STALE_MS) { lastSeen.delete(id); peerZone.delete(id); peerSeat.delete(id); }
       else live.add(id);
     }
     pool.prune(live);
@@ -72,7 +75,7 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
   // id is the LiveKit participant identity (== the audio track owner == the talk-request
   // address); group.position is the peer's world position for the distance falloff.
   function peers() {
-    return [...pool.byId.entries()].map(([id, e]) => ({ id, group: e.group, zone: peerZone.get(id) || null }));
+    return [...pool.byId.entries()].map(([id, e]) => ({ id, group: e.group, zone: peerZone.get(id) || null, seat: peerSeat.get(id) ?? null }));
   }
   // Live head-count per social zone (real occupancy for participants; main adds the seeded
   // mock population on top so the plaques still read as busy).
