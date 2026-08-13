@@ -134,6 +134,18 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Local body comfort — semi-transparent self in VR/AR (4.9)** — no new deps. In immersive VR/AR,
+glancing down showed your own opaque pill blocking the floor. The **local** body now fades to a
+faint hint (~0.3 opacity) in immersive only, with `depthWrite:false` so being inside the capsule
+doesn't z-fight / double-layer and the transparent body never occludes the floor or your (opaque)
+hand mitts. Toggled on the session transition (`onModeChange`): faint in VR/AR, solid in flat.
+Purely a **local render tweak** — peers still receive the full opaque body (not presence state,
+unrelated to "go invisible"); the local head stays hidden as before. Flat's third-person-ish view
+is unchanged. **Verified:** clean build, no console errors, flat body untouched. The immersive look
+(floor visible through a faint body) is **owner-tested on device**; the `webxr-threejs` skill
+fold-in ("local body semi-transparent or hidden in immersive; opaque for peers") lands once
+device-confirmed.
+
 **Hands & gestures (4.8)** — embodiment, riding the existing presence/data channels. No new deps.
 - **A. Tracked hands.** In immersive VR/AR, two cheap **mitts** (shared capsule geometry, body
   colour) parent to the controllers → auto-follow their pose locally. **Broadcast:** the presence

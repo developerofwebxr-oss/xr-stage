@@ -154,6 +154,20 @@ scene.add(rig);
 const localBody = createPlayerBody(who.role === 'speaker' ? 0xf7931a : 0x4cc2ff);
 rig.add(localBody);
 
+// Local-body comfort (4.9): in immersive VR/AR, glancing down at your own opaque pill blocks
+// the floor. Fade the LOCAL body to a faint hint in immersive only — depthWrite:false so being
+// inside the capsule doesn't z-fight / double-layer, and so the transparent body never occludes
+// your (opaque) hand mitts or the floor. Purely a local render tweak: peers still receive the
+// full opaque body (this is NOT presence state, and unrelated to "go invisible"). Flat unchanged.
+const _localBodyMat = localBody.getObjectByName('body')?.material;
+function setLocalBodyImmersive(on) {
+  if (!_localBodyMat) return;
+  _localBodyMat.transparent = on;
+  _localBodyMat.opacity = on ? 0.3 : 1;
+  _localBodyMat.depthWrite = !on;
+  _localBodyMat.needsUpdate = true;
+}
+
 // ── HUD ─────────────────────────────────────────────────────────────────────────
 const hud = createHud();
 hud.setRoom(config.room);
@@ -374,6 +388,7 @@ setupXR(renderer, {
     document.getElementById('joystick').hidden = mode !== 'flat' ? true : !isMobile;
     document.getElementById('jump-btn').hidden = mode !== 'flat' ? true : !isMobile;
     if (mode !== 'flat') closeAllMenus();        // leaving flat closes all DOM menus
+    setLocalBodyImmersive(mode !== 'flat');      // 4.9: faint self-body in immersive, solid in flat
     if (mode === 'flat') { xrMenu?.close(); resetFlatView(); } // close panel + clear residual XR camera roll/offset
     if (mode === 'flat' && !isMobile) hud.flashLockHint(); // brief reminder on return
     if (mode !== 'flat') hud.showFreeLookHint(false);
