@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { STAGE_POS, BACKSTAGE, BACKSTAGE_CENTER } from '../room/zones.js';
+import { loadGLB, fitToHeight, measure } from '../room/gltf.js';
 
 // zones/zones.js — the SOCIAL zones as ENCLOSED destination buildings across the plaza behind
 // the audience, the detection + access SEAMS, a night FOREST backdrop, and live OCCUPANCY.
@@ -44,6 +45,15 @@ const shortAng = (d) => Math.atan2(Math.sin(d), Math.cos(d));
 const NET_H = 7.0, NET_WALLHALF = 0.30, NET_DOORHALF = 0.055, NET_DEPTH = 22;
 // Smoking CLEARING.
 const SMK_CW = 11, SMK_CD = 10, SMK_HH = 3.0, SMK_POSTH = 3.6, SMK_GATEHALF = 0.07;
+// 🦩 Nostrich Park (4.10) — a large fenced amusement park, far-right open land (reachable within
+// AUDIENCE_RADIUS: dist from stage ≈ 29 m). Open-air (fence perimeter, no ceiling). The flock pens
+// + coaster station live inside; main builds those (they animate). GATE = the entrance GLB.
+export const PARK = { cx: 20, cz: 14, w: 20, d: 20, h: 3.0, gateHalf: 2.0, hue: 0xff5aa8 };
+export const PARK_PENS = [   // fenced sub-areas the flock wanders (never through guests)
+  { x: PARK.cx - 5, z: PARK.cz + 4, w: 7, d: 7 },
+  { x: PARK.cx + 5, z: PARK.cz + 5, w: 7, d: 6 },
+  { x: PARK.cx + 6, z: PARK.cz - 4, w: 6, d: 6 },
+];
 
 export const ZONE_DEFS = [
   {
@@ -69,6 +79,16 @@ export const ZONE_DEFS = [
     cx: BACKSTAGE_CENTER.x, cz: BACKSTAGE_CENTER.z, r: BACKSTAGE_CENTER.r,
     requires: 'backstageAccess', accessKind: null,
     private: true,               // no entrance plaque / occupancy sign
+  },
+  {
+    // 🦩 Nostrich Park (4.10) — a PAID amusement park, far-right open land. Flamingo pink.
+    // Entry 500 credits (Basic/Supporter) · included for Patron + speakers. Rides cost extra.
+    id: 'park', name: 'Nostrich Park', emoji: '🦩', hue: 0xff5aa8,
+    fx: PARK.cx, fz: PARK.cz - PARK.d / 2, // gate on the front (−z, plaza-facing) wall
+    cx: PARK.cx, cz: PARK.cz, r: 5.0,
+    requires: 'parkAccess', accessKind: 'park',
+    lettersText: 'NOSTRICH PARK', lettersH: 2.4,
+    plaque: 'Entry 500 · rides extra. The Nostrich Coaster departs from the park station — 210 credits a seat.',
   },
 ];
 
@@ -113,6 +133,7 @@ const MOCK_POP = {
   networking: { count: 11, patron: 3, supporter: 4, speaker: 1 },
   smoking:    { count: 6,  patron: 1, supporter: 2, speaker: 2 },
   backstage:  { count: 1,  patron: 0, supporter: 0, speaker: 1 }, // a co-panelist waiting
+  park:       { count: 9,  patron: 4, supporter: 3, speaker: 0 }, // a busy amusement park
 };
 let _localBadge = { badge: null, speaker: false }; // the local player's marks (set by main)
 let _liveCounts = {};                               // real live remote occupants per zone (4.4)
@@ -166,7 +187,7 @@ export const zones = {
 //   zoneAnchors.networking = { walls:[back,left,right], floor, ceiling, propSpawns:[Object3D…] }
 //   zoneAnchors.smoking    = { ground, perimeter:[back,left,right,frontL,frontR], propSpawns:[…] }
 // walls/ground are also the future SPONSOR-screen mounts — kept clear.
-export const zoneAnchors = { networking: null, smoking: null, backstage: null };
+export const zoneAnchors = { networking: null, smoking: null, backstage: null, park: null };
 
 // ── Shared materials ──────────────────────────────────────────────────────────────────
 const M = {
@@ -206,11 +227,13 @@ export function buildZoneScenery(scene) {
   const net = buildNetworking(ZONE_DEFS[1]);
   const smk = buildSmoking(ZONE_DEFS[0]);
   const bs = buildBackstage();
-  group.add(net.group, smk.group, bs.group);
+  const park = buildPark(ZONE_DEFS[3]);
+  group.add(net.group, smk.group, bs.group, park.group);
   group.add(buildForest());              // night forest backdrop OUTSIDE both zones
   zoneAnchors.networking = net.anchors;
   zoneAnchors.smoking = smk.anchors;
   zoneAnchors.backstage = bs.anchors;
+  zoneAnchors.park = park.anchors;
   scene.add(group);
   for (const fn of _plaqueRedraws) fn(); // initial occupancy draw
   return group;
@@ -338,6 +361,49 @@ function buildBackstage() {
     addAnchor(g, cx, cz - 1.5, 'bs-table'),
   ];
   return { group: g, anchors: { walls: [back, front, right, leftA, leftB], floor, ceiling: ceil, propSpawns } };
+}
+
+// 🦩 NOSTRICH PARK — a large open-air fenced park; the entrance GLB is the sole gate (async-loaded,
+// scaled to fit; primitive gateposts stand in until it lands). Fence perimeter closes the rest.
+// The flock + coaster are added by main (they animate). Ground + fence are texture-ready anchors.
+function buildPark(zn) {
+  const g = new THREE.Group();
+  const { cx, cz, w, d, h, gateHalf } = PARK;
+  const x0 = cx - w / 2, x1 = cx + w / 2, z0 = cz - d / 2, z1 = cz + d / 2;
+
+  const ground = plane(w, d, M.groundSmk); ground.rotation.x = -Math.PI / 2; ground.position.set(cx, 0.02, cz);
+  g.add(ground);
+  // Fence perimeter (hedge planes): back + sides solid; the front (−z, plaza-facing) has the gate gap.
+  const back = hedge(w, h); back.position.set(cx, h / 2, z1);
+  const left = hedge(d, h); left.rotation.y = Math.PI / 2; left.position.set(x0, h / 2, cz);
+  const right = hedge(d, h); right.rotation.y = -Math.PI / 2; right.position.set(x1, h / 2, cz);
+  const segW = (w - 2 * gateHalf) / 2;
+  const frontL = hedge(segW, h); frontL.position.set(cx - (gateHalf + segW / 2), h / 2, z0);
+  const frontR = hedge(segW, h); frontR.position.set(cx + (gateHalf + segW / 2), h / 2, z0);
+  g.add(back, left, right, frontL, frontR);
+
+  // Placeholder gateposts at the doorway (replaced/joined by the GLB gate when it loads).
+  for (const s of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, h + 1, 0.4), M.post);
+    post.position.set(cx + s * gateHalf, (h + 1) / 2, z0); g.add(post);
+  }
+  const propSpawns = [addAnchor(g, cx, cz, 'park-centre'), addAnchor(g, cx - 6, cz + 6, 'park-snack'), addAnchor(g, cx + 6, cz - 6, 'park-photo')];
+
+  g.add(placeLetters(zn, radiusOf(zn.fx, zn.fz) + 0.1, bearing(zn.fx, zn.fz), h + 1.6));
+  g.add(placePlaque(zn, radiusOf(zn.fx, zn.fz), bearing(zn.fx, zn.fz) + 0.14));
+
+  // Async: drop the entrance GLB into the gate. Graceful — the gateposts already stand in.
+  loadGLB('/nostriches_entrance.glb').then((gate) => {
+    if (!gate) { console.warn('[park] entrance GLB absent — gateposts stand in'); return; }
+    const scale = fitToHeight(gate, h + 1.4);        // fit the gate to ~4.4 m (its largest bound)
+    const box = measure(gate).box;
+    gate.position.set(cx, -box.min.y, z0);           // seat the GLB's base on the ground at the doorway
+    gate.rotation.y = Math.PI;                       // face the plaza
+    g.add(gate);
+    console.log('[park] entrance GLB placed · fit scale', scale.toFixed(3));
+  });
+
+  return { group: g, anchors: { ground, fence: [back, left, right, frontL, frontR], propSpawns } };
 }
 
 // A curved wall arc = an open-ended cylinder segment centred on the stage.

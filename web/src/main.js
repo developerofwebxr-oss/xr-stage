@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { config } from './config.js';
 import { buildScene } from './room/scene.js';
-import { zones, buildZoneScenery, accessClamp } from './zones/zones.js';
+import { zones, buildZoneScenery, accessClamp, PARK, PARK_PENS } from './zones/zones.js';
+import { createFlock } from './room/flock.js';
+import { createCoaster } from './ride/coaster.js';
 import { tickets } from './tickets/tickets.js';
 import { createTicketUI } from './ui/ticketUI.js';
 import { createEventPrompt } from './ui/eventPrompt.js';
@@ -53,6 +55,15 @@ const { scene, userFloor, setARMode, update: updateScene } = buildScene();
 // Social zones behind the audience (Smoking Area + Networking): floor markings, glowing
 // signage, and plaques. Freestanding props → they stay visible in AR (not part of the shell).
 buildZoneScenery(scene);
+// 🦩 Nostrich Park (4.10): the procedural flock + the roller coaster. Both animate on the frame
+// loop; the coaster async-loads the owner GLBs (placeholder carts until they land). onReturn
+// releases any local rider from their seat.
+const flock = createFlock(scene, { center: { x: PARK.cx, z: PARK.cz }, pens: PARK_PENS, count: 8 });
+const coaster = createCoaster(scene, {
+  nCarts: 4,
+  onDepart: () => { hud.toast('🎢 And… away we go!'); },
+  onReturn: () => endRide(),
+});
 // Static ambiance capsules; positions feed avatar separation; groups get identities.
 const seeded = seedPlaceholders(scene);
 const staticBodies = seeded.map((s) => s.position);
@@ -687,7 +698,8 @@ function selectAvatar(group, profile) {
   selectionRing.position.set(0, 0.06, 0);
   selectedGroup = group;
   // Ask-to-talk shows only when I AND the picked live peer are both in Networking.
-  const canAskTalk = !!identity.current() && zones.current()?.id === 'networking' && peerZoneOf(group) === 'networking';
+  const here = zones.current()?.id;   // Ask-to-talk in the permission zones: Networking + 🦩 Park
+  const canAskTalk = !!identity.current() && (here === 'networking' || here === 'park') && peerZoneOf(group) === here;
   card.open(profile, { following: identity.isFollowing(profile.pubkey), canAskTalk });
 }
 function deselect() {
@@ -711,11 +723,12 @@ function pickFromRaycaster() {
     if (mh) xrMenu.pressWorld(mh.point);
     return;
   }
-  const targets = pickables().concat(commentBoard.pickables()).concat(_chairs.map((c) => c.group));
+  const targets = pickables().concat(commentBoard.pickables()).concat(_chairs.map((c) => c.group)).concat(coaster.seatPads());
   const hits = raycaster.intersectObjects(targets, true);
   for (const h of hits) {
     let o = h.object;
     while (o) {
+      if (o.userData && o.userData.rideSeat) { boardRide(o.userData.rideSeat); return; }          // board the coaster
       if (o.userData && o.userData.chairIdx != null) { toggleSeat(o.userData.chairIdx); return; } // sit/stand
       if (o.userData && o.userData.commentId) { tapBoost(o.userData.commentId, h.point.clone()); return; }
       if (o.userData && o.userData.identity) {
@@ -1650,6 +1663,47 @@ function updateSeat() {
   rig.position.y = STAGE_TOP_Y - SEAT_DROP;    // lowered onto the chair
 }
 
+// ── Nostrich Coaster ride (4.10) ─────────────────────────────────────────────────
+// Walk up + select a seat → pay 210 credits (venue 100%) → snap onto it; a ~20s station
+// countdown, then the run; the rig is ATTACHED to the seat (not simulated) so presence
+// broadcasts the moving position → spectators watch you ride by. onReturn releases you.
+const RIDE_FEE = 210;
+let _rideSeat = null;
+const _seatWorld = new THREE.Vector3(), _seatTan = new THREE.Vector3();
+function boardRide(id) {
+  if (!coaster.boardable()) return hud.toast('🎢 The coaster is out on a run — wait for the station');
+  if (coaster.isOccupied(id)) return hud.toast('That seat is taken');
+  if (!requireSignedIn('ride')) return;
+  if (!embodied()) return hud.toast('Get a ticket to ride');
+  const res = wallet.spend(RIDE_FEE, 'ride:coaster');
+  if (!res.ok) return hud.toast(`Need ${RIDE_FEE} credits to ride`);
+  tickets.recordVenue(RIDE_FEE);                 // fee via the credit rails → venue 100%
+  hud.setBalance(wallet.getBalance());
+  coaster.occupy(id, true);
+  _rideSeat = id;
+  coaster.beginBoarding();
+  hud.toast('🎢 Seat booked — the Nostrich Coaster departs shortly');
+  // SEAT-PAIR TALK-LINK (seam): the two seats in a cart should auto-link for the ride. It needs
+  // the neighbour's presence (peers don't broadcast a ride-seat yet) → device/multi-tab follow-up.
+}
+function endRide() {
+  if (_rideSeat == null) return;
+  coaster.occupy(_rideSeat, false);
+  _rideSeat = null;
+  hud.toast('🎢 Back at the station — mind the step');
+}
+function updateRide() {
+  const el = document.getElementById('ride-countdown');
+  const cd = coaster.countdown();
+  if (el) { if (cd > 0) { el.hidden = false; el.textContent = `🎢 Coaster departs in ${cd}s`; } else el.hidden = true; }
+  if (_rideSeat && coaster.state() !== 'idle') {   // pin the rig to the seat + face travel direction
+    coaster.seatWorldPos(_rideSeat, _seatWorld);
+    rig.position.copy(_seatWorld);
+    coaster.tangentAt(_seatTan);
+    rig.rotation.y = Math.atan2(_seatTan.x, _seatTan.z) + Math.PI;
+  }
+}
+
 // Which-speaker picker. Single-speaker → direct; panel → a chooser (flat DOM here, the
 // in-world menu Speakers page in VR). Also reused to pick a present participant to add as a
 // co-speaker. `mode`: 'zap' | 'cospeaker'.
@@ -1722,6 +1776,7 @@ renderer.setAnimationLoop(() => {
   updateLocomotion(dt, renderer);
   followBody();               // #5: pin the local body under the head in immersive modes
   updateSeat();               // panels: hold the seated drop / stand on walk-off (before broadcast)
+  updateRide();               // coaster: pin the local rider to their seat (before broadcast)
   updateLocalHands();         // 4.8: show/hide local hand mitts (immersive + embodied)
   tickEmote(localBody, dt);   // 4.8: advance the local player's own emote (peers tick via the pool)
   presence.update(dt);
@@ -1756,6 +1811,8 @@ renderer.setAnimationLoop(() => {
   zones.setLiveOccupancy(presence.zoneCounts()); // real occupancy (re-textures plaques only on change)
   updateCigarettes(dt);                     // lit cigarette on every Smoking occupant
   updateChairs();                           // panels: spawn/arrange stage chairs for 2+ speakers
+  flock.update(dt);                         // 🦩 park flock FK animation
+  coaster.update(dt);                       // 🎢 train motion + ride state machine
 
   zapFx.update(dt);           // in-world zap bursts (no-op when none are active)
   commentBoard.update(dt);    // live-feed scroll + sticky top-wall refresh

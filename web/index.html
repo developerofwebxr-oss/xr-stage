@@ -144,6 +144,14 @@
       .emote-btn:hover { background: var(--fill-hover); transform: translateY(-1px); }
       .emote-btn:active { transform: scale(0.92); }
       body.immersive #emote-row { display: none; } /* VR/AR use the in-world menu Emotes page */
+      /* Coaster boarding countdown banner (4.10). */
+      #ride-countdown {
+        position: fixed; top: calc(env(safe-area-inset-top) + 66px); left: 50%; transform: translateX(-50%);
+        z-index: 12; padding: 7px 15px; border-radius: 999px; font-family: var(--font-mono); font-size: 14px;
+        color: #ffd0e6; background: rgba(255, 90, 168, 0.16); border: 1px solid rgba(255, 90, 168, 0.5);
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      }
+      #ride-countdown[hidden] { display: none; }
       /* Powered "energy line" along the top edge — marks the live action surface. */
       #controlbar::before {
         content: ""; position: absolute; left: 16px; right: 16px; top: 0; height: 1px;
@@ -691,6 +699,9 @@
             <b id="speaker-count">0</b></span>
         </div>
       </div>
+
+      <!-- Coaster station countdown (4.10) — shown while the ride is boarding. -->
+      <div id="ride-countdown" hidden></div>
 
       <!-- Emote row (4.8): quick expression, flat/mobile. Keys 1–4 do the same. -->
       <div id="emote-row" aria-label="Emotes">

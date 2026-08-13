@@ -14,7 +14,7 @@ const fmt = (n) => Number(n).toLocaleString('en-US');
 const PERKS = {
   basic:     ['Embodied — others see you', '10% supports the speakers', 'Buy zone access with credits'],
   supporter: ['Name badge', '20% to the speakers', 'Networking + Smoking access', 'Networking priority'],
-  patron:    ['Distinct badge · all Supporter perks', '30% to the speakers — patron of the event', 'Front-row access', 'Sponsor-ticker spot'],
+  patron:    ['Distinct badge · all Supporter perks', '30% to the speakers — patron of the event', 'Front-row access', '🦩 Nostrich Park entry included', 'Sponsor-ticker spot'],
 };
 const ORDER = ['basic', 'supporter', 'patron'];
 const KIND_LABEL = { networking: 'Networking', smoking: 'Smoking Area', frontRow: 'Front row' };

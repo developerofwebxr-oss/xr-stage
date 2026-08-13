@@ -134,6 +134,53 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**🦩 Nostrich Park — farm + roller coaster (4.10)** — a new paid zone with the coaster as its
+first ride. No new npm deps (three's bundled GLTF/DRACO decoders, copied to `public/draco`).
+- **Assets.** Owner GLBs copied to `web/public` (served at `/*.glb`). They're **DRACO-compressed**,
+  so `room/gltf.js` wires the DRACOLoader with three's decoder (no new dep, offline). Loads are
+  **async + graceful**: a failure resolves to null and the caller draws its primitive placeholder
+  (the fallback path is exercised — before the decoder was wired, gateposts + placeholder carts
+  stood in). gltfpack/meshopt compression is NOT wired; GLBs ship as-is (~1.4–1.6 MB) — a later pass.
+- **Part A — the park zone.** `zoneId:'park'`, far-right open land (centre (20,14), reachable ≈29 m
+  from stage), a large open-air **fenced** perimeter with the **entrance GLB as the sole gate**
+  (`nostriches_entrance.glb`, fit to ~4.4 m — **fit scale ≈ 3.954**, base seated on the ground,
+  faces the plaza; gateposts stand in until it lands). Flamingo-pink "NOSTRICH PARK" letters +
+  plaque ("Entry 500 · rides extra"). **Gate + fee:** `purchaseAccess('park')` = 500 credits
+  (Basic/Supporter), **included for Patron** (tier perk + chooser card line "🦩 Nostrich Park entry
+  included") and **speakers**; ghosts bounced to the ticket chooser — **matrix: patron ✓ / basic
+  pays 500 ✓ / ghost ✗** (reuses `accessClamp` + the existing purchase flow, no new gate code).
+  **Audio:** permission-based like Networking (talk-link gated, no open mic) via `zoneAudio`
+  (`LINK_ZONE` now covers networking + park; Ask-to-talk shows in both). **Flock:** 8 procedural
+  ostriches from cheap primitives in the **named-parts hierarchy** the future Spline GLB swaps into
+  — `ostrich → body · neck_lower · neck_upper · head · leg_L · leg_R · wing_L · wing_R · tail` with
+  joint pivots. FK personalities: amble walk-cycle, neck sway + peck, wing-flap, one "buggy" bird
+  that sprints/spins. Deterministic per bird (hashed index), shared geometry/materials (~9
+  meshes/bird), wander confined to pen rects (never through guests). `prefers-reduced-motion` →
+  idle poses.
+- **Part B — the roller coaster** (`ride/coaster.js`). **Route** = one editable waypoint array →
+  a closed `CatmullRomCurve3`: park station → **peak over the stage at y ≈ 14 m** (~5 m above the
+  ~8.7 m screen top → never occludes the boards) → bank above Networking + Smoking → dive through
+  the forest → low plaza pass → weave the pens → return. Rails = a tube swept along the curve + 90
+  instanced ties (built once, cached). **Train:** front + N carts (default 4) from the GLBs, each a
+  **primitive placeholder** if a GLB is absent. **Seat-anchor method:** use named `seat_L`/`seat_R`
+  nodes if the GLB has them, else two computed offsets (±0.34 m, y 0.55). **Ride loop:** idle at the
+  station → select a seat → **pay 210 credits (venue 100%)** → snap on (seat-snap reuse) → ~20 s
+  station countdown (a `#ride-countdown` banner) → run (~78 s, **slope-aware speed** — slow climbs,
+  fast dives) → return → auto-release. The rider's rig is **attached** to the seat (not simulated),
+  so presence broadcasts the moving position → spectators watch you ride by. Diegetic (visible in
+  AR).
+- **Guardrails/perf.** Fees ride the existing credit rails; only a `ride` module + the park zone
+  added; async GLB loads never block interaction. Flock ≈ 72 shared-material meshes total; coaster
+  = 1 tube + 1 instanced-ties mesh + a handful of cart groups; curve samples cached at build.
+- **Verified (flat, one tab):** the **coaster track renders arcing over the venue** with the stated
+  stage clearance (screenshot); the **NOSTRICH PARK zone + flamingo letters** render; the
+  **entrance GLB loads via DRACO** (console: "entrance GLB placed · fit scale 3.954"); the
+  **placeholder fallback path** is exercised; clean build, **no console errors**. **On-device / two
+  tabs (owner-tested):** the ride *feel* + comfort vignette (needs a stomach), the GLB carts +
+  entrance at true scale up close, the flock personalities animating in the pens, board→pay→
+  countdown→run→return→unsnap end-to-end, the seat-pair talk-link (a noted seam — peers don't
+  broadcast a ride-seat yet), and a rider seen moving from a spectator tab.
+
 **Local body comfort — semi-transparent self in VR/AR (4.9)** — no new deps. In immersive VR/AR,
 glancing down showed your own opaque pill blocking the floor. The **local** body now fades to a
 faint hint (~0.3 opacity) in immersive only, with `depthWrite:false` so being inside the capsule

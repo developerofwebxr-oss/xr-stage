@@ -57,7 +57,7 @@ export const TIERS = {
   supporter: { label: 'Supporter', price: 10000,
     flags: { badge: 'supporter', networkingPriority: true, networkingAccess: true, smokingAccess: true } },
   patron:    { label: 'Patron',    price: 21000,
-    flags: { badge: 'patron', networkingPriority: true, networkingAccess: true, smokingAccess: true, frontRow: true, sponsorSpot: true } },
+    flags: { badge: 'patron', networkingPriority: true, networkingAccess: true, smokingAccess: true, frontRow: true, sponsorSpot: true, parkAccess: true } },
 };
 
 // The transparent split for a tier: venue fee + speaker share + credits (remainder = price − the
@@ -80,6 +80,7 @@ export function splitFor(tierName, price) {
 const ACCESS = {
   networking: { price: 500,  flag: 'networkingAccess' },
   smoking:    { price: 500,  flag: 'smokingAccess' },
+  park:       { price: 500,  flag: 'parkAccess' },      // Nostrich Park entry (4.10)
   frontRow:   { price: 1000, flag: 'frontRow' },
 };
 
@@ -147,6 +148,7 @@ function flagsNow() {
     smokingAccess: !!base.smokingAccess || _access.has('smoking') || sp,
     frontRow: !!base.frontRow || _access.has('frontRow'),
     sponsorSpot: !!base.sponsorSpot,
+    parkAccess: !!base.parkAccess || _access.has('park') || sp, // Nostrich Park: Patron/speaker incl., else buy (4.10)
     backstageAccess: sp, // SEAM: speakers get backstage — no backstage zone built yet
   };
 }

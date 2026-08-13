@@ -25,6 +25,7 @@ import { config } from '../config.js';
 
 const R = config.zoneFalloffM;              // metres to silence
 const GAIN_INTERVAL = 1000 / config.zoneGainHz;
+const LINK_ZONE = (z) => z === 'networking' || z === 'park'; // permission zones (talk-link gated)
 
 export function createZoneAudio({ voice, myIdentity, getLocalPos, getPeers, onTalkRequest, onLinksChanged, toast } = {}) {
   let myZone = null;                         // null = plaza/stage
@@ -61,7 +62,9 @@ export function createZoneAudio({ voice, myIdentity, getLocalPos, getPeers, onTa
   // ≥1 live talk-link. Plaza/stage never auto-publish here (the stage mic is the speaker's
   // own Speak toggle). Connects on demand within the entry gesture.
   function shouldPublish() {
-    return myZone === 'smoking' || myZone === 'backstage' || (myZone === 'networking' && links.size > 0);
+    // Open-mic zones (Smoking / Backstage) always publish; permission zones (Networking / Park)
+    // publish only with ≥1 live talk-link. Park is a park, not the smoking den → no open mic.
+    return myZone === 'smoking' || myZone === 'backstage' || (LINK_ZONE(myZone) && links.size > 0);
   }
   async function updateMic() {
     const want = shouldPublish();
@@ -124,8 +127,8 @@ export function createZoneAudio({ voice, myIdentity, getLocalPos, getPeers, onTa
         gain = config.zoneHearsStage ? 1 : 0;               // global, not distance-scaled
       } else if (zone !== myZone) {
         gain = 0;                                           // other zone → not rendered
-      } else if (zone === 'networking' && !links.has(id)) {
-        gain = 0;                                           // networking needs a talk-link
+      } else if (LINK_ZONE(zone) && !links.has(id)) {
+        gain = 0;                                           // networking / park need a talk-link
       } else {
         const dx = peer.group.position.x - me.x, dz = peer.group.position.z - me.z;
         gain = falloff(Math.hypot(dx, dz));                 // same zone → proximity
