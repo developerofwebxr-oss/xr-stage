@@ -230,6 +230,43 @@ export function createPlayerBody(color) {
   return makeCapsule(color, { withHead: false });
 }
 
+// Fresnel "shell" material for the LOCAL body in immersive (4.13 #7). A nearly-transparent
+// core (floor fully visible through the middle) that rises toward the silhouette edges into a
+// thin glowing rim in the body colour — reads as a light-blue outline shell rather than a solid
+// pill blocking the view when you glance down. depthWrite:false so it never occludes your hands,
+// the floor, or z-fights with itself from inside. Local-only; peers keep the opaque capsule.
+export function makeLocalFresnelMaterial(colorHex) {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    uniforms: {
+      uColor: { value: new THREE.Color(colorHex) },
+      uCore: { value: 0.10 },   // centre opacity (~0.08–0.12): floor shows through
+      uRim: { value: 0.85 },    // edge opacity: the glowing outline
+      uPower: { value: 2.6 },   // fresnel falloff — how tightly the glow hugs the rim
+    },
+    vertexShader: `
+      varying vec3 vN; varying vec3 vView;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vN = normalize(mat3(modelMatrix) * normal);
+        vView = normalize(cameraPosition - wp.xyz);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uColor; uniform float uCore; uniform float uRim; uniform float uPower;
+      varying vec3 vN; varying vec3 vView;
+      void main() {
+        float f = pow(1.0 - clamp(dot(normalize(vN), normalize(vView)), 0.0, 1.0), uPower);
+        float a = mix(uCore, uRim, f);
+        vec3 rgb = uColor * (0.55 + 0.95 * f);   // rim glows brighter, in the body colour
+        gl_FragColor = vec4(rgb, a);
+      }
+    `,
+  });
+}
+
 // ── Identity rendering (Phase 2) ─────────────────────────────────────────────────
 // Paint an identity onto a body: the profile picture (or a deterministic keyface) on
 // the faceMount disc, plus an over-head name label. Pure presentation — the identity

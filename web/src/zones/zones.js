@@ -45,15 +45,25 @@ const shortAng = (d) => Math.atan2(Math.sin(d), Math.cos(d));
 const NET_H = 7.0, NET_WALLHALF = 0.30, NET_DOORHALF = 0.055, NET_DEPTH = 22;
 // Smoking CLEARING.
 const SMK_CW = 11, SMK_CD = 10, SMK_HH = 3.0, SMK_POSTH = 3.6, SMK_GATEHALF = 0.07;
-// 🦩 Nostrich Park (4.10) — a large fenced amusement park, far-right open land (reachable within
-// AUDIENCE_RADIUS: dist from stage ≈ 29 m). Open-air (fence perimeter, no ceiling). The flock pens
-// + coaster station live inside; main builds those (they animate). GATE = the entrance GLB.
-export const PARK = { cx: 20, cz: 14, w: 20, d: 20, h: 3.0, gateHalf: 2.0, hue: 0xff5aa8 };
+// 🦩 Nostrich Park (4.10 · re-sectored 4.13 #2) — its OWN clear angular sector on the venue ring,
+// far-right and past Networking (no more overlap). Open-air (fence perimeter, no ceiling). The front
+// barrier is an ARC concentric with the venue circles (same centre C) so the whole venue reads as
+// rings; radial fences + the forest close the sides/back. Flock pens + coaster station live inside;
+// main builds those. GATE = the entrance GLB, in a gap in the front arc.
+export const PARK = {
+  cx: 20, cz: 13,               // interior centroid (flock pens + coaster station sit around here)
+  Ri: 20, Ro: 36,               // sector radii — front arc / back, concentric with the venue (centre C)
+  th0: 0.52, th1: 1.26,         // angular span (bearings from the stage) — a clear sector, past Networking
+  h: 3.0, gateHalfAng: 0.085,   // fence height · gate-gap angular half-width on the front arc
+  hue: 0xff5aa8,
+};
 export const PARK_PENS = [   // fenced sub-areas the flock wanders (never through guests)
   { x: PARK.cx - 5, z: PARK.cz + 4, w: 7, d: 7 },
   { x: PARK.cx + 5, z: PARK.cz + 5, w: 7, d: 6 },
   { x: PARK.cx + 6, z: PARK.cz - 4, w: 6, d: 6 },
 ];
+const PARK_TH = (PARK.th0 + PARK.th1) / 2;      // gate bearing = front-arc centre
+const PARK_GATE = onArc(PARK.Ri, PARK_TH);      // gate world position on the front arc
 
 export const ZONE_DEFS = [
   {
@@ -84,8 +94,8 @@ export const ZONE_DEFS = [
     // 🦩 Nostrich Park (4.10) — a PAID amusement park, far-right open land. Flamingo pink.
     // Entry 500 credits (Basic/Supporter) · included for Patron + speakers. Rides cost extra.
     id: 'park', name: 'Nostrich Park', emoji: '🦩', hue: 0xff5aa8,
-    fx: PARK.cx, fz: PARK.cz - PARK.d / 2, // gate on the front (−z, plaza-facing) wall
-    cx: PARK.cx, cz: PARK.cz, r: 5.0,
+    fx: PARK_GATE.x, fz: PARK_GATE.z,      // gate at the centre of the front arc (plaza-facing)
+    cx: 19, cz: 11, r: 9.0,                // detection circle over the interior (station + pens)
     requires: 'parkAccess', accessKind: 'park',
     lettersText: 'NOSTRICH PARK', lettersH: 2.4,
     plaque: 'Entry 500 · rides extra. The Nostrich Coaster departs from the park station — 210 credits a seat.',
@@ -368,42 +378,50 @@ function buildBackstage() {
 // The flock + coaster are added by main (they animate). Ground + fence are texture-ready anchors.
 function buildPark(zn) {
   const g = new THREE.Group();
-  const { cx, cz, w, d, h, gateHalf } = PARK;
-  const x0 = cx - w / 2, x1 = cx + w / 2, z0 = cz - d / 2, z1 = cz + d / 2;
+  const { cx, cz, Ri, Ro, h, gateHalfAng } = PARK;
+  const thc = PARK_TH;
 
-  const ground = plane(w, d, M.groundSmk); ground.rotation.x = -Math.PI / 2; ground.position.set(cx, 0.02, cz);
-  g.add(ground);
-  // Fence perimeter (hedge planes): back + sides solid; the front (−z, plaza-facing) has the gate gap.
-  const back = hedge(w, h); back.position.set(cx, h / 2, z1);
-  const left = hedge(d, h); left.rotation.y = Math.PI / 2; left.position.set(x0, h / 2, cz);
-  const right = hedge(d, h); right.rotation.y = -Math.PI / 2; right.position.set(x1, h / 2, cz);
-  const segW = (w - 2 * gateHalf) / 2;
-  const frontL = hedge(segW, h); frontL.position.set(cx - (gateHalf + segW / 2), h / 2, z0);
-  const frontR = hedge(segW, h); frontR.position.set(cx + (gateHalf + segW / 2), h / 2, z0);
-  g.add(back, left, right, frontL, frontR);
+  // Ground = a ring-SECTOR concentric with the venue (matches the arc facade; RingGeometry angle
+  // α = bearing − π/2 to map into our stage-relative bearing convention).
+  const ground = new THREE.Mesh(new THREE.RingGeometry(Ri, Ro, 56, 1, PARK.th0 - Math.PI / 2, PARK.th1 - PARK.th0), M.groundSmk);
+  ground.rotation.x = -Math.PI / 2; ground.position.set(C.x, 0.02, C.z); g.add(ground);
 
-  // Placeholder gateposts at the doorway (replaced/joined by the GLB gate when it loads).
+  // Front barrier = an ARC concentric with the venue circles (like Networking's facade), split
+  // around a central GATE gap. A matching arc closes the back; radial fences close the two sides.
+  const frontL = arcWall(Ri, h, PARK.th0, (thc - gateHalfAng) - PARK.th0, M.hedge);
+  const frontR = arcWall(Ri, h, thc + gateHalfAng, PARK.th1 - (thc + gateHalfAng), M.hedge);
+  const back = arcWall(Ro, h, PARK.th0, PARK.th1 - PARK.th0, M.hedge);
+  g.add(frontL, frontR, back);
+  const sides = [];
+  for (const th of [PARK.th0, PARK.th1]) {                        // radial side fences (Ri→Ro)
+    const side = hedge(Ro - Ri, h);
+    side.position.copy(onArc((Ri + Ro) / 2, th)); side.position.y = h / 2; side.rotation.y = th - Math.PI / 2;
+    g.add(side); sides.push(side);
+  }
+  // Gateposts flanking the front-arc gap (the GLB gate drops between them when it loads).
   for (const s of [-1, 1]) {
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, h + 1, 0.4), M.post);
-    post.position.set(cx + s * gateHalf, (h + 1) / 2, z0); g.add(post);
+    post.position.copy(onArc(Ri, thc + s * gateHalfAng)); post.position.y = (h + 1) / 2; post.rotation.y = thc + s * gateHalfAng; g.add(post);
   }
   const propSpawns = [addAnchor(g, cx, cz, 'park-centre'), addAnchor(g, cx - 6, cz + 6, 'park-snack'), addAnchor(g, cx + 6, cz - 6, 'park-photo')];
 
-  g.add(placeLetters(zn, radiusOf(zn.fx, zn.fz) + 0.1, bearing(zn.fx, zn.fz), h + 1.6));
-  g.add(placePlaque(zn, radiusOf(zn.fx, zn.fz), bearing(zn.fx, zn.fz) + 0.14));
+  g.add(placeLetters(zn, Ri + 0.1, thc, h + 1.6));
+  g.add(placePlaque(zn, Ri, thc + 0.14));
 
-  // Async: drop the entrance GLB into the gate. Graceful — the gateposts already stand in.
+  // Entrance GLB — scaled ×2 (4.13 #2, it read too small), seated on the ground at the gate, facing
+  // inward toward the plaza/stage. Graceful — the gateposts already stand in.
   loadGLB('nostriches_entrance.glb').then((gate) => {
     if (!gate) { console.warn('[park] entrance GLB absent — gateposts stand in'); return; }
-    const scale = fitToHeight(gate, h + 1.4);        // fit the gate to ~4.4 m (its largest bound)
+    const scale = fitToHeight(gate, (h + 1.4) * 2);   // ×2 the old ~4.4 m → ~8.8 m
     const box = measure(gate).box;
-    gate.position.set(cx, -box.min.y, z0);           // seat the GLB's base on the ground at the doorway
-    gate.rotation.y = Math.PI;                       // face the plaza
+    const at = onArc(Ri, thc);
+    gate.position.set(at.x, -box.min.y, at.z);
+    gate.rotation.y = thc + Math.PI;                  // face inward (toward the plaza / stage centre)
     g.add(gate);
-    console.log('[park] entrance GLB placed · fit scale', scale.toFixed(3));
+    console.log('[park] entrance GLB placed · fit scale', scale.toFixed(3), '(×2)');
   });
 
-  return { group: g, anchors: { ground, fence: [back, left, right, frontL, frontR], propSpawns } };
+  return { group: g, anchors: { ground, fence: [frontL, frontR, back, ...sides], propSpawns } };
 }
 
 // A curved wall arc = an open-ended cylinder segment centred on the stage.

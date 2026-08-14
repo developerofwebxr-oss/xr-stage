@@ -90,7 +90,10 @@ export function createFlock(scene, { center = { x: 0, z: 0 }, pens = [], count =
       peckAt: 2 + hash(i, 6) * 5,
       buggy, t: 0,
     };
-    o.position.set(b.x, 0, b.z); o.rotation.y = b.heading;
+    // The model's FRONT (beak/head cluster) is built toward −Z; wander steps along +Z
+    // (sin/cos(heading)). Face the model's −Z down the travel direction → rotation = heading + π,
+    // so the beak leads (not tail-first). See update() for the same offset each frame.
+    o.position.set(b.x, 0, b.z); o.rotation.y = b.heading + Math.PI;
     group.add(o);
     birds.push(b);
     // per-part refs (named lookups → also work after a GLB swap)
@@ -112,7 +115,7 @@ export function createFlock(scene, { center = { x: 0, z: 0 }, pens = [], count =
       if (inPen(b.pen, nx, nz)) { b.x = nx; b.z = nz; } else { b.heading += 1.6 + hash(Math.floor(b.t), 7); }
       if (b.buggy) b.heading += dt * 5.5; else b.heading += (hash(Math.floor(b.t * 0.7), 8) - 0.5) * dt * 1.2;
       b.root.position.set(b.x, 0, b.z);
-      b.root.rotation.y = b.heading;
+      b.root.rotation.y = b.heading + Math.PI;   // face travel (model front is −Z) → beak leads
 
       // Gait: alternating legs + body bob (faster for the buggy bird).
       const g = b.t * (b.buggy ? 16 : 7) + b.phase;

@@ -8,7 +8,7 @@ import { tickets } from './tickets/tickets.js';
 import { createTicketUI } from './ui/ticketUI.js';
 import { createEventPrompt } from './ui/eventPrompt.js';
 import { STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
-import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP, setCigarette, tickCigarette, makeHand, playEmote, tickEmote, EMOTES } from './room/avatars.js';
+import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP, setCigarette, tickCigarette, makeHand, playEmote, tickEmote, EMOTES, makeLocalFresnelMaterial } from './room/avatars.js';
 import { createZoneAudio } from './audio/zoneAudio.js';
 import { identity } from './identity/identity.js';
 import { drawKeyface } from './identity/keyface.js';
@@ -162,7 +162,8 @@ scene.add(rig);
 
 // Local player body (capsule), parented to the rig so it moves + turns with us. Hidden while
 // we're a ghost / invisible (embodiment is a paid ticket perk — see refreshEmbodiment).
-const localBody = createPlayerBody(who.role === 'speaker' ? 0xf7931a : 0x4cc2ff);
+const LOCAL_BODY_COLOR = who.role === 'speaker' ? 0xf7931a : 0x4cc2ff;
+const localBody = createPlayerBody(LOCAL_BODY_COLOR);
 rig.add(localBody);
 
 // Local-body comfort (4.9): in immersive VR/AR, glancing down at your own opaque pill blocks
@@ -170,13 +171,15 @@ rig.add(localBody);
 // inside the capsule doesn't z-fight / double-layer, and so the transparent body never occludes
 // your (opaque) hand mitts or the floor. Purely a local render tweak: peers still receive the
 // full opaque body (this is NOT presence state, and unrelated to "go invisible"). Flat unchanged.
-const _localBodyMat = localBody.getObjectByName('body')?.material;
+// In immersive, swap the local body to a fresnel SHELL (4.13 #7): near-invisible core, glowing
+// light-blue rim, floor visible through the middle. Flat keeps the solid capsule. Hands are a
+// separate mesh (opaque) and unaffected; peers keep the opaque body (this is a local render swap).
+const _localBodyMesh = localBody.getObjectByName('body');
+const _localBodySolidMat = _localBodyMesh?.material;
+const _localBodyFresnelMat = _localBodyMesh ? makeLocalFresnelMaterial(LOCAL_BODY_COLOR) : null;
 function setLocalBodyImmersive(on) {
-  if (!_localBodyMat) return;
-  _localBodyMat.transparent = on;
-  _localBodyMat.opacity = on ? 0.3 : 1;
-  _localBodyMat.depthWrite = !on;
-  _localBodyMat.needsUpdate = true;
+  if (!_localBodyMesh) return;
+  _localBodyMesh.material = on && _localBodyFresnelMat ? _localBodyFresnelMat : _localBodySolidMat;
 }
 
 // ── HUD ─────────────────────────────────────────────────────────────────────────
@@ -403,7 +406,8 @@ setupXR(renderer, {
     document.getElementById('jump-btn').hidden = mode !== 'flat' ? true : !isMobile;
     if (mode !== 'flat') closeAllMenus();        // leaving flat closes all DOM menus
     setLocalBodyImmersive(mode !== 'flat');      // 4.9: faint self-body in immersive, solid in flat
-    if (mode === 'flat') { xrMenu?.close(); resetFlatView(); } // close panel + clear residual XR camera roll/offset
+    xrMenu?.close();                             // (4.13 #1) never carry the in-world panel across a mode change
+    if (mode === 'flat') resetFlatView();        // clear residual XR camera roll/offset on return to flat
     if (mode === 'flat' && !isMobile) hud.flashLockHint(); // brief reminder on return
     if (mode !== 'flat') hud.showFreeLookHint(false);
     updateArMenuBtn();                            // phone-AR ☰ visibility (4.11 #3)
@@ -727,12 +731,13 @@ function pickFromRaycaster() {
     if (mh) xrMenu.pressWorld(mh.point);
     return;
   }
-  const targets = pickables().concat(commentBoard.pickables()).concat(_chairs.map((c) => c.group)).concat(coaster.seatPads());
+  const targets = pickables().concat(commentBoard.pickables()).concat(_chairs.map((c) => c.group)).concat(coaster.seatPads()).concat([coaster.rideButton()].filter(Boolean));
   const hits = raycaster.intersectObjects(targets, true);
   for (const h of hits) {
     let o = h.object;
     while (o) {
-      if (o.userData && o.userData.rideSeat) { boardRide(o.userData.rideSeat); return; }          // board the coaster
+      if (o.userData && o.userData.rideButton) { boardRideButton(); return; }                     // RIDE post → next free seat
+      if (o.userData && o.userData.rideSeat) { boardRide(o.userData.rideSeat); return; }          // board the coaster (direct seat)
       if (o.userData && o.userData.chairIdx != null) { toggleSeat(o.userData.chairIdx); return; } // sit/stand
       if (o.userData && o.userData.commentId) { tapBoost(o.userData.commentId, h.point.clone()); return; }
       if (o.userData && o.userData.identity) {
@@ -875,6 +880,16 @@ const xrControllers = []; // for the VR board-scroll (frame loop reads the right
     mitt.visible = false;
     controller.add(mitt);
     controller.userData.mitt = mitt;
+    // TEMP 4.13 #1 · X-DBG — an in-world label per controller showing handedness + which gamepad
+    // buttons are down, so the owner can confirm on-device what the X button reports. STRIP after.
+    {
+      const dc = document.createElement('canvas'); dc.width = 512; dc.height = 132;
+      const dtex = new THREE.CanvasTexture(dc);
+      const dspr = new THREE.Sprite(new THREE.SpriteMaterial({ map: dtex, transparent: true, depthTest: false }));
+      dspr.scale.set(0.42, 0.108, 1); dspr.position.set(0, 0.14, -0.16); dspr.renderOrder = 999;
+      controller.add(dspr);
+      controller.userData.xdbg = { ctx: dc.getContext('2d'), tex: dtex };
+    }
     controller.addEventListener('connected', (e) => {
       ray.visible = e.data?.targetRayMode !== 'screen';
       controller.userData.handedness = e.data?.handedness;   // for the VR scroll
@@ -1365,7 +1380,10 @@ async function eventTick() {
   }
   // (b) new/different current event I don't hold → prompt once
   if (cur && !tickets.holdsFor(cur.id)) {
-    if (_promptedEventId !== cur.id && !eventPrompt.isOpen()) {
+    // Don't fire the transition prompt while the player is on the coaster (4.13 #1) — a panel that
+    // popped mid-ride is exactly what orphaned before. The once-per-event gate still lets it show
+    // after they're back at the station.
+    if (_promptedEventId !== cur.id && !eventPrompt.isOpen() && _rideSeat == null) {
       _promptedEventId = cur.id;
       const name = (await identity.getProfile(cur.speakers[0] || cur.ownerPubkey)).name;
       // (4.11 #2) Immersive → the in-world Event page (VR/AR parity); flat → the DOM prompt. Same
@@ -1620,6 +1638,28 @@ function updateMenu() {
   xrMenu.hoverAt(hit);
 }
 
+// TEMP 4.13 #1 · X-DBG — refresh each controller's in-world button-debug label. STRIP after the
+// owner confirms the X binding on-device. buttons[4] = A (right) / X (left) per the input standard.
+function updateXrButtonDebug() {
+  if (!renderer.xr.isPresenting) return;
+  for (const c of xrControllers) {
+    const d = c.userData.xdbg; if (!d) continue;
+    const src = c.userData.inputSource, gp = src?.gamepad;
+    const hand = c.userData.handedness || src?.handedness || '?';
+    const pressed = []; if (gp) gp.buttons.forEach((b, i) => { if (b.pressed || b.value > 0.5) pressed.push(i); });
+    const xDown = !!(gp && gp.buttons[4] && (gp.buttons[4].pressed || gp.buttons[4].value > 0.5));
+    const g = d.ctx; g.clearRect(0, 0, 512, 132);
+    g.fillStyle = xDown ? 'rgba(247,147,26,0.92)' : 'rgba(11,13,19,0.82)'; g.fillRect(0, 0, 512, 132);
+    g.textBaseline = 'top'; g.fillStyle = xDown ? '#0b0d13' : '#eceef5';
+    g.font = '700 34px ui-monospace, Menlo, monospace';
+    g.fillText(`${String(hand).toUpperCase()}  btn:[${pressed.join(',')}]`, 14, 12);
+    g.font = '500 26px ui-monospace, Menlo, monospace';
+    g.fillText(hand === 'left' ? 'X = buttons[4] → menu' : hand === 'right' ? 'A = buttons[4]' : '(no handedness)', 14, 60);
+    if (xDown) { g.font = '700 30px ui-monospace, Menlo, monospace'; g.fillText('★ PRESSED', 14, 96); }
+    d.tex.needsUpdate = true;
+  }
+}
+
 // Lit cigarette on every Smoking occupant (local render, keyed to each peer's broadcast
 // zone — no networking beyond presence). Idempotent per frame; puff ticks only in-zone.
 function updateCigarettes(dt) {
@@ -1696,6 +1736,15 @@ function updateSeat() {
 // broadcasts the moving position → spectators watch you ride by. onReturn releases you.
 const RIDE_FEE = 210;
 let _rideSeat = null;
+// The station RIDE post (4.13 #5): select = pay + seat-snap into the NEXT free seat. A second guest
+// selecting takes the next one after that. Falls through to the same boardRide flow (fee, gating,
+// countdown, seat attach) — no ambiguity about how to board.
+function boardRideButton() {
+  if (!coaster.boardable()) return hud.toast('🎢 The coaster is out on a run — wait for the station');
+  const seat = coaster.nextFreeSeat();
+  if (!seat) return hud.toast('🎢 Every seat is taken — catch the next run');
+  boardRide(seat);
+}
 function boardRide(id) {
   if (!coaster.boardable()) return hud.toast('🎢 The coaster is out on a run — wait for the station');
   if (coaster.isOccupied(id)) return hud.toast('That seat is taken');
@@ -1707,6 +1756,7 @@ function boardRide(id) {
   hud.setBalance(wallet.getBalance());
   coaster.occupy(id, true);
   _rideSeat = id;
+  xrMenu?.close();                               // (4.13 #1) the in-world panel never rides along
   coaster.beginBoarding();
   hud.toast('🎢 Seat booked — the Nostrich Coaster departs shortly');
   // SEAT-PAIR TALK-LINK (seam): the two seats in a cart should auto-link for the ride. It needs
@@ -1852,6 +1902,7 @@ renderer.setAnimationLoop(() => {
   queuePanel.update(dt);      // pulse the pedestal "you're up" ring (only when set)
   updateVRBoardScroll(dt);    // VR: aim right controller at LIVE + right-stick Y scrolls
   updateMenu();               // in-world menu: billboard + laser hover (only while open)
+  updateXrButtonDebug();      // TEMP 4.13 #1 · X-DBG — controller button readout (strip after)
 
   renderer.render(scene, camera);
 });

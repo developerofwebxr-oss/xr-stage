@@ -28,6 +28,7 @@ const HOVER_BG = 'rgba(247,147,26,0.24)';
 const ON_BG = 'rgba(247,147,26,0.9)';
 const VIOLET = '#9b6cff';
 
+const EVENT_AUTO_MS = 18000;              // transition Event auto-open self-dismiss (4.13 #1)
 const CW = 700, CH = 900;                 // panel canvas px
 const PANEL_H = 1.5;                      // world metres (portrait)
 const PANEL_W = PANEL_H * (CW / CH);      // keep aspect → no text distortion
@@ -52,6 +53,7 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
 
   let open = false;
   let page = 'main';
+  let eventTimer = null;   // auto-dismiss timer for the transition Event auto-open (4.13 #1)
   let hovered = null;      // id of the button under the laser (drives the highlight)
   let notice = '';         // transient status line (result of an action)
   let codeBuf = '';        // keypad entry buffer (6 digits)
@@ -87,7 +89,13 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
     faceCamera();
     render();
   }
-  function closeMenu() { open = false; group.visible = false; hovered = null; }
+  // Close = fully inert: hidden, not billboarding, not a raycast target (targets() → []), and state
+  // reset so it can never linger world-locked or desync the X toggle (4.13 #1). The mesh/texture are
+  // a cheap reusable singleton (rebuilt-free reopen); dispose() tears them down at end of life.
+  function closeMenu() {
+    clearTimeout(eventTimer); eventTimer = null;
+    open = false; group.visible = false; hovered = null; page = 'main'; eventInfo = null;
+  }
   function toggle() { open ? closeMenu() : openMenu(); }
 
   // Yaw-only billboard: face the head, stay upright (readable). Position never moves.
@@ -433,7 +441,14 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
   return {
     open: openMenu, close: closeMenu, toggle, isOpen: () => open,
     openSpeakers: () => { if (!open) openMenu(); page = 'speakers'; notice = ''; render(); },
-    openEvent: (info) => { eventInfo = info || null; if (!open) openMenu(); page = 'event'; notice = ''; render(); },
+    openEvent: (info) => {
+      eventInfo = info || null; if (!open) openMenu(); page = 'event'; notice = ''; render();
+      // Auto-dismiss (4.13 #1): the transition auto-open is the one menu the user did NOT ask for.
+      // If they walk off or board the ride without tapping, time it out so it never orphans in the
+      // world (the old bug: a stale panel left hanging over Smoking, desyncing the next X press).
+      clearTimeout(eventTimer);
+      eventTimer = setTimeout(() => { if (open && page === 'event') closeMenu(); }, EVENT_AUTO_MS);
+    },
     targets, pressWorld, hoverAt, update, dispose,
   };
 }

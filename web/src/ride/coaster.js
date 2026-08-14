@@ -20,24 +20,47 @@ import { STAGE_POS, SCREEN } from '../room/zones.js';
 // climbs stay slow, loop tuned into the 60–90 s envelope. A build-time self-check logs the
 // clearance / heights / speeds / max frame-to-frame up-delta.
 
-// ── ROUTE — world XYZ. Station (park) → big climb → SKYLINE peak over the stage → crest behind
-// the screen → bank above Smoking + Networking → dive to the pens → low weave → return. Every
-// point within the stage footprint is high; the low fast bits are out over the pens/plaza.
-// A SMOOTH closed loop with no z-reversals near the station: the return approaches heading
-// −x−z and the departure leaves heading −x−z (colinear at the station → no cusp/flip there).
-const WAYPOINTS = [
-  [20, 1.6, 16],    // 0 station (park) — leaves heading −x,−z (toward the climb)
-  [14, 8, 8],       // 1 climb out of the park
-  [3, 20, -3],      // 2 steep climb toward the stage
-  [-3, 26, -8],     // 3 SKYLINE PEAK over the stage — overlooks the whole venue
-  [-13, 20, -5],    // 4 crest, curving left
-  [-21, 12, 9],     // 5 down the left side
-  [-13, 9, 23],     // 6 low bank near Smoking
-  [6, 10, 28],      // 7 across the back (above Networking)
-  [22, 7, 26],      // 8 curve to +x, descending
-  [29, 3, 17],      // 9 the big DIVE (far +x, low, fast)
-  [24, 2, 21],      // 10 sweep back toward the station (aligns to −x,−z)
+// ── ROUTE — world XYZ. Station (park) → climb → SKYLINE peak → SUPER peak (the extreme high) →
+// steep drop → a VERTICAL INVERSION LOOP (4.13 #6) → rejoin the back circuit → dive → return.
+// Every point within the stage footprint stays high; the low/fast bits + the loop are out over the
+// plaza (clear of the stage, Networking and Smoking). Closed curve: last point → station.
+//
+// The loop is GENERATED as a true circle in the (travel, up) plane entered at its BOTTOM, with a
+// small forward corkscrew drift so entry ≠ exit. A real circle → a clean inversion, which is the
+// stress test the 4.12 parallel-transport frames must survive without snapping.
+const PRE = [
+  [20, 1.6, 16],    // station (park) — leaves heading −x,−z
+  [14, 8, 8],       // climb out of the park
+  [4, 18, -2],      // steep climb toward the stage
+  [-2, 27, -8],     // SKYLINE peak over the stage
+  [-11, 35, -6],    // SUPER peak — the extreme high (skyline moment)
+  [-16, 20, 4],     // steep, fast drop begins
+  [-19, 9, 9],      // pull-out: level into the loop bottom, moving +z
 ];
+const POST = [
+  [-8, 9, 26],      // rejoin: low bank behind (near Smoking)
+  [8, 9, 28],       // across the back (above Networking)
+  [22, 7, 26],      // curve to +x, descending
+  [29, 3, 17],      // the big DIVE (far +x, low, fast)
+  [24, 2, 21],      // sweep back toward the station (aligns to −x,−z)
+];
+function buildLoop() {
+  const E = new THREE.Vector3(-18, 8, 14);                    // loop bottom (entry)
+  const d = new THREE.Vector3(0.243, 0, 0.970).normalize();  // horizontal travel dir at entry
+  const up = new THREE.Vector3(0, 1, 0);
+  const R = 8, ADV = 7, STEPS = 9;                           // radius · corkscrew drift · samples
+  const Cl = E.clone().addScaledVector(up, R);               // centre: R directly above the entry
+  const pts = [];
+  for (let k = 0; k <= STEPS; k++) {
+    const phi = (k / (STEPS + 1)) * Math.PI * 2;             // 0 (bottom) → 0.9·2π (exclusive of the seam)
+    const p = Cl.clone()
+      .addScaledVector(d, Math.sin(phi) * R + (phi / (Math.PI * 2)) * ADV)
+      .addScaledVector(up, -Math.cos(phi) * R);              // −cos: φ=0 → bottom, φ=π → inverted top
+    pts.push([p.x, p.y, p.z]);
+  }
+  return pts;
+}
+const WAYPOINTS = [...PRE, ...buildLoop(), ...POST];
 const DEPART_S = 20;      // countdown after first boarding
 const RUN_S = 60;         // nominal lap time (before slope coupling) — tuned into the 60–90 s envelope
 const CART_GAP = 0.05;    // cart spacing in curve-param space
@@ -92,7 +115,11 @@ export function createCoaster(scene, { nCarts = 4, onDepart, onReturn } = {}) {
     const a = (i - 2 + N + 1) % (N + 1), b = (i + 2) % (N + 1);
     const ya = Math.atan2(T[a].x, T[a].z), yb = Math.atan2(T[b].x, T[b].z);
     const dy = Math.atan2(Math.sin(yb - ya), Math.cos(yb - ya));   // yaw delta over ~4 samples
-    rawBank[i] = THREE.MathUtils.clamp(-dy * 3.0, -1, 1) * BANK_MAX; // toward the turn centre (gentle gain)
+    // Fade banking out as the track steepens: horizontal-turn lean is meaningless (and the yaw is
+    // numerically unstable) where the tangent nears vertical — e.g. through the inversion loop, which
+    // must roll purely on the parallel-transport frame, never on this heuristic.
+    const horiz = Math.max(0, 1 - Math.abs(T[i].y) / 0.5);
+    rawBank[i] = THREE.MathUtils.clamp(-dy * 3.0, -1, 1) * BANK_MAX * horiz; // toward the turn centre (gentle gain)
   }
   { const W = 9; for (let pass = 0; pass < 3; pass++) { const src = BANK.slice ? Float32Array.from(pass === 0 ? rawBank : BANK) : rawBank; for (let i = 0; i <= N; i++) { let s = 0; for (let k = -W; k <= W; k++) s += src[(i + k + N + 1) % (N + 1)]; BANK[i] = s / (2 * W + 1); } } } // wide box filter, 3 passes
   const UPB = UP.map((u, i) => u.clone().applyAxisAngle(T[i], BANK[i]).normalize());
@@ -128,9 +155,46 @@ export function createCoaster(scene, { nCarts = 4, onDepart, onReturn } = {}) {
   for (let i = 0; i < 110; i++) { const j = idxAt(i / 110); _q.setFromRotationMatrix(_m.lookAt(P[j], _look.copy(P[j]).add(T[j]), UPB[j])); ties.setMatrixAt(i, _m.compose(P[j], _q, _one)); }
   ties.instanceMatrix.needsUpdate = true; ties.frustumCulled = false; group.add(ties);
 
-  // Station platform at u=0.
-  const platform = new THREE.Mesh(new THREE.BoxGeometry(4, 0.3, 6), new THREE.MeshStandardMaterial({ color: 0x2a2030, roughness: 0.9 }));
-  platform.position.set(P[0].x, P[0].y - 0.5, P[0].z + 1.4); group.add(platform);
+  // ── Station RIDE post (4.13 #5) ──────────────────────────────────────────────────
+  // No platform slab (track + carts sit at ground/ride level). Boarding is an OBVIOUS affordance:
+  // a glowing post whose canvas label reads "RIDE ⚡210" (idle), the live departure countdown while
+  // boarding, then "RIDING…". Selecting it (unified raycast → userData.rideButton) pays + seat-snaps
+  // the picker into the next free seat; a second guest selects into the next one. A glowing floor
+  // ring marks where to stand.
+  const postX = P[0].x + 1.5, postZ = P[0].z - 1.2;    // beside the station, facing the plaza approach
+  const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 1.6, 10),
+    new THREE.MeshStandardMaterial({ color: 0x241c2a, emissive: 0xff5aa8, emissiveIntensity: 0.4, roughness: 0.5 }));
+  pillar.position.set(postX, 0.8, postZ); group.add(pillar);
+  const postCanvas = document.createElement('canvas'); postCanvas.width = 384; postCanvas.height = 256;
+  const pg = postCanvas.getContext('2d');
+  const postTex = new THREE.CanvasTexture(postCanvas); postTex.colorSpace = THREE.SRGBColorSpace;
+  const postLabel = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 0.77), new THREE.MeshBasicMaterial({ map: postTex, transparent: true }));
+  postLabel.position.set(postX, 1.85, postZ); postLabel.rotation.y = Math.PI;   // face the plaza (−z)
+  postLabel.userData.rideButton = true; group.add(postLabel);
+  const standRing = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.64, 28),
+    new THREE.MeshBasicMaterial({ color: 0xff5aa8, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
+  standRing.rotation.x = -Math.PI / 2; standRing.position.set(postX - 0.3, 0.03, postZ + 1.0); group.add(standRing);
+  let _postState = '';
+  function drawPost() {
+    const key = mode === 'boarding' ? `cd${Math.ceil(boardT)}` : mode;
+    if (key === _postState) return;                    // re-texture only on change (cheap)
+    _postState = key;
+    pg.clearRect(0, 0, 384, 256);
+    postRoundRect(pg, 6, 6, 372, 244, 22);
+    pg.fillStyle = 'rgba(11,13,19,0.92)'; pg.fill();
+    pg.lineWidth = 4; pg.strokeStyle = mode === 'idle' ? '#ff5aa8' : 'rgba(255,90,168,0.5)'; pg.stroke();
+    pg.textAlign = 'center'; pg.textBaseline = 'middle';
+    if (mode === 'idle') {
+      pg.fillStyle = '#ff5aa8'; pg.font = '700 66px ui-monospace, Menlo, monospace'; pg.fillText('RIDE', 192, 98);
+      pg.fillStyle = '#f7931a'; pg.font = '700 54px ui-monospace, Menlo, monospace'; pg.fillText('⚡ 210', 192, 170);
+    } else if (mode === 'boarding') {
+      pg.fillStyle = '#eceef5'; pg.font = '600 40px ui-monospace, Menlo, monospace'; pg.fillText('DEPARTS', 192, 90);
+      pg.fillStyle = '#f7931a'; pg.font = '700 96px ui-monospace, Menlo, monospace'; pg.fillText(`${Math.ceil(boardT)}s`, 192, 172);
+    } else {
+      pg.fillStyle = '#9b6cff'; pg.font = '700 56px ui-monospace, Menlo, monospace'; pg.fillText('RIDING…', 192, 128);
+    }
+    postTex.needsUpdate = true;
+  }
 
   // ── Train ──
   const carts = [], seatList = [];
@@ -144,6 +208,10 @@ export function createCoaster(scene, { nCarts = 4, onDepart, onReturn } = {}) {
   }
   function buildCart(model, front, idx) {
     const cart = new THREE.Group(); cart.name = front ? 'roller_front' : `roller_cart_${idx}`;
+    // The cart's local −Z is the travel direction (lookAt(P, P+T, up)). The owner's front-cart GLB
+    // is modelled facing the other way, so the bird rode backwards (4.13 #3) — spin it 180° so the
+    // beak leads. Only the front carries the bird; the N plain carts are symmetric, left as-is.
+    if (model && front) model.rotation.y = Math.PI;
     cart.add(model || placeholderCart(front));
     group.add(cart);
     for (const side of ['L', 'R']) {
@@ -175,6 +243,7 @@ export function createCoaster(scene, { nCarts = 4, onDepart, onReturn } = {}) {
 
   // ── Ride state ──
   let mode = 'idle', u = 0, boardT = 0;
+  drawPost();   // initial "RIDE ⚡210" (mode is now defined)
 
   function layoutTrain() {
     for (const c of carts) {
@@ -190,20 +259,25 @@ export function createCoaster(scene, { nCarts = 4, onDepart, onReturn } = {}) {
       u += (1 / RUN_S) * f * dt;
       if (u >= 1) { u = 0; mode = 'idle'; onReturn && onReturn(); }
     }
+    drawPost();       // refresh the RIDE post label (idle ⚡210 / departs Ns / riding — only on change)
     layoutTrain();
   }
 
   // ── Build-time self-check (4.12): report clearance / heights / speeds / frame continuity ──
   {
-    let maxUpDelta = 0, maxY = -Infinity, minClear = Infinity;
+    let maxUpDelta = 0, maxInvDelta = 0, maxY = -Infinity, minClear = Infinity;
     for (let i = 0; i <= N; i++) {
-      if (i < N) maxUpDelta = Math.max(maxUpDelta, UPB[i].angleTo(UPB[i + 1])); // max frame-to-frame up-vector step
+      if (i < N) {
+        const d = UPB[i].angleTo(UPB[i + 1]);               // frame-to-frame up-vector step
+        maxUpDelta = Math.max(maxUpDelta, d);
+        if (Math.abs(T[i].y) > 0.35) maxInvDelta = Math.max(maxInvDelta, d); // steep = the inversion loop
+      }
       maxY = Math.max(maxY, P[i].y);
       const inFootprint = Math.hypot(P[i].x - STAGE_POS.x, P[i].z - STAGE_POS.z) < FOOTPRINT_R;
       if (inFootprint) minClear = Math.min(minClear, P[i].y - TICKER_TOP);
     }
     let loopT = 0; for (let i = 0; i < N; i++) { const f = THREE.MathUtils.clamp(1 - T[i].y * SLOPE_K, SPEED_MIN, SPEED_MAX); loopT += (1 / N) / ((1 / RUN_S) * f); }
-    console.log(`[coaster] len ${LEN.toFixed(0)}m · maxHeight ${maxY.toFixed(1)}m · clearance over ticker(${TICKER_TOP.toFixed(1)}m) +${minClear.toFixed(1)}m · speed ${(SPEED_MIN * LEN / RUN_S).toFixed(1)}–${(SPEED_MAX * LEN / RUN_S).toFixed(1)} m/s · loop ~${loopT.toFixed(0)}s · max frame up-Δ ${THREE.MathUtils.radToDeg(maxUpDelta).toFixed(2)}°`);
+    console.log(`[coaster] len ${LEN.toFixed(0)}m · maxHeight ${maxY.toFixed(1)}m · clearance over ticker(${TICKER_TOP.toFixed(1)}m) +${minClear.toFixed(1)}m · speed ${(SPEED_MIN * LEN / RUN_S).toFixed(1)}–${(SPEED_MAX * LEN / RUN_S).toFixed(1)} m/s · loop ~${loopT.toFixed(0)}s · max frame up-Δ ${THREE.MathUtils.radToDeg(maxUpDelta).toFixed(2)}° (thru inversion ${THREE.MathUtils.radToDeg(maxInvDelta).toFixed(2)}°)`);
   }
 
   const seatById = (id) => seatList.find((s) => s.id === id);
@@ -221,6 +295,16 @@ export function createCoaster(scene, { nCarts = 4, onDepart, onReturn } = {}) {
     beginBoarding: () => { if (mode === 'idle') { mode = 'boarding'; boardT = DEPART_S; } },
     countdown: () => (mode === 'boarding' ? Math.ceil(boardT) : 0),
     trainU: () => u,
+    rideButton: () => postLabel,                                // the pickable RIDE post (4.13 #5)
+    nextFreeSeat: () => seatList.find((s) => !s.occupied)?.id || null, // seat-snap target on select
     dispose() { scene.remove(group); },
   };
+}
+
+function postRoundRect(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r);
+  g.closePath();
 }
