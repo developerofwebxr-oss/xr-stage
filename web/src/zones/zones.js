@@ -393,7 +393,7 @@ function buildPark(zn) {
   g.add(placePlaque(zn, radiusOf(zn.fx, zn.fz), bearing(zn.fx, zn.fz) + 0.14));
 
   // Async: drop the entrance GLB into the gate. Graceful — the gateposts already stand in.
-  loadGLB('/nostriches_entrance.glb').then((gate) => {
+  loadGLB('nostriches_entrance.glb').then((gate) => {
     if (!gate) { console.warn('[park] entrance GLB absent — gateposts stand in'); return; }
     const scale = fitToHeight(gate, h + 1.4);        // fit the gate to ~4.4 m (its largest bound)
     const box = measure(gate).box;

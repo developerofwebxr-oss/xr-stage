@@ -1,72 +1,140 @@
 import * as THREE from 'three';
 import { loadGLB, fitToHeight, measure } from '../room/gltf.js';
+import { STAGE_POS, SCREEN } from '../room/zones.js';
 
-// ride/coaster.js — the Nostrich Park roller coaster (4.10). ONE editable waypoint route →
-// a closed CatmullRom curve; rails = a tube swept along it + periodic ties. The train is
-// assembled from the owner GLBs (front + N identical carts); if a GLB is absent the cart is a
-// primitive placeholder (async-absence rule). Ride loop is a small state machine driven by the
-// caller (board → countdown → run → return). Diegetic (visible in AR). Curve samples are cached.
+// ride/coaster.js — the Nostrich Coaster (4.10 · re-profiled + frame-stabilised 4.12).
 //
-//   createCoaster(scene, { nCarts, onDepart, onReturn }) → {
-//     group, update(dt), ready, seats(), seatWorldPos(id,out), tangentAt(u,out),
-//     state(), boardable(), beginBoarding(), countdown(), trainU() }
+// ROUTE = one editable waypoint array → a closed CatmullRom. Rails = a tube + instanced ties.
+// Train = the owner GLBs (front + N carts) with primitive placeholders on absence.
+//
+// ORIENTATION (4.12 #2): carts + the seated rig are oriented with PARALLEL-TRANSPORT frames
+// (precomputed + cached), NOT naive lookAt/world-up. Parallel transport carries the up vector
+// along the curve by the minimal rotation between successive tangents, so the frame never SNAPS
+// where the tangent nears vertical or the curvature inverts (the classic Frenet flip that threw
+// riders out of the cart). A closed-loop twist correction makes UP[N] meet UP[0]. Banking is a
+// clamped roll (≤35°) ADDED to that stable frame. The seated rig inherits the seat anchor's world
+// quaternion — the SAME transform source as the cart, no separate lookAt.
+//
+// PROFILE (4.12 #3): peaks raised to a skyline; nothing over the stage/boards footprint passes
+// below the sponsor-ticker band + 2 m; descents are gravity-flavoured (speed ∝ drop, clamped),
+// climbs stay slow, loop tuned into the 60–90 s envelope. A build-time self-check logs the
+// clearance / heights / speeds / max frame-to-frame up-delta.
 
-// ── ROUTE (the one editable array) — world XYZ. Station in the park → climb over the stage →
-// bank above Networking & Smoking → dive through the forest → weave the pens → return. The peak
-// clears the stage at y≈14 m, ~5 m above the screen top (~8.7 m) so it never occludes the boards.
+// ── ROUTE — world XYZ. Station (park) → big climb → SKYLINE peak over the stage → crest behind
+// the screen → bank above Smoking + Networking → dive to the pens → low weave → return. Every
+// point within the stage footprint is high; the low fast bits are out over the pens/plaza.
+// A SMOOTH closed loop with no z-reversals near the station: the return approaches heading
+// −x−z and the departure leaves heading −x−z (colinear at the station → no cusp/flip there).
 const WAYPOINTS = [
-  [20, 1.2, 16],   // station platform (park)
-  [12, 7, 6],      // climb out of the park toward the stage
-  [0, 14, -7],     // PEAK over the stage (high clearance over the screen)
-  [8, 11, 22],     // bank above Networking
-  [-14, 10, 20],   // bank above Smoking
-  [-25, 5, 4],     // dive through the forest
-  [-6, 3, -2],     // low pass in front of the plaza
-  [24, 3, 24],     // weave behind the pens
-  [26, 2.2, 12],   // swing back
-  [22, 1.4, 17],   // approach the station
+  [20, 1.6, 16],    // 0 station (park) — leaves heading −x,−z (toward the climb)
+  [14, 8, 8],       // 1 climb out of the park
+  [3, 20, -3],      // 2 steep climb toward the stage
+  [-3, 26, -8],     // 3 SKYLINE PEAK over the stage — overlooks the whole venue
+  [-13, 20, -5],    // 4 crest, curving left
+  [-21, 12, 9],     // 5 down the left side
+  [-13, 9, 23],     // 6 low bank near Smoking
+  [6, 10, 28],      // 7 across the back (above Networking)
+  [22, 7, 26],      // 8 curve to +x, descending
+  [29, 3, 17],      // 9 the big DIVE (far +x, low, fast)
+  [24, 2, 21],      // 10 sweep back toward the station (aligns to −x,−z)
 ];
 const DEPART_S = 20;      // countdown after first boarding
-const RUN_S = 78;         // nominal lap time (speed varies with slope)
-const CART_GAP = 0.052;   // spacing between carts in curve-param space
-const SEAT_DX = 0.34;     // half-gap between the two seats in a cart
+const RUN_S = 60;         // nominal lap time (before slope coupling) — tuned into the 60–90 s envelope
+const CART_GAP = 0.05;    // cart spacing in curve-param space
+const N = 512;            // frame/sample cache resolution (dense → small per-sample frame steps)
+const BANK_MAX = THREE.MathUtils.degToRad(28);
+const SLOPE_K = 2.6, SPEED_MIN = 0.32, SPEED_MAX = 3.1; // gravity coupling: slow climbs, fast dives
+// Sponsor-ticker band sits just above the main screen; nothing over the stage footprint may pass
+// below TICKER_TOP + 2 m. (No ticker mesh yet — anchored to the screen top.)
+const TICKER_TOP = SCREEN.y + SCREEN.h / 2 + 1.0;   // ≈ 9.75 m
+const MIN_CLEAR = TICKER_TOP + 2;                    // ≈ 11.75 m
+const FOOTPRINT_R = 10;                              // stage/boards footprint radius (XZ, from STAGE_POS)
 
 export function createCoaster(scene, { nCarts = 4, onDepart, onReturn } = {}) {
   const group = new THREE.Group(); group.name = 'coaster';
   scene.add(group);
 
-  const curve = new THREE.CatmullRomCurve3(WAYPOINTS.map((p) => new THREE.Vector3(...p)), true, 'catmullrom', 0.5);
+  // 'centripetal' Catmull-Rom avoids the cusps/overshoots that plain catmullrom makes at sharp
+  // control points — those near-cusps reverse the tangent and blow up parallel transport (the flip).
+  const curve = new THREE.CatmullRomCurve3(WAYPOINTS.map((p) => new THREE.Vector3(...p)), true, 'centripetal');
   const LEN = curve.getLength();
 
-  // ── Rails: a tube along the curve + periodic ties (cheap; one geometry each). ──
-  const rail = new THREE.Mesh(
-    new THREE.TubeGeometry(curve, 240, 0.12, 6, true),
-    new THREE.MeshStandardMaterial({ color: 0x6a4a7a, roughness: 0.7, metalness: 0.2 }),
-  );
-  group.add(rail);
-  const tieGeo = new THREE.BoxGeometry(0.9, 0.06, 0.16);
-  const tieMat = new THREE.MeshStandardMaterial({ color: 0xff5aa8, roughness: 0.6, emissive: 0x2a0f1e });
-  const TIES = 90;
-  const ties = new THREE.InstancedMesh(tieGeo, tieMat, TIES);
-  const _p = new THREE.Vector3(), _t = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
-  for (let i = 0; i < TIES; i++) {
-    const u = i / TIES;
-    curve.getPointAt(u, _p); curve.getTangentAt(u, _t);
-    _q.setFromRotationMatrix(_m.lookAt(_p, _p.clone().add(_t), _up));
-    ties.setMatrixAt(i, _m.compose(_p, _q, new THREE.Vector3(1, 1, 1)));
+  // ── Parallel-transport frames along the curve (cached: position, tangent, banked up) ──
+  const P = [], T = [], UP = [], BANK = new Float32Array(N + 1);
+  for (let i = 0; i <= N; i++) { P[i] = curve.getPointAt(i / N, new THREE.Vector3()); T[i] = curve.getTangentAt(i / N, new THREE.Vector3()).normalize(); }
+  // initial up = world-up made perpendicular to T0
+  { const u0 = new THREE.Vector3(0, 1, 0); u0.addScaledVector(T[0], -u0.dot(T[0])); if (u0.lengthSq() < 1e-6) { u0.set(1, 0, 0); u0.addScaledVector(T[0], -u0.dot(T[0])); } UP[0] = u0.normalize(); }
+  const _pq = new THREE.Quaternion();
+  for (let i = 1; i <= N; i++) {
+    _pq.setFromUnitVectors(T[i - 1], T[i]);              // minimal rotation prev→cur tangent
+    UP[i] = UP[i - 1].clone().applyQuaternion(_pq);
+    UP[i].addScaledVector(T[i], -UP[i].dot(T[i])).normalize(); // re-orthogonalise to the tangent
   }
-  ties.instanceMatrix.needsUpdate = true; ties.frustumCulled = false;
-  group.add(ties);
+  // Closed-loop: distribute the residual twist between UP[N] and UP[0] so the frame is seamless.
+  { const cross = new THREE.Vector3().crossVectors(UP[N], UP[0]); const resid = Math.atan2(cross.dot(T[0]), UP[N].dot(UP[0])); for (let i = 0; i <= N; i++) UP[i].applyAxisAngle(T[i], resid * (i / N)).normalize(); }
+  // SMOOTH the transported up-frame (4.12 #2): parallel transport is continuous but can still carry
+  // a locally-steep twist wherever the curve turns hard. Several neighbour-blend passes (each
+  // re-orthogonalised to the tangent) SPREAD any such spike across its neighbourhood, so no single
+  // frame-to-frame step snaps — the up direction changes gradually everywhere. Blends across the
+  // closed seam (i-1 / i+1 wrap) so the loop stays seamless.
+  for (let pass = 0; pass < 160; pass++) {
+    const prev = UP.map((u) => u.clone());
+    for (let i = 0; i <= N; i++) {
+      const a = prev[(i - 1 + N + 1) % (N + 1)], b = prev[(i + 1) % (N + 1)];
+      UP[i].copy(prev[i]).multiplyScalar(2).add(a).add(b);                 // 2:1:1 neighbour blend
+      UP[i].addScaledVector(T[i], -UP[i].dot(T[i])).normalize();           // keep ⟂ tangent
+    }
+  }
+  // Banking: roll the up toward the turn, ∝ horizontal turn rate, clamped. Heavily smoothed so the
+  // roll itself never adds a snap on top of the stable frame (a wide box filter spreads it out).
+  const rawBank = new Float32Array(N + 1);
+  for (let i = 0; i <= N; i++) {
+    const a = (i - 2 + N + 1) % (N + 1), b = (i + 2) % (N + 1);
+    const ya = Math.atan2(T[a].x, T[a].z), yb = Math.atan2(T[b].x, T[b].z);
+    const dy = Math.atan2(Math.sin(yb - ya), Math.cos(yb - ya));   // yaw delta over ~4 samples
+    rawBank[i] = THREE.MathUtils.clamp(-dy * 3.0, -1, 1) * BANK_MAX; // toward the turn centre (gentle gain)
+  }
+  { const W = 9; for (let pass = 0; pass < 3; pass++) { const src = BANK.slice ? Float32Array.from(pass === 0 ? rawBank : BANK) : rawBank; for (let i = 0; i <= N; i++) { let s = 0; for (let k = -W; k <= W; k++) s += src[(i + k + N + 1) % (N + 1)]; BANK[i] = s / (2 * W + 1); } } } // wide box filter, 3 passes
+  const UPB = UP.map((u, i) => u.clone().applyAxisAngle(T[i], BANK[i]).normalize());
+  // Smooth the BANKED frame too: at a hard turn the roll rides on a fast-swinging tangent, which can
+  // re-introduce a per-sample step even when PT and BANK are each smooth. A few neighbour-blend passes
+  // (⟂-tangent re-orthogonalised, seam-wrapped) cap the banked frame's per-sample delta as well.
+  for (let pass = 0; pass < 30; pass++) {
+    const prev = UPB.map((u) => u.clone());
+    for (let i = 0; i <= N; i++) {
+      const a = prev[(i - 1 + N + 1) % (N + 1)], b = prev[(i + 1) % (N + 1)];
+      UPB[i].copy(prev[i]).multiplyScalar(2).add(a).add(b);
+      UPB[i].addScaledVector(T[i], -UPB[i].dot(T[i])).normalize();
+    }
+  }
+  const idxAt = (uu) => { let i = Math.round(((uu % 1) + 1) % 1 * N); if (i > N) i = N; return i; };
+  // Precompute the per-sample orientation as a quaternion, then SLERP between samples at runtime so
+  // the cart (and the seated rig that inherits its world quaternion) rotates continuously — never a
+  // per-sample step. QUAT[N] ≈ QUAT[0] after the closed-loop correction, so the seam is seamless.
+  const QUAT = []; { const _qm = new THREE.Matrix4(), _ql = new THREE.Vector3(); for (let i = 0; i <= N; i++) { const q = new THREE.Quaternion(); q.setFromRotationMatrix(_qm.lookAt(P[i], _ql.copy(P[i]).add(T[i]), UPB[i])); QUAT[i] = q; } }
+  const _qa = new THREE.Quaternion();
+  // Continuous pose at curve-param uu → writes position + quaternion (lerp P, slerp QUAT).
+  function poseAt(uu, outPos, outQuat) {
+    const s = (((uu % 1) + 1) % 1) * N; const i0 = Math.min(N - 1, Math.floor(s)); const f = s - i0;
+    outPos.copy(P[i0]).lerp(P[i0 + 1], f);
+    outQuat.copy(QUAT[i0]).slerp(QUAT[i0 + 1], f);
+  }
 
-  // ── Station platform at u=0. ──
-  curve.getPointAt(0, _p);
+  // ── Rails: a tube along the curve + instanced ties (built once) ──
+  const rail = new THREE.Mesh(new THREE.TubeGeometry(curve, 260, 0.12, 6, true), new THREE.MeshStandardMaterial({ color: 0x6a4a7a, roughness: 0.7, metalness: 0.2 }));
+  group.add(rail);
+  const ties = new THREE.InstancedMesh(new THREE.BoxGeometry(0.9, 0.06, 0.16), new THREE.MeshStandardMaterial({ color: 0xff5aa8, roughness: 0.6, emissive: 0x2a0f1e }), 110);
+  const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _look = new THREE.Vector3(), _one = new THREE.Vector3(1, 1, 1);
+  for (let i = 0; i < 110; i++) { const j = idxAt(i / 110); _q.setFromRotationMatrix(_m.lookAt(P[j], _look.copy(P[j]).add(T[j]), UPB[j])); ties.setMatrixAt(i, _m.compose(P[j], _q, _one)); }
+  ties.instanceMatrix.needsUpdate = true; ties.frustumCulled = false; group.add(ties);
+
+  // Station platform at u=0.
   const platform = new THREE.Mesh(new THREE.BoxGeometry(4, 0.3, 6), new THREE.MeshStandardMaterial({ color: 0x2a2030, roughness: 0.9 }));
-  platform.position.set(_p.x, _p.y - 0.35, _p.z + 1.2);
-  group.add(platform);
+  platform.position.set(P[0].x, P[0].y - 0.5, P[0].z + 1.4); group.add(platform);
 
-  // ── Train: carts along the curve. Front + (nCarts-1) carts; each seats 2. ──
-  const carts = [];
-  const seatList = [];
+  // ── Train ──
+  const carts = [], seatList = [];
+  let seatDX = 0.34, seatY = 0.55, seatZ = 0.1;   // seat offsets — overwritten from real cart bounds
   function placeholderCart(front) {
     const g = new THREE.Group();
     const hull = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.5, 1.3), new THREE.MeshStandardMaterial({ color: front ? 0xff5aa8 : 0xd23f86, roughness: 0.6, emissive: 0x1a0a12 }));
@@ -76,19 +144,14 @@ export function createCoaster(scene, { nCarts = 4, onDepart, onReturn } = {}) {
   }
   function buildCart(model, front, idx) {
     const cart = new THREE.Group(); cart.name = front ? 'roller_front' : `roller_cart_${idx}`;
-    const visual = model || placeholderCart(front);
-    if (model) fitToHeight(model, 1.4);   // fit the GLB to ~1.4 m
-    cart.add(visual);
+    cart.add(model || placeholderCart(front));
     group.add(cart);
-    // Seat anchors: named 'seat_L'/'seat_R' nodes if the GLB has them, else two computed offsets.
     for (const side of ['L', 'R']) {
-      let anchor = model ? model.getObjectByName(`seat_${side}`) : null;
-      if (!anchor) { anchor = new THREE.Object3D(); anchor.position.set(side === 'L' ? -SEAT_DX : SEAT_DX, 0.55, 0.15); cart.add(anchor); }
+      let anchor = model ? model.getObjectByName(`seat_${side}`) : null;   // named seat nodes if present
+      if (!anchor) { anchor = new THREE.Object3D(); anchor.position.set(side === 'L' ? -seatDX : seatDX, seatY, seatZ); cart.add(anchor); }
       const id = `${idx}:${side}`;
-      // A small pad on the seat → raycast target for boarding (userData.rideSeat = id).
       const pad = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.06, 0.34), new THREE.MeshStandardMaterial({ color: 0xffd0e6, emissive: 0x3a1226, roughness: 0.6 }));
-      pad.userData.rideSeat = id;
-      anchor.add(pad);
+      pad.userData.rideSeat = id; anchor.add(pad);
       seatList.push({ id, cartIdx: idx, side, anchor, pad, occupied: false });
     }
     carts.push({ cart, front, idx });
@@ -96,64 +159,68 @@ export function createCoaster(scene, { nCarts = 4, onDepart, onReturn } = {}) {
 
   let ready = false;
   (async () => {
-    // Load the two GLBs once; clone the cart model per repeated cart. Graceful on absence.
-    const [front, cartModel] = await Promise.all([loadGLB('/nostrich_roller_front.glb'), loadGLB('/nostrich_roller_cart.glb')]);
+    const [front, cartModel] = await Promise.all([loadGLB('nostrich_roller_front.glb'), loadGLB('nostrich_roller_cart.glb')]);
+    const usedGlb = front || cartModel;
+    if (usedGlb) {
+      // Fit a cart to ~1.4 m and DERIVE the seat offsets from its real bounds (side-by-side pair).
+      const probe = (cartModel || front).clone(true); const sc = fitToHeight(probe, 1.4); const { size, center } = measure(probe);
+      seatDX = Math.max(0.22, size.x * 0.26); seatY = center.y + size.y * 0.18; seatZ = center.z;
+      console.log(`[coaster] cart GLB fit scale ${sc.toFixed(3)} · bounds ${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}m → seat ±${seatDX.toFixed(2)}x ${seatY.toFixed(2)}y ${seatZ.toFixed(2)}z`);
+    } else console.warn('[coaster] GLBs absent — primitive placeholder carts + ±0.34 seats');
+    if (front) fitToHeight(front, 1.4);
     buildCart(front, true, 0);
-    for (let i = 1; i < nCarts; i++) buildCart(cartModel ? cartModel.clone(true) : null, false, i);
-    ready = true;
-    layoutTrain();
-    if (!front && !cartModel) console.warn('[coaster] GLBs absent — using primitive placeholder carts');
+    for (let i = 1; i < nCarts; i++) { const m = cartModel ? cartModel.clone(true) : null; if (m) fitToHeight(m, 1.4); buildCart(m, false, i); }
+    ready = true; layoutTrain();
   })();
 
   // ── Ride state ──
-  let mode = 'idle';        // 'idle' | 'boarding' | 'running'
-  let u = 0;                // front cart curve param
-  let boardT = 0;           // boarding countdown remaining
-  const _cp = new THREE.Vector3(), _ct = new THREE.Vector3();
+  let mode = 'idle', u = 0, boardT = 0;
 
   function layoutTrain() {
     for (const c of carts) {
-      const cu = (u - c.idx * CART_GAP + 1) % 1;
-      curve.getPointAt(cu, _cp); curve.getTangentAt(cu, _ct);
-      c.cart.position.copy(_cp);
-      c.cart.quaternion.setFromRotationMatrix(_m.lookAt(_cp, _cp.clone().add(_ct), _up));
+      poseAt((u - c.idx * CART_GAP + 1) % 1, c.cart.position, c.cart.quaternion); // continuous PT frame (slerp)
     }
   }
-
   function update(dt) {
     if (!ready) return;
-    if (mode === 'boarding') {
-      boardT -= dt;
-      if (boardT <= 0) { mode = 'running'; onDepart && onDepart(); }
-    } else if (mode === 'running') {
-      // Slope-aware speed: slow on the climbs (tangent.y > 0), fast on the dives.
-      curve.getTangentAt(u, _ct);
-      const slope = _ct.y;                       // -1..1
-      const speed = (1 / RUN_S) * THREE.MathUtils.clamp(1 - slope * 1.4, 0.35, 2.2);
-      u += speed * dt;
+    if (mode === 'boarding') { boardT -= dt; if (boardT <= 0) { mode = 'running'; onDepart && onDepart(); } }
+    else if (mode === 'running') {
+      const slope = T[idxAt(u)].y;                                   // -1..1
+      const f = THREE.MathUtils.clamp(1 - slope * SLOPE_K, SPEED_MIN, SPEED_MAX); // gravity coupling
+      u += (1 / RUN_S) * f * dt;
       if (u >= 1) { u = 0; mode = 'idle'; onReturn && onReturn(); }
     }
     layoutTrain();
   }
 
+  // ── Build-time self-check (4.12): report clearance / heights / speeds / frame continuity ──
+  {
+    let maxUpDelta = 0, maxY = -Infinity, minClear = Infinity;
+    for (let i = 0; i <= N; i++) {
+      if (i < N) maxUpDelta = Math.max(maxUpDelta, UPB[i].angleTo(UPB[i + 1])); // max frame-to-frame up-vector step
+      maxY = Math.max(maxY, P[i].y);
+      const inFootprint = Math.hypot(P[i].x - STAGE_POS.x, P[i].z - STAGE_POS.z) < FOOTPRINT_R;
+      if (inFootprint) minClear = Math.min(minClear, P[i].y - TICKER_TOP);
+    }
+    let loopT = 0; for (let i = 0; i < N; i++) { const f = THREE.MathUtils.clamp(1 - T[i].y * SLOPE_K, SPEED_MIN, SPEED_MAX); loopT += (1 / N) / ((1 / RUN_S) * f); }
+    console.log(`[coaster] len ${LEN.toFixed(0)}m · maxHeight ${maxY.toFixed(1)}m · clearance over ticker(${TICKER_TOP.toFixed(1)}m) +${minClear.toFixed(1)}m · speed ${(SPEED_MIN * LEN / RUN_S).toFixed(1)}–${(SPEED_MAX * LEN / RUN_S).toFixed(1)} m/s · loop ~${loopT.toFixed(0)}s · max frame up-Δ ${THREE.MathUtils.radToDeg(maxUpDelta).toFixed(2)}°`);
+  }
+
   const seatById = (id) => seatList.find((s) => s.id === id);
   return {
-    group,
-    update,
+    group, update,
     get ready() { return ready; },
     seats: () => seatList,
     seatPads: () => seatList.map((s) => s.pad).filter(Boolean),
     occupy: (id, on) => { const s = seatById(id); if (s) s.occupied = on; },
     isOccupied: (id) => !!seatById(id)?.occupied,
-    seatAnchor: (id) => seatById(id)?.anchor || null,
+    seatAnchor: (id) => seatById(id)?.anchor || null,           // rig inherits THIS world quaternion
     seatWorldPos: (id, out) => { const a = seatById(id)?.anchor; if (a) a.getWorldPosition(out); return out; },
-    tangentAt: (out) => curve.getTangentAt(u, out),
     state: () => mode,
     boardable: () => mode === 'idle',
     beginBoarding: () => { if (mode === 'idle') { mode = 'boarding'; boardT = DEPART_S; } },
     countdown: () => (mode === 'boarding' ? Math.ceil(boardT) : 0),
     trainU: () => u,
-    stationInfo: () => ({ pos: curve.getPointAt(0, new THREE.Vector3()), lenM: Math.round(LEN) }),
     dispose() { scene.remove(group); },
   };
 }

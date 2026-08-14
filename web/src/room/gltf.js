@@ -12,24 +12,34 @@ import * as THREE from 'three';
 // The owner GLBs are DRACO-compressed → wire the DRACOLoader with three's bundled decoder,
 // copied to /public/draco (no new npm dep, offline-capable). meshopt is also configured in case
 // a future asset uses it.
+// Resolve a /public asset to an ABSOLUTE url relative to the document base (4.12). The build
+// uses Vite `base: './'` for the GitHub Pages project SUBPATH, so bare-absolute paths like
+// `/draco/` 404 on the deployed site (they hit the domain root, not `…/<repo>/`) — which silently
+// killed the DRACO decoder and every GLB load, leaving placeholders. `new URL(rel, baseURI)`
+// resolves correctly on BOTH the domain root (dev) and a project subpath (prod). Pass paths
+// WITHOUT a leading slash.
+export const assetUrl = (rel) => new URL(rel, document.baseURI).href;
+
 let _loader = null;
 function loader() {
   if (!_loader) {
     _loader = new GLTFLoader();
-    const draco = new DRACOLoader().setDecoderPath('/draco/');
+    const draco = new DRACOLoader().setDecoderPath(assetUrl('draco/'));
     _loader.setDRACOLoader(draco);
     _loader.setMeshoptDecoder(MeshoptDecoder);
   }
   return _loader;
 }
 
-// Resolve the loaded scene (a THREE.Group), or null on any error. Never rejects.
+// Resolve the loaded scene (a THREE.Group), or null on any error. Never rejects. `url` is a
+// /public-relative path (no leading slash) resolved against the document base.
 export function loadGLB(url) {
+  const abs = assetUrl(url);
   return new Promise((resolve) => {
     try {
-      loader().load(url, (g) => resolve(g.scene || g.scenes?.[0] || null),
-        undefined, (err) => { console.warn('[glb] load failed:', url, err?.message || err); resolve(null); });
-    } catch (err) { console.warn('[glb] loader error:', url, err?.message || err); resolve(null); }
+      loader().load(abs, (g) => resolve(g.scene || g.scenes?.[0] || null),
+        undefined, (err) => { console.warn('[glb] load failed:', abs, err?.message || err); resolve(null); });
+    } catch (err) { console.warn('[glb] loader error:', abs, err?.message || err); resolve(null); }
   });
 }
 

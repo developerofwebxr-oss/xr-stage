@@ -1696,7 +1696,6 @@ function updateSeat() {
 // broadcasts the moving position → spectators watch you ride by. onReturn releases you.
 const RIDE_FEE = 210;
 let _rideSeat = null;
-const _seatWorld = new THREE.Vector3(), _seatTan = new THREE.Vector3();
 function boardRide(id) {
   if (!coaster.boardable()) return hud.toast('🎢 The coaster is out on a run — wait for the station');
   if (coaster.isOccupied(id)) return hud.toast('That seat is taken');
@@ -1717,17 +1716,24 @@ function endRide() {
   if (_rideSeat == null) return;
   coaster.occupy(_rideSeat, false);
   _rideSeat = null;
+  // The ride drove the rig's FULL orientation (it banks/pitches WITH the cart). Level it on exit so
+  // the player doesn't keep the tilt: in flat, reuse the shared reset (also clears camera roll/offset);
+  // in VR/AR clear only the rig's roll/pitch (the headset still owns the camera). The train ends at the
+  // station (a near-level spot), so the retained yaw is the travel heading.
+  if (renderer.xr.isPresenting) rig.rotation.set(0, rig.rotation.y, 0);
+  else resetFlatView();
   hud.toast('🎢 Back at the station — mind the step');
 }
 function updateRide() {
   const el = document.getElementById('ride-countdown');
   const cd = coaster.countdown();
   if (el) { if (cd > 0) { el.hidden = false; el.textContent = `🎢 Coaster departs in ${cd}s`; } else el.hidden = true; }
-  if (_rideSeat && coaster.state() !== 'idle') {   // pin the rig to the seat + face travel direction
-    coaster.seatWorldPos(_rideSeat, _seatWorld);
-    rig.position.copy(_seatWorld);
-    coaster.tangentAt(_seatTan);
-    rig.rotation.y = Math.atan2(_seatTan.x, _seatTan.z) + Math.PI;
+  if (_rideSeat && coaster.state() !== 'idle') {
+    // Inherit the cart's EXACT parallel-transport frame (same source as the cart → no separate
+    // lookAt, no flip): the rig gets the seat anchor's world position + orientation, so the rider
+    // banks/pitches WITH the cart. The stable frame is the comfort fix; the vignette still applies.
+    const anchor = coaster.seatAnchor(_rideSeat);
+    if (anchor) { anchor.getWorldPosition(rig.position); anchor.getWorldQuaternion(rig.quaternion); }
   }
 }
 
