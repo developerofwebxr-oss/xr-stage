@@ -731,11 +731,13 @@ function pickFromRaycaster() {
     if (mh) xrMenu.pressWorld(mh.point);
     return;
   }
-  const targets = pickables().concat(commentBoard.pickables()).concat(_chairs.map((c) => c.group)).concat(coaster.seatPads()).concat([coaster.rideButton()].filter(Boolean));
+  const targets = pickables().concat(commentBoard.pickables()).concat(_chairs.map((c) => c.group)).concat(coaster.seatPads()).concat([coaster.rideButton()].filter(Boolean)).concat(flock.pickTargets()).concat(feedOffer.visible ? [feedOffer] : []);
   const hits = raycaster.intersectObjects(targets, true);
   for (const h of hits) {
     let o = h.object;
     while (o) {
+      if (o.userData && o.userData.feedAction) { confirmFeed(); return; }                          // 🦩 Feed offer → pay + feed
+      if (o.userData && o.userData.birdId) { offerFeed(o.userData.birdId); return; }               // 🦩 select an ostrich → offer
       if (o.userData && o.userData.rideButton) { boardRideButton(); return; }                     // RIDE post → next free seat
       if (o.userData && o.userData.rideSeat) { boardRide(o.userData.rideSeat); return; }          // board the coaster (direct seat)
       if (o.userData && o.userData.chairIdx != null) { toggleSeat(o.userData.chairIdx); return; } // sit/stand
@@ -749,6 +751,7 @@ function pickFromRaycaster() {
     }
   }
   deselect();                                                // empty space → close
+  hideFeedOffer();                                           // 🦩 and dismiss any bird offer
 }
 
 // Flat: a tap (pointer down→up with little movement) that isn't pointer-locked.
@@ -1787,6 +1790,89 @@ function updateRide() {
   }
 }
 
+// ── 🦩 Feed the Nostriches (4.14) ────────────────────────────────────────────────
+// Select an ostrich (unified pick) → an in-world "Feed · ⚡33" offer floats over it → confirm pays
+// 33 credits (venue), a cracker arcs to its head, and its FIXED personality reaction plays. The feed
+// is broadcast as {t:'feed', birdId, at:[x,y,z]} so everyone sees the same (deterministic) reaction.
+// Reuses the credit rail, the unified select path, zap-burst FX, and the flock's FK.
+const FEED_FEE = 33;
+const FEED_BURST = { screamer: '💢', biter: '😵', kisser: '❤️', ostrich: '💨', sprinter: '💨', diva: null };
+let _feedBird = null;                       // the bird currently being offered
+const _feederHead = new THREE.Vector3();
+// In-world offer: an opaque billboarded canvas chip, pickable (userData.feedAction), hidden until a
+// bird is selected. Works in VR (required) and flat alike.
+const feedOffer = (() => {
+  const c = document.createElement('canvas'); c.width = 384; c.height = 150;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(11,13,19,0.94)'; roundRectPath(g, 6, 6, 372, 138, 26); g.fill();
+  g.lineWidth = 4; g.strokeStyle = '#ff5aa8'; g.stroke();
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = '#ff5aa8'; g.font = '700 52px ui-monospace, Menlo, monospace'; g.fillText('🦩 Feed', 150, 76);
+  g.fillStyle = '#f7931a'; g.font = '700 52px ui-monospace, Menlo, monospace'; g.fillText('⚡33', 300, 76);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.39), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false }));
+  m.renderOrder = 998; m.userData.feedAction = true; m.visible = false;
+  scene.add(m);
+  return m;
+})();
+function roundRectPath(g, x, y, w, h, r) {
+  g.beginPath(); g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+function canFeedHere() { return embodied() && zones.current()?.id === 'park'; }
+// Selecting a bird → show the offer over it (only if eligible; ghosts / outside-park get nothing).
+function offerFeed(birdId) {
+  if (!canFeedHere()) { _feedBird = null; feedOffer.visible = false; if (!renderer.xr.isPresenting) hud.toast('🦩 Enter the park (with a ticket) to feed the nostriches'); return; }
+  _feedBird = birdId; feedOffer.visible = true; positionFeedOffer();
+}
+function hideFeedOffer() { _feedBird = null; feedOffer.visible = false; }
+// Confirm → pay + render locally + broadcast. Insufficient credits → the top-up path.
+function confirmFeed() {
+  const id = _feedBird; if (!id) return;
+  if (!canFeedHere()) return hideFeedOffer();
+  if (!requireSignedIn('feed the nostriches')) return;
+  if (!flock.canFeed(id)) return hud.toast('🦩 Still munching — give it a moment');
+  const res = wallet.spend(FEED_FEE, 'feed:nostrich');
+  if (!res.ok) { hud.toast(`Need ${FEED_FEE} credits — top up in the menu`); return; }
+  tickets.recordVenue(FEED_FEE);            // venue revenue + feed-count analytics seam
+  hud.setBalance(wallet.getBalance());
+  const at = camera.getWorldPosition(_feederHead).clone();
+  doFeed(id, at);                           // local render
+  voice.sendData({ t: 'feed', birdId: id, at: [at.x, at.y, at.z] }, { reliable: true }); // everyone sees it
+  hideFeedOffer();                          // consume the offer
+}
+// The shared local render (used by confirmFeed AND the broadcast receiver — no payment on receive).
+function doFeed(id, at) {
+  const head = flock.headWorldPos(id, new THREE.Vector3());
+  zapFx.snack(at, head);                    // crackers arc to the head
+  const type = flock.feed(id, at);          // FK reaction (returns the type, or null if busy)
+  if (!type) return;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  setTimeout(() => {                        // burst at the reaction's climax (when the snack lands)
+    const h = flock.headWorldPos(id, new THREE.Vector3()); h.y += 0.35;
+    if (type === 'screamer') zapFx.burstText(h, 'SQUAWK!');
+    else { const e = FEED_BURST[type]; if (e) zapFx.burst(h, e, { scale: 0.55 }); } // diva = no burst (ignores you)
+  }, reduced ? 200 : 850);
+}
+// Keep the offer floating just above the selected bird's head, billboarded to the camera.
+const _boffP = new THREE.Vector3(), _boffC = new THREE.Vector3();
+function updateFeedOffer() {
+  if (!feedOffer.visible) return;
+  if (!_feedBird || !canFeedHere()) return hideFeedOffer();
+  flock.headWorldPos(_feedBird, _boffP);
+  feedOffer.position.set(_boffP.x, _boffP.y + 0.6, _boffP.z);
+  camera.getWorldPosition(_boffC);
+  feedOffer.rotation.y = Math.atan2(_boffC.x - _boffP.x, _boffC.z - _boffP.z); // yaw-billboard
+}
+function positionFeedOffer() { updateFeedOffer(); }
+// Broadcast receiver — render the feed for everyone (deterministic personality → all clients agree).
+voice.onData((_id, msg) => {
+  if (!msg || msg.t !== 'feed' || !msg.birdId) return;
+  const at = Array.isArray(msg.at) ? new THREE.Vector3(msg.at[0], msg.at[1], msg.at[2]) : flock.headWorldPos(msg.birdId, new THREE.Vector3());
+  doFeed(msg.birdId, at);
+});
+
 // Which-speaker picker. Single-speaker → direct; panel → a chooser (flat DOM here, the
 // in-world menu Speakers page in VR). Also reused to pick a present participant to add as a
 // co-speaker. `mode`: 'zap' | 'cospeaker'.
@@ -1902,6 +1988,7 @@ renderer.setAnimationLoop(() => {
   queuePanel.update(dt);      // pulse the pedestal "you're up" ring (only when set)
   updateVRBoardScroll(dt);    // VR: aim right controller at LIVE + right-stick Y scrolls
   updateMenu();               // in-world menu: billboard + laser hover (only while open)
+  updateFeedOffer();          // 🦩 4.14: float the Feed offer over the selected bird (billboard)
   updateXrButtonDebug();      // TEMP 4.13 #1 · X-DBG — controller button readout (strip after)
 
   renderer.render(scene, camera);

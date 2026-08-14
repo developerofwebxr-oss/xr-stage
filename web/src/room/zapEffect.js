@@ -58,6 +58,41 @@ export function createZapEffects(scene) {
     active.push({ kind: 'avatar', sprite, group, t: 0, life: 1.3 });
   }
 
+  // 🦩 Feed snack (4.14) — 2–3 tiny cracker sprites arc from `from` to `to` (the bird's head) and
+  // dispose on arrival (~0.8s). Reduced motion: a single quick static hop. Cheap, no meshes.
+  function snack(from, to, { emoji = '🍪' } = {}) {
+    if (!from || !to) return;
+    const n = REDUCE ? 1 : 3;
+    for (let i = 0; i < n; i++) {
+      cull();
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: emojiTexture(emoji), transparent: true, depthWrite: false, depthTest: false }));
+      const sc = 0.16 + i * 0.02; sprite.scale.set(sc, sc, 1); sprite.renderOrder = 999;
+      sprite.position.copy(from); scene.add(sprite);
+      const jitter = new THREE.Vector3((i - 1) * 0.12, i * 0.05, (i - 1) * 0.1);
+      active.push({ kind: 'snack', sprite, t: 0, life: (REDUCE ? 0.35 : 0.8) + i * 0.05, from: from.clone(), to: to.clone().add(jitter), arc: REDUCE ? 0.1 : 0.45 + i * 0.12 });
+    }
+  }
+
+  // 🦩 Reaction burst (4.14) — an emoji sprite pops at a world position, floats up + fades (~1s).
+  function burst(pos, emoji, { life = 1.0, rise = 0.7, scale = 0.5 } = {}) {
+    if (!pos) return;
+    cull();
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: emojiTexture(emoji), transparent: true, depthWrite: false, depthTest: false }));
+    sprite.scale.set(scale, scale, 1); sprite.renderOrder = 999;
+    sprite.position.copy(pos); scene.add(sprite);
+    active.push({ kind: 'wpop', sprite, t: 0, life, rise, y0: pos.y, sc: scale });
+  }
+
+  // 🦩 Text burst (4.14) — e.g. the Screamer's jagged "SQUAWK!" sprite. Same rise+fade as burst.
+  function burstText(pos, text, { life = 1.1, rise = 0.6, w = 1.0, h = 0.5 } = {}) {
+    if (!pos) return;
+    cull();
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: shoutTexture(text), transparent: true, depthWrite: false, depthTest: false }));
+    sprite.scale.set(w, h, 1); sprite.renderOrder = 999;
+    sprite.position.copy(pos); scene.add(sprite);
+    active.push({ kind: 'wpop', sprite, t: 0, life, rise, y0: pos.y, sc: w, scH: h });
+  }
+
   // Comment-card boost — flung off the card into world space.
   function fling({ position, side = 'right', topY = 4.5, amount } = {}) {
     if (!position) return;
@@ -100,6 +135,14 @@ export function createZapEffects(scene) {
         e.sprite.material.opacity = Math.max(0, op);
         const s = 0.9 * (1 + k * 0.3);
         e.sprite.scale.set(s, s * 0.5, 1);
+      } else if (e.kind === 'snack') {                 // arc from → to (bird head), fade on arrival
+        const p = e.from.clone().lerp(e.to, k); p.y += Math.sin(Math.PI * k) * e.arc;
+        e.sprite.position.copy(p);
+        e.sprite.material.opacity = k > 0.85 ? 1 - (k - 0.85) / 0.15 : 1;
+      } else if (e.kind === 'wpop') {                  // reaction burst: rise + fade at a world pos
+        e.sprite.position.y = e.y0 + e.rise * k;
+        e.sprite.material.opacity = 1 - k;
+        const gs = 1 + k * 0.5; e.sprite.scale.set(e.sc * gs, (e.scH || e.sc) * gs, 1);
       } else { // static (reduced motion)
         e.sprite.material.opacity = 1 - k;
         e.sprite.position.y += 0.15 * dt;
@@ -108,7 +151,24 @@ export function createZapEffects(scene) {
     }
   }
 
-  return { spawn, fling, emote, update };
+  return { spawn, fling, emote, snack, burst, burstText, update };
+}
+
+// A jagged comic "SQUAWK!" shout label → texture (disposed on end).
+function shoutTexture(text) {
+  const c = document.createElement('canvas');
+  c.width = 320; c.height = 160;
+  const ctx = c.getContext('2d');
+  ctx.font = '900 84px "Arial Black", system-ui, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 12; ctx.strokeStyle = '#1a0a12';
+  ctx.strokeText(text || 'SQUAWK!', 160, 84);
+  ctx.fillStyle = '#ff5aa8';
+  ctx.fillText(text || 'SQUAWK!', 160, 84);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 // One small canvas → texture for an emoji burst (disposed on end).
