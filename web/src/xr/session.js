@@ -29,6 +29,9 @@ export async function setupXR(renderer, { onModeChange, onARMode }) {
     if (active) return;
     const isAR = xrMode === 'immersive-ar';
     const sessionInit = { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] };
+    // AR: request dom-overlay so PHONE AR (no controllers) can show a DOM ☰ over passthrough to
+    // reach the in-world menu (4.11 #3). Harmless on Quest AR. Root is the body (the HUD lives there).
+    if (isAR) { sessionInit.optionalFeatures.push('dom-overlay'); sessionInit.domOverlay = { root: document.body }; }
 
     let session;
     try {

@@ -289,6 +289,9 @@ function afterSignedIn(me) {
   hud.showBalance(true);
   hud.setBalance(wallet.getBalance());
   refreshEmbodiment();            // body/ghost-indicator/counts follow the loaded tier
+  // (4.11 #1) Mark the RUNNING event as already-seen so signing in / redeeming a code mid-event
+  // doesn't pop the transition prompt — that fires only on a genuine boundary (event CHANGE).
+  _promptedEventId = booking.currentEvent()?.id ?? null;
   return me;
 }
 
@@ -403,9 +406,10 @@ setupXR(renderer, {
     if (mode === 'flat') { xrMenu?.close(); resetFlatView(); } // close panel + clear residual XR camera roll/offset
     if (mode === 'flat' && !isMobile) hud.flashLockHint(); // brief reminder on return
     if (mode !== 'flat') hud.showFreeLookHint(false);
+    updateArMenuBtn();                            // phone-AR ☰ visibility (4.11 #3)
   },
   // AR = shell-off: passthrough look + per-prop collision (arActive flips the clamp).
-  onARMode: (on) => { arActive = on; setARMode(on); },
+  onARMode: (on) => { arActive = on; setARMode(on); updateArMenuBtn(); },
 }).then((xr) => {
   xrCtl = xr;
   hud.configureModes(xr.supported); // grey out VR/AR the device can't do
@@ -875,8 +879,9 @@ const xrControllers = []; // for the VR board-scroll (frame loop reads the right
       ray.visible = e.data?.targetRayMode !== 'screen';
       controller.userData.handedness = e.data?.handedness;   // for the VR scroll
       controller.userData.inputSource = e.data;
+      updateArMenuBtn();                                     // a real controller → hide the phone-AR ☰
     });
-    controller.addEventListener('disconnected', () => { ray.visible = false; controller.userData.inputSource = null; });
+    controller.addEventListener('disconnected', () => { ray.visible = false; controller.userData.inputSource = null; updateArMenuBtn(); });
     // Grip held = scrub the scrollbar thumb (VR thumb-drag); tracked for updateVRBoardScroll.
     controller.addEventListener('squeezestart', () => { controller.userData.gripping = true; });
     controller.addEventListener('squeezeend', () => { controller.userData.gripping = false; });
@@ -949,6 +954,17 @@ voice.onData((id, msg) => {
 // Emote row (flat/mobile) → the same doEmote path as the 1–4 keys.
 for (const b of document.querySelectorAll('#emote-row .emote-btn')) {
   b.addEventListener('click', () => doEmote(b.dataset.emote));
+}
+
+// Phone-AR ☰ (4.11 #3): visible only in AR with NO controller input source (phone AR uses the
+// DOM overlay + screen-tap). On Quest AR the controllers connect → X works and the ☰ hides.
+const _arMenuBtn = document.getElementById('ar-menu-btn');
+_arMenuBtn.addEventListener('click', () => xrMenu?.toggle());
+function updateArMenuBtn() {
+  // Count only REAL controllers (tracked-pointer) — a phone-AR screen tap is a transient
+  // 'screen' input source and must NOT hide the ☰ (it's how you press the panel).
+  const hasController = xrControllers.some((c) => c.userData.inputSource && c.userData.inputSource.targetRayMode !== 'screen');
+  _arMenuBtn.hidden = !(arActive && renderer.xr.isPresenting && !hasController);
 }
 
 // ── Wallet + zap (Phase 3, mock) ─────────────────────────────────────────────────
@@ -1330,7 +1346,10 @@ booking.onChange(() => {
 //   (a) LAPSE — when my held event has ended + grace passed → lapse to ghost (credits kept).
 //   (b) PROMPT — when a new/different event is running that I don't hold → show the transition
 //       prompt ONCE per event (to embodied non-holders AND signed-in ghosts).
-let _promptedEventId = null;
+// Seeded to the CURRENT event at load so a RELOAD mid-event doesn't re-prompt (single-source
+// seen-set, shared by the DOM prompt AND the in-world Event page). A genuine boundary (event id
+// change) is the only thing that re-arms it. afterSignedIn re-marks it on sign-in/redeem.
+let _promptedEventId = booking.currentEvent()?.id ?? null;
 async function eventTick() {
   if (!identity.current()) return;                 // signed-out → nothing to scope
   const t = booking.now();
@@ -1349,8 +1368,14 @@ async function eventTick() {
     if (_promptedEventId !== cur.id && !eventPrompt.isOpen()) {
       _promptedEventId = cur.id;
       const name = (await identity.getProfile(cur.speakers[0] || cur.ownerPubkey)).name;
-      closeAllMenus();
-      eventPrompt.open({ title: cur.title, speaker: name, description: cur.description });
+      // (4.11 #2) Immersive → the in-world Event page (VR/AR parity); flat → the DOM prompt. Same
+      // once-per-event gate (_promptedEventId), same underlying handlers.
+      if (renderer.xr.isPresenting && xrMenu) {
+        xrMenu.openEvent({ title: cur.title, speaker: name });
+      } else {
+        closeAllMenus();
+        eventPrompt.open({ title: cur.title, speaker: name, description: cur.description });
+      }
     }
   } else {
     if (cur && tickets.holdsFor(cur.id)) eventPrompt.close(); // I hold the current event → no prompt
@@ -1548,6 +1573,8 @@ xrMenu = createXrMenu(scene, {
     acceptTalk: (id) => zoneAudio.acceptTalk(id),      // Networking talk-request accept (VR)
     declineTalk: (id) => zoneAudio.declineTalk(id),
     emote: (kind) => doEmote(kind),                    // 4.8: emotes from the in-world menu
+    welcomeZap: () => welcomeZap(),                    // 4.11: transition Event page → welcome zap
+    continueGhost: () => continueAsGhost(),            // 4.11: transition Event page → dismiss + lapse
   },
   state: {
     signedIn: () => !!identity.current(),

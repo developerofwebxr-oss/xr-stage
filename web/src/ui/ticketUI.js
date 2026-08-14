@@ -53,7 +53,7 @@ export function createTicketUI({ toast, tiers, split, currentTier, getBalance, o
       card.innerHTML =
         `<div class="tier-head"><span class="tier-name">${t.label}</span>` +
         `<span class="tier-price">${fmt(priceOf(id))} sats</span></div>` +
-        `<div class="tier-credits">→ <b>${fmt(s.credits)} credits</b> · <span class="fee">⚡${fmt(s.venue)} venue</span> · <span class="spk">⚡${fmt(s.speakers)} to speakers</span></div>` +
+        `<div class="tier-credits"><span class="cr">→ <b>${fmt(s.credits)} credits</b></span> <span class="fee">⚡${fmt(s.venue)} venue</span> <span class="spk">⚡${fmt(s.speakers)} → speakers</span></div>` +
         `<ul class="tier-perks">${perks}</ul>` +
         `<button class="ctl ${id === 'ghost' ? '' : 'primary'}" data-tier="${id}" ${isCurrent ? 'disabled' : ''}>${isCurrent ? 'Current plan' : `Get ${t.label} ⚡`}</button>`;
       el.tiersBox.appendChild(card);

@@ -134,6 +134,33 @@ Swapping LiveKit Cloud ↔ a self-hosted LiveKit is just changing `LIVEKIT_URL` 
 
 ## Changelog
 
+**Loose-ends bundle (4.11)** — four independent flagged items. No new deps; renderers over
+existing flows.
+- **#1 Transition prompt no longer fires on sign-in.** The engine's once-per-event gate
+  (`_promptedEventId`) is now **seeded to the running event** at load and re-marked in
+  `afterSignedIn`, so signing in / redeeming a code / reloading mid-event does **not** pop the
+  prompt — it fires only on a genuine boundary (the current event id *changes*). A fresh signer-in
+  sees the normal state (ghost + the chooser reachable via You/gates). *Verified: sign in mid-event
+  → You menu, no prompt.*
+- **#2 In-world Event page (VR/AR parity).** The transition engine routes to the **in-world panel**
+  when `renderer.xr.isPresenting` (a new `xrMenu` **Event page**: title + speaker + *Get a ticket →
+  the tiers page · ⚡ Welcome zap 210 · Continue as ghost*) and to the DOM prompt otherwise — same
+  once-per-event gate, same underlying handlers (`welcomeZap` / `continueAsGhost` / the tiers page),
+  no new logic. `openEvent()` navigates an already-open panel to the page. *Structural; on-device
+  at a boundary (use `booking.__skip`).*
+- **#3 Phone-AR ☰ entry point.** AR sessions now request **`dom-overlay`**; a minimal safe-area ☰
+  (`#ar-menu-btn`, top-level so it survives the immersive HUD hide) shows **only in AR with no
+  tracked controller** (a screen-tap transient source doesn't count) and toggles the in-world menu;
+  its buttons are pressed via the existing screen-tap ray. Quest AR (controllers connect) hides the
+  ☰ and keeps X. *On-device.*
+- **#4 Tier split-line wrap.** Each chunk of `→ credits · ⚡venue · ⚡speakers` is now a **nowrap**
+  span in a flex-wrap row at a tighter 11 px, and "to speakers" → "→ speakers" — so it fits one
+  line and never breaks mid-phrase on desktop or mobile card widths. The in-world tiers page shows
+  only "+N spendable credits" (doesn't share the copy), so no mirror needed. *Verified at the card
+  width; nowrap chunks hold at mobile.*
+- Clean build, no console errors; the once-per-event bookkeeping stays single-source (one
+  `_promptedEventId` shared by the DOM prompt + the in-world Event page).
+
 **Headset input re-fix — button matrix · sprint · exit-tilt (4.3 re-issue, vs current main)** — no
 new deps; immersive-only, one binding table, one locomotion path.
 - **Root cause found (buttons).** There is exactly **one** gamepad reader on main — `readVRSticks`

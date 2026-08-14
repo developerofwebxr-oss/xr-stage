@@ -55,6 +55,7 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
   let hovered = null;      // id of the button under the laser (drives the highlight)
   let notice = '';         // transient status line (result of an action)
   let codeBuf = '';        // keypad entry buffer (6 digits)
+  let eventInfo = null;    // { title, speaker } for the transition Event page (4.11 #2)
   let busy = false;        // an async action (buy / redeem) is in flight
   let buttons = [];        // current page hit-rects: [{ id, x, y, w, h }]
 
@@ -148,6 +149,9 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
     }
     if (id === 'requests') { page = 'requests'; notice = ''; return render(); }
     if (id === 'emotes') { page = 'emotes'; notice = ''; return render(); }
+    if (id === 'evt-ticket') { page = 'tickets'; notice = ''; return render(); }        // → in-world tiers (event-scoped)
+    if (id === 'evt-zap') { actions.welcomeZap(); return closeMenu(); }                  // ⚡ welcome zap
+    if (id === 'evt-ghost') { actions.continueGhost(); return closeMenu(); }             // dismiss + lapse
     if (id.startsWith('emote:')) { actions.emote(id.slice(6)); return closeMenu(); } // play + close so the burst shows
     if (id.startsWith('zap-spk:')) { actions.zapPickedSpeaker(id.slice(8)); notice = '⚡ Zapped'; page = 'main'; return render(); }
     if (id.startsWith('req-accept:')) { actions.acceptTalk(id.slice(11)); notice = 'Talk link opened'; page = 'main'; return render(); }
@@ -207,6 +211,7 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
     else if (page === 'requests') renderRequests();
     else if (page === 'speakers') renderSpeakers();
     else if (page === 'emotes') renderEmotes();
+    else if (page === 'event') renderEvent();
 
     if (notice) {
       g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -264,6 +269,21 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
     // Talk requests (Networking) — only when someone has asked to talk
     const reqs = state.talkRequests ? state.talkRequests() : [];
     if (reqs.length) button('requests', PAD, y, full, 58, '🤝 Talk requests', { right: `${reqs.length} ›`, accent: true });
+  }
+
+  // Transition prompt, in-world twin (4.11 #2): title + speaker(s), same three actions as the
+  // DOM prompt (Get a ticket → the tiers page · ⚡ Welcome zap · Continue as ghost).
+  function renderEvent() {
+    title('NEW EVENT', 'now on stage');
+    const full = CW - 2 * PAD;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = INK; g.font = `700 40px ${MONO}`;
+    g.fillText(clip(g, eventInfo?.title || 'Event', full), CW / 2, 150);
+    if (eventInfo?.speaker) { g.fillStyle = INK_DIM; g.font = `400 27px ${SANS}`; g.fillText(clip(g, `with ${eventInfo.speaker}`, full), CW / 2, 196); }
+    let y = 280;
+    button('evt-ticket', PAD, y, full, 78, 'Get a ticket', { accent: true }); y += 96;
+    button('evt-zap', PAD, y, full, 74, 'Welcome zap ⚡ 210'); y += 92;
+    button('evt-ghost', PAD, y, full, 74, 'Continue as ghost', { dim: true });
   }
 
   function renderEmotes() {
@@ -413,6 +433,7 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
   return {
     open: openMenu, close: closeMenu, toggle, isOpen: () => open,
     openSpeakers: () => { if (!open) openMenu(); page = 'speakers'; notice = ''; render(); },
+    openEvent: (info) => { eventInfo = info || null; if (!open) openMenu(); page = 'event'; notice = ''; render(); },
     targets, pressWorld, hoverAt, update, dispose,
   };
 }
