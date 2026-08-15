@@ -3,6 +3,7 @@ import { config } from './config.js';
 import { buildScene } from './room/scene.js';
 import { zones, buildZoneScenery, accessClamp, PARK, PARK_PENS } from './zones/zones.js';
 import { createFlock } from './room/flock.js';
+import { assemblePsycho } from './room/psycho.js';
 import { createCoaster } from './ride/coaster.js';
 import { tickets } from './tickets/tickets.js';
 import { createTicketUI } from './ui/ticketUI.js';
@@ -59,6 +60,61 @@ buildZoneScenery(scene);
 // loop; the coaster async-loads the owner GLBs (placeholder carts until they land). onReturn
 // releases any local rider from their seat.
 const flock = createFlock(scene, { center: { x: PARK.cx, z: PARK.cz }, pens: PARK_PENS, count: 8 });
+// 🦩🔥 The Psycho (4.15) — one real assembled cyber-nostrich, added to the flock brain after its
+// parts load. His own pen, near the gate path so people find him; personality reserved to him.
+const PSYCHO_PEN = { x: 18, z: 9, w: 4.5, d: 4.5 };
+let psycho = null;
+assemblePsycho().then((p) => {
+  if (!p) return;
+  psycho = p;
+  scene.add(p.root);
+  p.root.position.set(PSYCHO_PEN.x, 0, PSYCHO_PEN.z);
+  // Join the flock brain: wander in his pen + the standard select→Feed ⚡33, but self-driven so his
+  // real-mesh FK + head-swaps don't fight the primitive driver. Personality 'psycho' is his alone.
+  flock.addBird({ id: 'nostrich-psycho', root: p.root, parts: p.parts, pen: PSYCHO_PEN, personality: 'psycho', setHead: p.setHead, animate: psychoAnimate });
+  console.log(`[psycho] assembled · scale ${p.scale.toFixed(3)} · ~${p.heightM}m · pen(${PSYCHO_PEN.x},${PSYCHO_PEN.z})`);
+});
+// The Psycho's own animation: idle wander + a brief open-mouth "chew" flicker; when fed, the custom
+// 4-stage escalation (② eat → ③ rage+stomp → ④ psychotic shake+half-lunge+SQUAWK → simmer ③→① home).
+const _bump = (x) => Math.sin(Math.PI * Math.min(1, Math.max(0, x)));
+const inPsychoPen = (x, z) => Math.abs(x - PSYCHO_PEN.x) < PSYCHO_PEN.w / 2 - 0.5 && Math.abs(z - PSYCHO_PEN.z) < PSYCHO_PEN.d / 2 - 0.5;
+function psychoAnimate(b, dt) {
+  if (b.react) return psychoReaction(b, dt);
+  const p = b.parts, spd = 0.32;
+  const nx = b.x + Math.sin(b.heading) * spd * dt, nz = b.z + Math.cos(b.heading) * spd * dt;
+  if (inPsychoPen(nx, nz)) { b.x = nx; b.z = nz; } else b.heading += 1.9 + Math.sin(b.t) * 0.3;
+  b.heading += Math.sin(b.t * 0.4) * dt * 0.4;
+  b.root.position.set(b.x, 0, b.z);
+  b.root.rotation.y = b.heading + Math.PI;
+  if (p.neckL) p.neckL.rotation.x = Math.sin(b.t * 1.2) * 0.09;
+  if (p.neckU) p.neckU.rotation.x = Math.sin(b.t * 1.0 + 1) * 0.06;
+  const g = b.t * 3.0;
+  if (p.legL) p.legL.rotation.x = Math.sin(g) * 0.14;
+  if (p.legR) p.legR.rotation.x = Math.sin(g + Math.PI) * 0.14;
+  if (b.setHead) b.setHead((b.t % 5) > 4.65 ? 'open_mouth' : 'normal'); // brief "chew" flicker = how he eats
+}
+function psychoReaction(b, dt) {
+  const p = b.parts, r = b.react; r.t += dt; const k = r.t;
+  const fast = !!r.fast;                                   // re-fed within 60s → skip faster to ④, bigger lunge
+  const T2 = fast ? 0.4 : 1.0, T3 = fast ? 0.4 : 1.9, T4 = fast ? 0.5 : 3.0, TS = fast ? 4.0 : 5.5;
+  b.root.rotation.y = r.faceYaw;
+  if (k < T2) { b.setHead('open_mouth'); if (p.neckL) p.neckL.rotation.x = 0.3 * _bump(k / T2); }              // ② eats
+  else if (k < T3) { b.setHead('rage'); if (p.neckL) p.neckL.rotation.x = 0.5; if (!r.stomp) { r.stomp = 1; if (p.legR) p.legR.rotation.x = -0.7; } } // ③ rage + hard stomp
+  else if (k < T4) {                                                                                            // ④ psychotic: shake + half-lunge + SQUAWK
+    b.setHead('psychotic_rage');
+    if (!r.squawk) { r.squawk = 1; const h = flock.headWorldPos(b.id, new THREE.Vector3()); h.y += 0.35; zapFx.burstText(h, 'SQUAWK!'); }
+    b.root.rotation.y = r.faceYaw + Math.sin(k * 42) * (fast ? 0.3 : 0.22);
+    const dx = r.feeder.x - b.x, dz = r.feeder.z - b.z, d = Math.hypot(dx, dz);
+    if (d > 1.0) { const step = Math.min((fast ? 3.6 : 2.6) * dt, d - 1.0); b.x += dx / d * step; b.z += dz / d * step; b.root.position.set(b.x, 0, b.z); } // stop ~1m short
+    if (p.legR) p.legR.rotation.x = 0;
+  } else if (k < TS) {                                                                                          // simmer ③→① + return home
+    b.setHead(k < (T4 + TS) / 2 ? 'rage' : 'normal');
+    const t = (k - T4) / (TS - T4);
+    b.x += (r.home.x - b.x) * Math.min(1, t * 1.5); b.z += (r.home.z - b.z) * Math.min(1, t * 1.5);
+    b.root.position.set(b.x, 0, b.z);
+    if (p.neckL) p.neckL.rotation.x = 0.4 * (1 - t);
+  } else { b.setHead('normal'); if (p.neckL) p.neckL.rotation.set(0, 0, 0); if (p.legR) p.legR.rotation.set(0, 0, 0); b.lastFed = b.t; b.react = null; } // done → wander
+}
 const coaster = createCoaster(scene, {
   nCarts: 4,
   onDepart: () => { hud.toast('🎢 And… away we go!'); },

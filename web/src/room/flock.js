@@ -123,6 +123,7 @@ export function createFlock(scene, { center = { x: 0, z: 0 }, pens = [], count =
   function update(dt) {
     for (const b of birds) {
       b.t += dt;
+      if (b.animate) { b.animate(b, dt); continue; }   // real assembled bird (Psycho) drives itself
       if (b.react) { playReaction(b, dt); continue; } // a reaction OWNS the bird (also under reduced motion)
       if (REDUCE) continue;                            // otherwise: static idle poses under reduced motion
       animateWander(b, dt);
@@ -241,9 +242,26 @@ export function createFlock(scene, { center = { x: 0, z: 0 }, pens = [], count =
     b.lastFed = b.t; b.react = null;
   }
 
+  // Register an externally-assembled bird (the Psycho, 4.15) into the flock brain: it joins wander,
+  // select and feed like any bird, but drives its own animation via cfg.animate (so its real-mesh FK
+  // + head-swaps don't fight the primitive driver). Additive — the primitive birds are untouched.
+  function addBird(cfg) {
+    const b = {
+      id: cfg.id, root: cfg.root, parts: cfg.parts || {}, pen: cfg.pen,
+      reaction: cfg.personality, personality: cfg.personality,
+      animate: cfg.animate || null, setHead: cfg.setHead || null,
+      react: null, lastFed: -100, t: 0,
+      x: cfg.pen.x, z: cfg.pen.z, heading: hash(birds.length, 3) * Math.PI * 2,
+      phase: 0, speed: 0.35, buggy: false, real: true,
+    };
+    cfg.root.userData.birdId = cfg.id;
+    birds.push(b); byId.set(cfg.id, b);
+    return b;
+  }
+
   const _wp = new THREE.Vector3();
   return {
-    group, update,
+    group, update, addBird,
     pickTargets: () => birds.map((b) => b.root),                       // unified-select raycast targets
     reactionOf: (id) => byId.get(id)?.reaction || null,
     reactionMap: () => birds.map((b) => ({ id: b.id, reaction: b.reaction })), // the seed map (report)
@@ -256,7 +274,12 @@ export function createFlock(scene, { center = { x: 0, z: 0 }, pens = [], count =
       if (!b || b.react || b.t - b.lastFed < FEED_COOLDOWN) return null;
       const dx = feederPos.x - b.x, dz = feederPos.z - b.z;
       const reduced = REDUCE || !!opts.reduced;
-      b.react = { type: b.reaction, t: 0, dur: reduced ? 1.0 : REACT_DUR[b.reaction], reduced, faceYaw: Math.atan2(dx, dz) + Math.PI, home: { x: b.x, z: b.z } };
+      const fast = b.lastFed > -50 && b.t - b.lastFed < 60;   // re-fed soon → Psycho escalates faster
+      b.react = {
+        type: b.reaction, t: 0, dur: reduced ? 1.0 : (REACT_DUR[b.reaction] || 3.0), reduced,
+        faceYaw: Math.atan2(dx, dz) + Math.PI, home: { x: b.x, z: b.z },
+        feeder: { x: feederPos.x, z: feederPos.z }, fast,
+      };
       return b.reaction;
     },
     dispose() { scene.remove(group); },
