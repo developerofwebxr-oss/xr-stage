@@ -50,17 +50,21 @@ const SMK_CW = 11, SMK_CD = 10, SMK_HH = 3.0, SMK_POSTH = 3.6, SMK_GATEHALF = 0.
 // barrier is an ARC concentric with the venue circles (same centre C) so the whole venue reads as
 // rings; radial fences + the forest close the sides/back. Flock pens + coaster station live inside;
 // main builds those. GATE = the entrance GLB, in a gap in the front arc.
+// 4.17 #3: front arc pushed OUT to Networking's radius (≈31.5) so all destination buildings sit on
+// one ring, with a clear angular GAP from Networking (which spans bearing ≈ −6°…28°). Park sector is
+// 35.5°…74.5° → open sky between them. Reachable interior is Ri…AUDIENCE_RADIUS(38); the back arc is
+// cosmetic (like Networking's deep hall). Flock pens + coaster station sit in the reachable band.
 export const PARK = {
-  cx: 20, cz: 13,               // interior centroid (flock pens + coaster station sit around here)
-  Ri: 20, Ro: 36,               // sector radii — front arc / back, concentric with the venue (centre C)
-  th0: 0.52, th1: 1.26,         // angular span (bearings from the stage) — a clear sector, past Networking
-  h: 3.0, gateHalfAng: 0.085,   // fence height · gate-gap angular half-width on the front arc
+  cx: 25, cz: 13,               // interior centroid (detection); station + pens sit around here
+  Ri: 31.5, Ro: 44,             // sector radii — front arc on Networking's ring / cosmetic back
+  th0: 0.62, th1: 1.30,         // angular span (bearings from the stage) — clear gap past Networking
+  h: 3.0, gateHalfAng: 0.075,   // fence height · gate-gap angular half-width on the front arc
   hue: 0xff5aa8,
 };
-export const PARK_PENS = [   // fenced sub-areas the flock wanders (never through guests)
-  { x: PARK.cx - 5, z: PARK.cz + 4, w: 7, d: 7 },
-  { x: PARK.cx + 5, z: PARK.cz + 5, w: 7, d: 6 },
-  { x: PARK.cx + 6, z: PARK.cz - 4, w: 6, d: 6 },
+export const PARK_PENS = [   // fenced sub-areas the flock wanders (in the reachable band, never through guests)
+  { x: 20, z: 20, w: 5, d: 5 },
+  { x: 28, z: 17, w: 5, d: 5 },
+  { x: 30, z: 10, w: 5, d: 5 },
 ];
 const PARK_TH = (PARK.th0 + PARK.th1) / 2;      // gate bearing = front-arc centre
 const PARK_GATE = onArc(PARK.Ri, PARK_TH);      // gate world position on the front arc
@@ -95,7 +99,7 @@ export const ZONE_DEFS = [
     // Entry 500 credits (Basic/Supporter) · included for Patron + speakers. Rides cost extra.
     id: 'park', name: 'Nostrich Park', emoji: '🦩', hue: 0xff5aa8,
     fx: PARK_GATE.x, fz: PARK_GATE.z,      // gate at the centre of the front arc (plaza-facing)
-    cx: 19, cz: 11, r: 9.0,                // detection circle over the interior (station + pens)
+    cx: 25, cz: 14, r: 10.0,               // detection circle over the interior (station + pens)
     requires: 'parkAccess', accessKind: 'park',
     lettersText: 'NOSTRICH PARK', lettersH: 2.4,
     plaque: 'Entry 500 · rides extra. The Nostrich Coaster departs from the park station — 210 credits a seat.',
@@ -134,6 +138,37 @@ export function accessClamp(x, z, allow) {
     }
   }
   return { x, z, blocked: null };
+}
+
+// ── Park perimeter collision (4.17 #2) ─────────────────────────────────────────────────
+// The park fence/arc is SOLID for players — entry/exit ONLY through the gate gap in the front arc.
+// Building walls never had collision in the movement clamp (a general gap, not a park regression);
+// this adds it for the park, resolving the wall side from the player's PREVIOUS (valid) position so a
+// thin arc/fence can't be tunnelled at frame speed. Called from the frame-loop clamp chain.
+const PB = 0.32;                                   // body radius (matches room/zones BODY_RADIUS)
+const parkBearing = (x, z) => Math.atan2(x - C.x, z - C.z);
+const parkRadius = (x, z) => Math.hypot(x - C.x, z - C.z);
+const inParkSpan = (th) => th > PARK.th0 && th < PARK.th1;
+const inParkGate = (th) => Math.abs(shortAng(th - PARK_TH)) < PARK.gateHalfAng;
+export function parkClamp(px, pz, x, z) {
+  const thNew = parkBearing(x, z), thPrev = parkBearing(px, pz);
+  if (!inParkSpan(thNew) && !inParkSpan(thPrev)) return { x, z, hit: false }; // nowhere near the sector
+  const rNew = parkRadius(x, z), rPrev = parkRadius(px, pz);
+  // FRONT ARC (radius Ri) — the plaza-facing barrier. Crossing it is allowed only at the gate gap.
+  if (inParkSpan(thNew) && (rPrev < PARK.Ri) !== (rNew < PARK.Ri) && !inParkGate(thNew)) {
+    const target = (rPrev < PARK.Ri ? PARK.Ri - PB : PARK.Ri + PB) / (rNew || 1e-6);
+    return { x: C.x + (x - C.x) * target, z: C.z + (z - C.z) * target, hit: true };
+  }
+  // RADIAL SIDE fences (th0, th1) — only within the fenced radius band. Keep the player on their side.
+  if (rNew >= PARK.Ri - PB && rNew <= PARK.Ro) {
+    for (const w of [PARK.th0, PARK.th1]) {
+      if ((thPrev < w) !== (thNew < w) && Math.abs(shortAng(thNew - w)) < 0.35) {
+        const th = thPrev < w ? w - 0.004 : w + 0.004;
+        return { x: C.x + rNew * Math.sin(th), z: C.z + rNew * Math.cos(th), hit: true };
+      }
+    }
+  }
+  return { x, z, hit: false };
 }
 
 // ── Occupancy (mock population + the local player when inside) ─────────────────────────
@@ -398,21 +433,19 @@ function buildPark(zn) {
     side.position.copy(onArc((Ri + Ro) / 2, th)); side.position.y = h / 2; side.rotation.y = th - Math.PI / 2;
     g.add(side); sides.push(side);
   }
-  // Gateposts flanking the front-arc gap (the GLB gate drops between them when it loads).
-  for (const s of [-1, 1]) {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, h + 1, 0.4), M.post);
-    post.position.copy(onArc(Ri, thc + s * gateHalfAng)); post.position.y = (h + 1) / 2; post.rotation.y = thc + s * gateHalfAng; g.add(post);
-  }
+  // No primitive gateposts (4.17 #1) — the entrance GLB (the two guardian-bird sculptures) IS the
+  // gate and stands alone in the front-arc gap. The name letters sit ABOVE the tall GLB.
   const propSpawns = [addAnchor(g, cx, cz, 'park-centre'), addAnchor(g, cx - 6, cz + 6, 'park-snack'), addAnchor(g, cx + 6, cz - 6, 'park-photo')];
 
-  g.add(placeLetters(zn, Ri + 0.1, thc, h + 1.6));
-  g.add(placePlaque(zn, Ri, thc + 0.14));
+  const GATE_H = (h + 1.4) * 2;                        // GLB fit height (~8.8 m)
+  g.add(placeLetters(zn, Ri + 0.1, thc, GATE_H + 0.9)); // letters clear ABOVE the gate GLB
+  g.add(placePlaque(zn, Ri, thc + PARK.gateHalfAng + 0.10)); // plaque just beside the gate gap
 
-  // Entrance GLB — scaled ×2 (4.13 #2, it read too small), seated on the ground at the gate, facing
-  // inward toward the plaza/stage. Graceful — the gateposts already stand in.
+  // Entrance GLB — the sole gate (scaled ×2), seated on the ground in the front-arc gap, facing the
+  // plaza. Graceful absence: the fence gap just stays open.
   loadGLB('nostriches_entrance.glb').then((gate) => {
-    if (!gate) { console.warn('[park] entrance GLB absent — gateposts stand in'); return; }
-    const scale = fitToHeight(gate, (h + 1.4) * 2);   // ×2 the old ~4.4 m → ~8.8 m
+    if (!gate) { console.warn('[park] entrance GLB absent — open gateway'); return; }
+    const scale = fitToHeight(gate, GATE_H);
     const box = measure(gate).box;
     const at = onArc(Ri, thc);
     gate.position.set(at.x, -box.min.y, at.z);

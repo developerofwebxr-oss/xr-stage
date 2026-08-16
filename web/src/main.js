@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { config } from './config.js';
 import { buildScene } from './room/scene.js';
-import { zones, buildZoneScenery, accessClamp, PARK, PARK_PENS } from './zones/zones.js';
+import { zones, buildZoneScenery, accessClamp, parkClamp, PARK, PARK_PENS } from './zones/zones.js';
 import { createFlock } from './room/flock.js';
 import { assemblePsycho } from './room/psycho.js';
 import { createCoaster } from './ride/coaster.js';
@@ -62,7 +62,7 @@ buildZoneScenery(scene);
 const flock = createFlock(scene, { center: { x: PARK.cx, z: PARK.cz }, pens: PARK_PENS, count: 8 });
 // 🦩🔥 The Psycho (4.15) — one real assembled cyber-nostrich, added to the flock brain after its
 // parts load. His own pen, near the gate path so people find him; personality reserved to him.
-const PSYCHO_PEN = { x: 18, z: 9, w: 4.5, d: 4.5 };
+const PSYCHO_PEN = { x: 27, z: 12, w: 4.5, d: 4.5 };  // inside the relocated park, near the gate path (4.17)
 let psycho = null;
 assemblePsycho().then((p) => {
   if (!p) return;
@@ -1995,6 +1995,13 @@ renderer.setAnimationLoop(() => {
   // Runs BEFORE zones.update, so the HUD pill only fires when we're LEGITIMATELY inside.
   // Smoking additionally needs the mic-ON confirm (smokingMicOk); until then a ticketed
   // player is soft-bounced at its edge exactly like a no-access door.
+  // Park perimeter (4.17 #2): SOLID fence/arc — entry/exit only through the gate. Resolves the wall
+  // side from last frame's valid position (_prevPos) so the thin barrier can't be tunnelled. AR keeps
+  // the shell off (no park walls when the whole enclosure is gone).
+  if (!arActive) {
+    const pc = parkClamp(_prevPos.x, _prevPos.z, rig.position.x, rig.position.z);
+    if (pc.hit) { rig.position.x = pc.x; rig.position.z = pc.z; }
+  }
   const gate = accessClamp(rig.position.x, rig.position.z, (zn) => !!tickets.flags()[zn.requires] && (zn.id !== 'smoking' || micOk.has('smoking')));
   if (gate.blocked) { rig.position.x = gate.x; rig.position.z = gate.z; onZoneBlocked(gate.blocked); }
   else _lastBlocked = null;

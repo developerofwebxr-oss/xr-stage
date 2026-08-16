@@ -28,21 +28,23 @@ import { STAGE_POS, SCREEN } from '../room/zones.js';
 // The loop is GENERATED as a true circle in the (travel, up) plane entered at its BOTTOM, with a
 // small forward corkscrew drift so entry ≠ exit. A real circle → a clean inversion, which is the
 // stress test the 4.12 parallel-transport frames must survive without snapping.
+// Park-side waypoints follow the park's move OUT to Networking's radius (4.17 #3): the station is now
+// at radius ~34 (≈ (22.3,18.6)); the peak / inversion / stage-side are unchanged so stage clearance holds.
 const PRE = [
-  [20, 1.6, 16],    // station (park) — leaves heading −x,−z
-  [14, 8, 8],       // climb out of the park
-  [4, 18, -2],      // steep climb toward the stage
-  [-2, 27, -8],     // SKYLINE peak over the stage
-  [-11, 35, -6],    // SUPER peak — the extreme high (skyline moment)
-  [-16, 20, 4],     // steep, fast drop begins
-  [-19, 9, 9],      // pull-out: level into the loop bottom, moving +z
+  [22.3, 1.6, 18.6], // station (park) — leaves heading −x,−z
+  [17, 8, 11],       // climb out of the park
+  [4, 18, -2],       // steep climb toward the stage
+  [-2, 27, -8],      // SKYLINE peak over the stage
+  [-11, 35, -6],     // SUPER peak — the extreme high (skyline moment)
+  [-16, 20, 4],      // steep, fast drop begins
+  [-19, 9, 9],       // pull-out: level into the loop bottom, moving +z
 ];
 const POST = [
-  [-8, 9, 26],      // rejoin: low bank behind (near Smoking)
-  [8, 9, 28],       // across the back (above Networking)
-  [22, 7, 26],      // curve to +x, descending
-  [29, 3, 17],      // the big DIVE (far +x, low, fast)
-  [24, 2, 21],      // sweep back toward the station (aligns to −x,−z)
+  [-8, 9, 26],       // rejoin: low bank behind (near Smoking)
+  [8, 9, 28],        // across the back (above Networking)
+  [24, 7, 27],       // curve to +x, descending
+  [31, 3, 19],       // the big DIVE (far +x, low, fast)
+  [26, 2, 23],       // sweep back toward the station (aligns to −x,−z)
 ];
 function buildLoop() {
   const E = new THREE.Vector3(-18, 8, 14);                    // loop bottom (entry)
