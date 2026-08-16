@@ -463,6 +463,7 @@ setupXR(renderer, {
     if (mode !== 'flat') closeAllMenus();        // leaving flat closes all DOM menus
     setLocalBodyImmersive(mode !== 'flat');      // 4.9: faint self-body in immersive, solid in flat
     xrMenu?.close();                             // (4.13 #1) never carry the in-world panel across a mode change
+    hideFeedOffer?.();                            // (4.16 #2) unified cue lifecycle: transient cues dispose on session/mode change
     if (mode === 'flat') resetFlatView();        // clear residual XR camera roll/offset on return to flat
     if (mode === 'flat' && !isMobile) hud.flashLockHint(); // brief reminder on return
     if (mode !== 'flat') hud.showFreeLookHint(false);
@@ -939,16 +940,6 @@ const xrControllers = []; // for the VR board-scroll (frame loop reads the right
     mitt.visible = false;
     controller.add(mitt);
     controller.userData.mitt = mitt;
-    // TEMP 4.13 #1 · X-DBG — an in-world label per controller showing handedness + which gamepad
-    // buttons are down, so the owner can confirm on-device what the X button reports. STRIP after.
-    {
-      const dc = document.createElement('canvas'); dc.width = 512; dc.height = 132;
-      const dtex = new THREE.CanvasTexture(dc);
-      const dspr = new THREE.Sprite(new THREE.SpriteMaterial({ map: dtex, transparent: true, depthTest: false }));
-      dspr.scale.set(0.42, 0.108, 1); dspr.position.set(0, 0.14, -0.16); dspr.renderOrder = 999;
-      controller.add(dspr);
-      controller.userData.xdbg = { ctx: dc.getContext('2d'), tex: dtex };
-    }
     controller.addEventListener('connected', (e) => {
       ray.visible = e.data?.targetRayMode !== 'screen';
       controller.userData.handedness = e.data?.handedness;   // for the VR scroll
@@ -1697,27 +1688,6 @@ function updateMenu() {
   xrMenu.hoverAt(hit);
 }
 
-// TEMP 4.13 #1 · X-DBG — refresh each controller's in-world button-debug label. STRIP after the
-// owner confirms the X binding on-device. buttons[4] = A (right) / X (left) per the input standard.
-function updateXrButtonDebug() {
-  if (!renderer.xr.isPresenting) return;
-  for (const c of xrControllers) {
-    const d = c.userData.xdbg; if (!d) continue;
-    const src = c.userData.inputSource, gp = src?.gamepad;
-    const hand = c.userData.handedness || src?.handedness || '?';
-    const pressed = []; if (gp) gp.buttons.forEach((b, i) => { if (b.pressed || b.value > 0.5) pressed.push(i); });
-    const xDown = !!(gp && gp.buttons[4] && (gp.buttons[4].pressed || gp.buttons[4].value > 0.5));
-    const g = d.ctx; g.clearRect(0, 0, 512, 132);
-    g.fillStyle = xDown ? 'rgba(247,147,26,0.92)' : 'rgba(11,13,19,0.82)'; g.fillRect(0, 0, 512, 132);
-    g.textBaseline = 'top'; g.fillStyle = xDown ? '#0b0d13' : '#eceef5';
-    g.font = '700 34px ui-monospace, Menlo, monospace';
-    g.fillText(`${String(hand).toUpperCase()}  btn:[${pressed.join(',')}]`, 14, 12);
-    g.font = '500 26px ui-monospace, Menlo, monospace';
-    g.fillText(hand === 'left' ? 'X = buttons[4] → menu' : hand === 'right' ? 'A = buttons[4]' : '(no handedness)', 14, 60);
-    if (xDown) { g.font = '700 30px ui-monospace, Menlo, monospace'; g.fillText('★ PRESSED', 14, 96); }
-    d.tex.needsUpdate = true;
-  }
-}
 
 // Lit cigarette on every Smoking occupant (local render, keyed to each peer's broadcast
 // zone — no networking beyond presence). Idempotent per frame; puff ticks only in-zone.
@@ -2045,7 +2015,6 @@ renderer.setAnimationLoop(() => {
   updateVRBoardScroll(dt);    // VR: aim right controller at LIVE + right-stick Y scrolls
   updateMenu();               // in-world menu: billboard + laser hover (only while open)
   updateFeedOffer();          // 🦩 4.14: float the Feed offer over the selected bird (billboard)
-  updateXrButtonDebug();      // TEMP 4.13 #1 · X-DBG — controller button readout (strip after)
 
   renderer.render(scene, camera);
 });

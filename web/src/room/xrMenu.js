@@ -52,6 +52,7 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
   scene.add(group);
 
   let open = false;
+  let needsPlace = false;  // defer anchoring to the next frame (live head pose; see openMenu)
   let page = 'main';
   let eventTimer = null;   // auto-dismiss timer for the transition Event auto-open (4.13 #1)
   let hovered = null;      // id of the button under the laser (drives the highlight)
@@ -77,16 +78,23 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
   }
 
   // ── Open / close ────────────────────────────────────────────────────────────────
-  function openMenu() {
+  // Anchor 1.2 m ahead of the LIVE head. In immersive this MUST run inside the frame loop, not the
+  // X-button input handler: at input time `renderer.xr.getCamera().matrixWorld` is stale (Three writes
+  // the head pose during render(), after the handler) — reading it there spawned the panel at a stale/
+  // origin pose (the "sky panel over Smoking" orphan) so it never appeared 1.2 m ahead (4.16 #2/#3).
+  // So openMenu() only flags `needsPlace`; the placement happens on the next update() (a render frame).
+  function placeAhead() {
     headPose(_camPos, _dir);
     _dir.y = 0;
     if (_dir.lengthSq() < 1e-4) _dir.set(0, 0, -1);
     _dir.normalize();
     group.position.copy(_camPos).addScaledVector(_dir, 1.2); // 1.2 m ahead of gaze, then world-locked
     group.position.y = _camPos.y - 0.12;                     // just below eye line
-    open = true; group.visible = true;
-    page = 'main'; hovered = null; notice = ''; codeBuf = ''; busy = false;
     faceCamera();
+  }
+  function openMenu() {
+    open = true; needsPlace = true; group.visible = false;   // placed + shown on the next fresh frame
+    page = 'main'; hovered = null; notice = ''; codeBuf = ''; busy = false;
     render();
   }
   // Close = fully inert: hidden, not billboarding, not a raycast target (targets() → []), and state
@@ -104,8 +112,10 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
     group.rotation.set(0, Math.atan2(_camPos.x - group.position.x, _camPos.z - group.position.z), 0);
   }
 
-  function update() {                        // per frame while open: cheap rotation only
-    if (open) faceCamera();
+  function update() {                        // per frame while open
+    if (!open) return;
+    if (needsPlace) { placeAhead(); group.visible = true; needsPlace = false; } // fresh-frame anchor
+    else faceCamera();                       // then cheap yaw-billboard
   }
 
   // ── Raycast bridge ──────────────────────────────────────────────────────────────
