@@ -388,6 +388,21 @@ export function seedPlaceholders(scene) {
   });
 }
 
+// A ⏸ "paused / AFK" badge texture (built once, shared by all paused avatars).
+let _pauseTex = null;
+function pauseTexture() {
+  if (_pauseTex) return _pauseTex;
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(11,13,19,0.9)';
+  g.beginPath(); g.arc(64, 64, 52, 0, Math.PI * 2); g.fill();
+  g.lineWidth = 5; g.strokeStyle = '#9b6cff'; g.stroke();
+  g.fillStyle = '#eceef5';
+  g.fillRect(48, 42, 12, 44); g.fillRect(68, 42, 12, 44);   // the two ⏸ bars
+  _pauseTex = new THREE.CanvasTexture(c); _pauseTex.colorSpace = THREE.SRGBColorSpace;
+  return _pauseTex;
+}
+
 // ── AvatarPool ──────────────────────────────────────────────────────────────────
 // Manages one capsule per remote participant id. Positions are smoothed toward the
 // last received presence sample so movement looks continuous between heartbeats.
@@ -422,6 +437,19 @@ export class AvatarPool {
       if (this.onSpawn) this.onSpawn(id, entry.group);
     }
     return entry;
+  }
+
+  // AFK pause (4.18): show/hide a ⏸ badge above a peer's head. Lazy-built, one sprite per avatar.
+  setPaused(id, on) {
+    const entry = this.byId.get(id);
+    if (!entry || !!entry.paused === !!on) return;
+    entry.paused = !!on;
+    if (on && !entry.pauseBadge) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: pauseTexture(), transparent: true, depthWrite: false, depthTest: false }));
+      s.scale.set(0.34, 0.34, 1); s.position.set(0, HEAD_Y + 0.72, 0); s.renderOrder = 3;
+      entry.group.add(s); entry.pauseBadge = s;
+    }
+    if (entry.pauseBadge) entry.pauseBadge.visible = !!on;
   }
 
   // Remove a participant who left.

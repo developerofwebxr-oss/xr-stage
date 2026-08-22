@@ -659,6 +659,93 @@
       #wallet-balance b { color: var(--orange); font-variant-numeric: tabular-nums; }
       #wallet-balance[hidden] { display: none; }
 
+      /* ══ 4.18 — Mobile control-surface rework (mobile only; desktop keeps the roomy bar) ══ */
+      body:not(.mobile) .m-only { display: none !important; }   /* mobile-only surfaces never show on desktop */
+      /* 1 — Slim bar: You/Stage/Free-look leave the bar; emotes + jump move into the Move accordion. */
+      body.mobile #btn-signin, body.mobile #btn-stage, body.mobile #btn-freelook,
+      body.mobile #btn-request, body.mobile #emote-row, body.mobile #jump-btn { display: none; }
+      /* 5 — Profile card docks to the TOP on mobile (below the pill stack) — never over the bottom
+         controls (bar / accordion / joystick) at any width or orientation. */
+      body.mobile #profile-card {
+        top: calc(env(safe-area-inset-top) + 96px); bottom: auto;
+        left: 50%; right: auto; transform: translateX(-50%);
+        width: min(340px, calc(100vw - 24px));
+      }
+
+      /* 2 — Move accordion (bottom-right, above the bar, clear of the joystick). */
+      #move-accordion[hidden], #m-menu[hidden], #paused-overlay[hidden] { display: none !important; }
+      /* While a full-surface (☰ sheet / paused overlay) is up, the movement controls step aside. */
+      body.ui-blocking #joystick, body.ui-blocking #move-accordion { display: none !important; }
+      #move-accordion {
+        position: fixed; z-index: 15; pointer-events: none;
+        right: calc(env(safe-area-inset-right) + 16px);
+        bottom: calc(env(safe-area-inset-bottom) + var(--control-bar-h, 96px) + 14px);
+        display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+      }
+      #move-toggle {
+        pointer-events: auto; width: 62px; height: 62px; border-radius: 50%;
+        background: var(--panel); border: 1px solid var(--panel-edge); color: var(--ink);
+        font-size: 26px; line-height: 1; box-shadow: var(--shadow); cursor: pointer;
+      }
+      #move-toggle[aria-expanded="true"] { border-color: var(--orange); box-shadow: var(--glow-orange); }
+      #move-tray {
+        pointer-events: auto; display: none; flex-direction: column; gap: 8px; width: 138px;
+        background: var(--panel); border: 1px solid var(--panel-edge); border-radius: var(--r-lg);
+        padding: 10px; box-shadow: var(--shadow);
+      }
+      #move-accordion[data-open="true"] #move-tray { display: flex; }
+      .move-item {
+        pointer-events: auto; display: flex; align-items: center; gap: 9px; justify-content: flex-start;
+        background: var(--fill); border: 1px solid var(--hairline); border-radius: var(--r-sm);
+        color: var(--ink); font-family: var(--font-mono); font-size: 13px; padding: 10px 12px; cursor: pointer;
+      }
+      .move-item span { pointer-events: none; }
+      .move-item:active, .move-item[aria-pressed="true"] { border-color: var(--orange); color: var(--orange-bright); box-shadow: var(--glow-orange); }
+      .move-emotes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+      .mv-emote {
+        pointer-events: auto; background: var(--fill); border: 1px solid var(--hairline);
+        border-radius: var(--r-sm); font-size: 20px; padding: 8px 0; cursor: pointer;
+      }
+      .mv-emote:active { border-color: var(--orange); }
+
+      /* 3 — Mobile tabbed Menu sheet (bottom sheet, tabs You/Stage/Info). */
+      #m-menu {
+        position: fixed; inset: 0; z-index: 22; pointer-events: auto; display: flex; align-items: flex-end;
+        background: rgba(3, 4, 8, 0.55); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+      }
+      #m-sheet {
+        width: 100%; max-height: 84vh; display: flex; flex-direction: column;
+        background: var(--panel); border-top: 1px solid var(--panel-edge);
+        border-radius: var(--r-lg) var(--r-lg) 0 0; box-shadow: var(--shadow);
+        padding: 10px 14px calc(env(safe-area-inset-bottom) + 14px);
+      }
+      #m-tabs { display: flex; align-items: center; gap: 6px; padding-bottom: 8px; }
+      .m-tab {
+        pointer-events: auto; flex: 1; background: transparent; border: 1px solid var(--hairline);
+        border-radius: var(--r-sm); color: var(--ink-dim); font-family: var(--font-mono); font-weight: 600;
+        font-size: 14px; padding: 9px 0; cursor: pointer;
+      }
+      .m-tab.active { background: var(--orange); color: var(--orange-ink); border-color: var(--orange); box-shadow: var(--glow-orange); }
+      #m-tabs .pc-close { position: static; flex: 0 0 auto; margin-left: 4px; }
+      #m-body { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+      .m-pane { display: none; flex-direction: column; gap: 9px; padding: 4px 2px 2px; }
+      .m-pane.active { display: flex; }
+      #m-pane-you .ctl, #m-pane-stage .ctl, #m-pane-info .ctl { text-align: center; }
+
+      /* 4 — Paused / AFK overlay (all devices). */
+      #paused-overlay {
+        position: fixed; inset: 0; z-index: 30; pointer-events: auto;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(3, 4, 8, 0.72); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+      }
+      #paused-card {
+        width: min(340px, calc(100vw - 40px)); text-align: center; color: var(--ink);
+        background: var(--panel); border: 1px solid var(--panel-edge); border-radius: var(--r-lg);
+        padding: 24px 22px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 12px;
+      }
+      #paused-title { font-family: var(--font-mono); font-weight: 700; font-size: 24px; color: #b79bff; }
+      #paused-sub { font-size: 13px; color: var(--ink-dim); line-height: 1.5; }
+
       /* Respect reduced-motion: no pulse, near-instant transitions. */
       @media (prefers-reduced-motion: reduce) {
         * { transition-duration: 0.01ms !important; animation: none !important; }
@@ -749,11 +836,67 @@
         </div>
       </aside>
 
+      <!-- ── Mobile Move accordion (4.18 #2): collapsed 🏃 → expands upward with jump · sprint ·
+           emotes · free look. Bottom-right, safe-area, clear of the joystick + bar. Mobile only. -->
+      <div id="move-accordion" class="m-only" data-open="false" hidden>
+        <div id="move-tray" role="group" aria-label="Movement">
+          <button class="move-item" id="mv-jump" aria-label="Jump">⤒<span>Jump</span></button>
+          <button class="move-item" id="mv-sprint" aria-label="Sprint (hold)">»<span>Sprint</span></button>
+          <div class="move-emotes">
+            <button class="mv-emote" data-emote="wave" aria-label="Wave">👋</button>
+            <button class="mv-emote" data-emote="clap" aria-label="Clap">👏</button>
+            <button class="mv-emote" data-emote="thumbsup" aria-label="Thumbs up">👍</button>
+            <button class="mv-emote" data-emote="point" aria-label="Zap emote">⚡</button>
+          </div>
+          <button class="move-item" id="mv-freelook" aria-pressed="false" aria-label="Free look">◎<span>Free look</span></button>
+        </div>
+        <button id="move-toggle" aria-expanded="false" aria-label="Movement controls">🏃</button>
+      </div>
+
+      <!-- ── Mobile tabbed Menu (4.18 #3): one panel, tabs You · Stage · Info. You/Stage host the
+           existing menu content (relocated at init); Info = instructions · share · settings · pause ·
+           exit. Mobile only; the ☰ button opens it. ✕ closes with no state change. -->
+      <div id="m-menu" class="m-only" hidden>
+        <div id="m-sheet" role="dialog" aria-modal="true" aria-label="Menu">
+          <div id="m-tabs" role="tablist">
+            <button class="m-tab" id="m-tab-you"   role="tab" data-tab="you">You</button>
+            <button class="m-tab" id="m-tab-stage" role="tab" data-tab="stage">Stage</button>
+            <button class="m-tab" id="m-tab-info"  role="tab" data-tab="info">Info</button>
+            <button class="pc-close" id="m-close" aria-label="Close">✕</button>
+          </div>
+          <div id="m-body">
+            <div class="m-pane" id="m-pane-you"></div>
+            <div class="m-pane" id="m-pane-stage"></div>
+            <div class="m-pane" id="m-pane-info">
+              <button class="ctl" id="mi-instructions">Instructions</button>
+              <button class="ctl" id="mi-share">Share invite link</button>
+              <div class="pm-section">Settings <span class="pm-hint">— comfort, all off by default</span></div>
+              <label class="pm-toggle"><input type="checkbox" id="mi-vignette" /> <span>Vignette while moving</span></label>
+              <label class="pm-toggle"><input type="checkbox" id="mi-snapTurn" /> <span>Snap turn (instead of smooth)</span></label>
+              <label class="pm-toggle"><input type="checkbox" id="mi-haptics" /> <span>Haptics (fire · grab · land)</span></label>
+              <div class="pm-section">Session</div>
+              <button class="ctl" id="mi-pause">⏸ Pause (go AFK)</button>
+              <button class="ctl" id="mi-exit">Exit to screen mode</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Paused / AFK overlay (4.18 #4, all devices): clear local state + Resume. -->
+      <div id="paused-overlay" hidden>
+        <div id="paused-card">
+          <div id="paused-title">⏸ Paused</div>
+          <div id="paused-sub">Your mic is muted and you're marked away. Others see a ⏸ on you.</div>
+          <button class="ctl primary" id="paused-resume">Resume</button>
+        </div>
+      </div>
+
       <!-- Pause / Menu (opened by VR X · desktop Esc·M · the ☰ button). -->
       <div id="pause-menu" hidden>
         <div id="pause-panel" class="bar" role="dialog" aria-modal="true" aria-label="Menu">
           <div class="pm-title">Menu</div>
           <button class="ctl" id="pm-resume">Resume</button>
+          <button class="ctl" id="pm-pause">⏸ Pause (go AFK)</button>
           <button class="ctl" id="pm-instructions">Instructions</button>
           <button class="ctl" id="pm-share">Share invite link</button>
           <button class="ctl" id="pm-exit">Exit to screen mode</button>

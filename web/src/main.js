@@ -189,7 +189,7 @@ let arActive = false;
 let xrMenu = null; // the in-world VR/AR menu (created near the frame loop); null in flat-only load
 let _seatIdx = null; // which stage chair the local player sits in (panels, 4.5), or null
 
-const { rig, update: updateLocomotion, setFreeLook, setMoveInput, jump, resetFlatView } =
+const { rig, update: updateLocomotion, setFreeLook, setMoveInput, jump, setSprint, setPaused: setLocoPaused, resetFlatView } =
   createLocomotion(camera, renderer.domElement, {
     spawn,
     isMobile,
@@ -313,15 +313,17 @@ if (isMobile) {
 // mouse (desktop) / smoothed gyro (mobile). One toggle, device-appropriate mechanism.
 hud.showFreeLook(true);
 hud.setFreeLook(false);
-hud.onFreeLook(async () => {
+async function toggleFreeLook() {
   const turningOn = !freeLookOn;
   const ok = await setFreeLook(turningOn);
-  if (turningOn && !ok) { hud.el.btnFreelook.textContent = 'Free look: denied'; return; }
+  if (turningOn && !ok) { hud.el.btnFreelook.textContent = 'Free look: denied'; return false; }
   freeLookOn = turningOn;
   hud.setFreeLook(freeLookOn);
   hud.hideLockHint();                                  // toggling is an input
   if (!isMobile) hud.showFreeLookHint(freeLookOn);     // desktop pointer-lock ESC hint
-});
+  return freeLookOn;
+}
+hud.onFreeLook(toggleFreeLook);
 
 // ── Identity → the "You" home ────────────────────────────────────────────────────
 // The control-bar "You" chip opens the You menu (its home); the actual sign-in/switch/
@@ -481,8 +483,100 @@ setupXR(renderer, {
 // One menu, opened from any reality's menu binding. Resume closes it; "Exit to screen
 // mode" is the in-app exit path (the platform button is the other). Comfort toggles
 // are ALL off by default and PERSISTED (comfort.js) — opt-in only, never baked on.
-function toggleMenu() { hud.isMenuOpen() ? hud.showMenu(false) : openMenu(); }
+let mMenu = null;                       // mobile tabbed ☰ sheet controller (built in setupMobileUI)
+let closeFloatingExcept = () => {};     // one-at-a-time coordinator (mobile); no-op on desktop
+function toggleMenu() {
+  if (isMobile && mMenu) { mMenu.isOpen() ? mMenu.close() : mMenu.open('info'); return; } // ☰ → tabbed sheet
+  hud.isMenuOpen() ? hud.showMenu(false) : openMenu();
+}
 function openMenu() { closeAllMenus(); hud.setComfort(comfort.all()); hud.showMenu(true); }
+
+// ── 4.18 #4 — Pause / AFK (all devices) ──────────────────────────────────────────
+// Mutes your mic, halts locomotion input, shows a local "Paused — Resume" overlay, and broadcasts
+// the paused flag (via getPose.afk on the presence heartbeat) so peers show a ⏸ badge. Listen
+// playback stays on. Resume clears it and restores the mic if you were speaking.
+function setPaused(on) {
+  if (paused === on) return;
+  paused = on;
+  setLocoPaused(on);                                     // halt movement + jump; zero move input
+  document.getElementById('paused-overlay').hidden = !on;
+  document.body.classList.toggle('ui-blocking', on);    // step the movement controls aside
+  if (on) {
+    _wasSpeaking = isSpeaker && active;                  // mute outgoing mic only if actually speaking
+    if (_wasSpeaking) voice.setMicEnabled(false).catch(() => {});
+  } else if (_wasSpeaking) {
+    voice.setMicEnabled(true).catch(() => {});
+    _wasSpeaking = false;
+  }
+}
+document.getElementById('paused-resume')?.addEventListener('click', () => setPaused(false));
+document.getElementById('pm-pause')?.addEventListener('click', () => { hud.showMenu(false); setPaused(true); }); // desktop pause-menu
+
+// ── 4.18 #1–3,5 — Mobile control surfaces: slim bar + Move accordion + tabbed ☰ sheet ──
+// Built once on mobile. You/Stage tabs host the EXISTING menu content (relocated here so the render
+// fns still populate them by id); Info is instructions/share/settings/pause/exit. One-at-a-time:
+// opening any floating surface (sheet · accordion · profile card · transition prompt) closes the rest.
+function setupMobileUI() {
+  const relocate = (fromId, toId) => {
+    const from = document.getElementById(fromId), to = document.getElementById(toId);
+    if (from && to) [...from.children].forEach((c) => { if (!c.classList.contains('pc-close')) to.appendChild(c); });
+  };
+  relocate('you-panel', 'm-pane-you');       // You tab hosts the You menu content
+  relocate('stage-panel', 'm-pane-stage');   // Stage tab hosts the Stage menu content
+
+  const menuEl = document.getElementById('m-menu');
+  const TABS = ['you', 'stage', 'info'];
+  function selectTab(tab) {
+    for (const t of TABS) {
+      document.getElementById('m-pane-' + t).classList.toggle('active', t === tab);
+      document.getElementById('m-tab-' + t).classList.toggle('active', t === tab);
+    }
+    if (tab === 'you') menus.renderYou(youInfo());
+    else if (tab === 'stage') stageData().then((d) => menus.renderStage(d)).catch(() => {});
+  }
+  const openSheet = (tab = 'you') => { closeFloatingExcept('m-menu'); menuEl.hidden = false; document.body.classList.add('ui-blocking'); selectTab(tab); };
+  const closeSheet = () => { menuEl.hidden = true; if (!paused) document.body.classList.remove('ui-blocking'); };
+  mMenu = { open: openSheet, close: closeSheet, isOpen: () => !menuEl.hidden };
+  for (const t of TABS) document.getElementById('m-tab-' + t).addEventListener('click', () => selectTab(t));
+  document.getElementById('m-close').addEventListener('click', closeSheet);
+  menuEl.addEventListener('click', (e) => { if (e.target === menuEl) closeSheet(); });
+  document.getElementById('mi-instructions').addEventListener('click', () => { closeSheet(); openInstructions(); });
+  document.getElementById('mi-share').addEventListener('click', () => shareInvite());
+  document.getElementById('mi-exit').addEventListener('click', () => { closeSheet(); xrCtl?.enter('screen'); });
+  document.getElementById('mi-pause').addEventListener('click', () => { closeSheet(); setPaused(true); });
+  const cf = comfort.all();
+  for (const k of ['vignette', 'snapTurn', 'haptics']) {
+    const cb = document.getElementById('mi-' + k); if (!cb) continue;
+    cb.checked = !!cf[k];
+    cb.addEventListener('change', () => comfort.set(k, cb.checked));
+  }
+
+  // Move accordion (bottom-right): jump · sprint (hold) · emotes · free look.
+  const acc = document.getElementById('move-accordion');
+  const accToggle = document.getElementById('move-toggle');
+  acc.hidden = false;
+  const setAcc = (open) => { acc.dataset.open = open ? 'true' : 'false'; accToggle.setAttribute('aria-expanded', open ? 'true' : 'false'); };
+  accToggle.addEventListener('click', () => { const o = acc.dataset.open !== 'true'; if (o) closeFloatingExcept('acc'); setAcc(o); });
+  document.getElementById('mv-jump').addEventListener('pointerdown', (e) => { e.preventDefault(); jump(); });
+  const sp = document.getElementById('mv-sprint');
+  sp.addEventListener('pointerdown', (e) => { e.preventDefault(); setSprint(true); sp.setAttribute('aria-pressed', 'true'); });
+  const sprintOff = () => { setSprint(false); sp.setAttribute('aria-pressed', 'false'); };
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) sp.addEventListener(ev, sprintOff);
+  for (const b of acc.querySelectorAll('.mv-emote')) b.addEventListener('click', () => doEmote(b.dataset.emote));
+  const fl = document.getElementById('mv-freelook');
+  fl.addEventListener('click', async () => { await toggleFreeLook(); fl.setAttribute('aria-pressed', String(freeLookOn)); });
+
+  // One-at-a-time coordinator (assigned here; a no-op on desktop).
+  closeFloatingExcept = (except) => {
+    if (except !== 'm-menu') closeSheet();
+    if (except !== 'acc') setAcc(false);
+    if (except !== 'card' && selectedGroup) deselect();
+    if (except !== 'event') eventPrompt?.close?.();
+  };
+  document.addEventListener('pointerdown', (e) => {   // tap outside the accordion collapses it
+    if (acc.dataset.open === 'true' && !acc.contains(e.target)) setAcc(false);
+  }, true);
+}
 hud.onMenuButton(toggleMenu);
 hud.onResume(() => hud.showMenu(false));
 hud.onInstructions(() => openInstructions());
@@ -499,10 +593,9 @@ function closeAllMenus() {
   boardUI.closeAll(); micUI.close(); bookingUI.close(); speakerHub.close();
   sessionUI.closeAll();
 }
-function openYou() {
-  closeAllMenus();
+function youInfo() {
   const me = identity.current();
-  menus.openYou({
+  return {
     signedIn: !!me,
     name: me?.name || null,
     faceUrl: me ? drawKeyface(me.pubkey, 64).toDataURL() : null,
@@ -514,7 +607,12 @@ function openYou() {
     speaker: tickets.speakerPass(),       // 🎙 Speaker pass (from booking a slot)
     lastSplit: tickets.lastSplit(),       // "where your sats went" (null for pre-3.14 records)
     held: heldEventSummary(),             // which event this ticket/pass is for, + until when
-  });
+  };
+}
+function openYou() {
+  if (isMobile) { mMenu?.open('you'); return; }   // mobile: You is a tab in the ☰ sheet (4.18)
+  closeAllMenus();
+  menus.openYou(youInfo());
 }
 // The event this identity holds a ticket/pass for, formatted for the You menu.
 function heldEventSummary() {
@@ -524,7 +622,10 @@ function heldEventSummary() {
   const until = new Date(ev.endsAt + GRACE_MS);
   return { title: ev.title, until: `${fmtClock(ev.endsAt)} +${INTER_EVENT_GRACE_MIN}m grace (${fmtClock(until.getTime())})` };
 }
-async function openStage() { closeAllMenus(); menus.openStage(await stageData()); }
+async function openStage() {
+  if (isMobile) { mMenu?.open('stage'); return; }   // mobile: Stage is a tab in the ☰ sheet (4.18)
+  closeAllMenus(); menus.openStage(await stageData());
+}
 function openInstructions() { closeAllMenus(); menus.openInstructions(); }
 function openBooking() {
   if (!requireSignedIn('book a slot')) return;
@@ -620,6 +721,8 @@ const earnings = createEarnings(voice, wallet, {
 // walking moves the head within the rig, so peers must see us where our head actually is
 // (matching the local body, which also follows the head — see followBody). y stays at the
 // rig's floor level so remote bodies stand on the ground rather than float at head height.
+let paused = false;              // AFK pause state (4.18 #4) — rides the presence heartbeat (afk)
+let _wasSpeaking = false;        // restore the mic on resume only if we were actively speaking
 const _headWorld = new THREE.Vector3();
 const _headQuat = new THREE.Quaternion();
 const _headEuler = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -630,9 +733,9 @@ const presence = createPresence(voice, scene, () => {
   if (renderer.xr.isPresenting) {
     camera.getWorldPosition(_headWorld);
     _headEuler.setFromQuaternion(camera.getWorldQuaternion(_headQuat), 'YXZ');
-    return { x: _headWorld.x, y: rig.position.y, z: _headWorld.z, yaw: _headEuler.y, zone, seatIdx, hands: localHands() };
+    return { x: _headWorld.x, y: rig.position.y, z: _headWorld.z, yaw: _headEuler.y, zone, seatIdx, afk: paused, hands: localHands() };
   }
-  return { x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y, zone, seatIdx };
+  return { x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y, zone, seatIdx, afk: paused };
 }, staticBodies, {
   // Each remote peer gets a mock identity (face + name) keyed by its presence id.
   // REAL: presence carries the peer's pubkey; this becomes getProfile(pubkey).
@@ -759,6 +862,7 @@ const peerZoneOf = (group) => (group?.userData.pid ? presence.peers().find((p) =
 const card = createProfileCard({ onVisit, onFollow, onZap, onAskTalk, onClose: deselect });
 
 function selectAvatar(group, profile) {
+  closeFloatingExcept('card');            // one-at-a-time: opening the card closes the ☰ sheet + accordion (4.18 #5)
   group.add(selectionRing);              // ring follows the avatar
   selectionRing.position.set(0, 0.06, 0);
   selectedGroup = group;
@@ -2025,3 +2129,6 @@ renderer.setAnimationLoop(() => {
 
   renderer.render(scene, camera);
 });
+
+// 4.18: build the mobile control surfaces once, after every dependency above is defined.
+if (isMobile) setupMobileUI();

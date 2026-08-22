@@ -78,6 +78,8 @@ export function createLocomotion(camera, domElement, {
   rig.rotation.y = yaw;
   const keys = new Set();
   const moveInput = { x: 0, z: 0 }; // analog joystick, [-1,1]; merged with WASD
+  let sprintHeld = false;           // mobile Move-accordion hold-to-run (4.18): forces sprint speed
+  let paused = false;               // AFK pause (4.18): halts locomotion + jump input
 
   // Jump state (Screen + VR + AR — enabled in every mode). One hop at a
   // time: `airborne` blocks re-trigger until we land. `jumpHeight` is added ABOVE
@@ -291,14 +293,15 @@ export function createLocomotion(camera, domElement, {
       const mag = Math.hypot(ix, iz);
       if (mag > 1) { ix /= mag; iz /= mag; }
 
-      if (ix !== 0 || iz !== 0) {
+      if ((ix !== 0 || iz !== 0) && !paused) {
         const shift = keys.has('ShiftLeft') || keys.has('ShiftRight');
         // Digital (keyboard) sprints with Shift; analog (joystick) sprints by magnitude
-        // through the shared curve — the SAME analogSpeed() the VR stick uses.
+        // through the shared curve — the SAME analogSpeed() the VR stick uses. The mobile
+        // Move-accordion Sprint button (sprintHeld) forces run speed while held (4.18).
         let speed;
         if (flying) speed = FLY_SPEED;
         else if (kbActive) speed = shift ? SPRINT_SPEED : WALK_SPEED;
-        else speed = analogSpeed(joyMag);
+        else speed = sprintHeld ? SPRINT_SPEED : analogSpeed(joyMag);
         const step = speed * dt;
 
         // "Fly where you look": when flying, forward follows the camera pitch so
@@ -444,7 +447,9 @@ export function createLocomotion(camera, domElement, {
 
   // jump() queues a hop from any input source (the optional mobile button calls it).
   // Same guards as Space/VR apply in updateJump (single hop, all modes).
-  function jump() { jumpQueued = true; }
+  function jump() { if (!paused) jumpQueued = true; }
+  function setSprint(on) { sprintHeld = !!on; }           // mobile hold-to-run (4.18)
+  function setPaused(on) { paused = !!on; if (paused) { moveInput.x = 0; moveInput.z = 0; } } // AFK halt (4.18)
 
   // toggleFly() — the standard's fly toggle, gated by ENABLE_FLY (config.enableFly).
   // Bound to right-stick click / F key / mobile button; a no-op when the flag is off,
@@ -456,7 +461,7 @@ export function createLocomotion(camera, domElement, {
     return flying;
   }
 
-  return { rig, update, setFreeLook, setMoveInput, jump, toggleFly, resetFlatView, isFlying: () => flying };
+  return { rig, update, setFreeLook, setMoveInput, jump, setSprint, setPaused, toggleFly, resetFlatView, isFlying: () => flying };
 }
 
 const UP = new THREE.Vector3(0, 1, 0);

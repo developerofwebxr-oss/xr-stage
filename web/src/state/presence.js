@@ -36,6 +36,7 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
     peerSeat.set(id, typeof msg.seatIdx === 'number' ? msg.seatIdx : null);
     // msg.h = 14 hand floats (immersive peers only); absent → the pool renders no hands.
     pool.upsert(id, msg.p, typeof msg.yaw === 'number' ? msg.yaw : 0, Array.isArray(msg.h) && msg.h.length === 14 ? msg.h : null);
+    pool.setPaused(id, !!msg.afk);      // AFK pause (4.18): ⏸ badge on paused peers
     const e = pool.byId.get(id);
     if (e) e.group.userData.pid = id;   // presence id on the group → target for talk requests
   });
@@ -57,6 +58,7 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
           yaw: round(pose.yaw),
           zone: pose.zone || null,     // which social zone we're standing in (null = plaza/stage)
           seatIdx: typeof pose.seatIdx === 'number' ? pose.seatIdx : null, // stage chair, or null
+          ...(pose.afk ? { afk: 1 } : {}), // AFK pause flag (4.18) — peers show a ⏸ badge
           ...(pose.hands ? { h: pose.hands } : {}), // 14 hand floats — only when tracked (immersive)
         });
       }

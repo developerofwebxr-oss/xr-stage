@@ -112,14 +112,14 @@ export function createMenus({
   }
 
   // ── Stage menu (event schedule + Book / Speaker-hub) ────────────────────────────
-  function openStage({ events = [], currentId = null, hasBooking: booked = false, pot = 0, potTitle = '' } = {}) {
+  function renderStage({ events = [], currentId = null, hasBooking: booked = false, pot = 0, potTitle = '' } = {}) {
     hasBooking = booked;
     renderSchedule(events, currentId);
     setSpeakerPot(pot, potTitle);
     el.stageHub.classList.toggle('soon', !booked);
     el.stageHub.setAttribute('aria-disabled', String(!booked));
-    el.stage.hidden = false;
   }
+  function openStage(data = {}) { renderStage(data); el.stage.hidden = false; }
   // The public per-event speaker pot — the growing pot that recruits speakers.
   function setSpeakerPot(sats, title) {
     el.stagePool.innerHTML = `⚡ This event's speaker pot: <b>${fmtN(sats)}</b> sats`
@@ -161,7 +161,7 @@ export function createMenus({
   }
 
   return {
-    openYou, closeYou, openStage, closeStage, setSpeakerPot, openInstructions, closeInstructions,
+    openYou, closeYou, renderYou, openStage, closeStage, renderStage, setSpeakerPot, openInstructions, closeInstructions,
     closeAll() { closeYou(); closeStage(); closeInstructions(); },
     isOpen: () => [el.you, el.stage, el.instructions].some((n) => !n.hidden),
   };
