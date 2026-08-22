@@ -74,6 +74,19 @@ export const PARK_PENS = [
 const PARK_TH = (PARK.th0 + PARK.th1) / 2;      // gate bearing = front-arc centre
 const PARK_GATE = onArc(PARK.Ri, PARK_TH);      // gate world position on the front arc
 
+// ⭐ Front row (4.21) — a PREMIUM ARC BAND directly before the stage, concentric with the stage
+// circle (the venue's ring language). It sits in the WALKWAY between the stage-edge clamp and the
+// general floor, split into two symmetric WINGS that flank the central mic-platform / pedestal
+// approach (the |bearing| < gapHalf gap), so the band never overlaps the pedestal or the speaker's
+// stage clamp. Part of the plaza for audio (hears the stage like everyone). Gate = the `frontRow`
+// flag. Detection + bounce are ARC-shaped (radius band ∩ two angular wings) — see inArc/arcBounce.
+export const FRONTROW = {
+  Ri: 5.6, Ro: 8.2,        // radii: inner clears stage-edge clamp (4.82); outer = the VIP rail
+  gapHalf: 0.62,           // central gap half-angle → keeps the mic-platform/pedestal approach clear
+  thMax: 1.15,             // outer angular reach of each wing (± from stage-front bearing 0)
+  hue: 0xffa640,           // Live Console gold/orange accent (the VIP rail glow)
+};
+
 export const ZONE_DEFS = [
   {
     id: 'smoking', name: 'Smoking Area', emoji: '🚬', hue: EMBER,
@@ -109,6 +122,13 @@ export const ZONE_DEFS = [
     lettersText: 'NOSTRICH PARK', lettersH: 2.4,
     plaque: 'Entry 500 · rides extra. The Nostrich Coaster departs from the park station — 210 credits a seat.',
   },
+  {
+    // ⭐ Front row (4.21) — arc band at the stage (shape:'arc'; geometry in FRONTROW). No plaque/
+    // letters (it's at the stage, not a destination building). Appended LAST so the index-based
+    // ZONE_DEFS refs in buildZoneScenery (smoking[0]/networking[1]/park[3]) are unchanged.
+    id: 'frontrow', name: 'Front row', emoji: '⭐', hue: FRONTROW.hue,
+    shape: 'arc', requires: 'frontRow', accessKind: 'frontRow',
+  },
 ];
 
 // Per-zone arc geometry (radius + bearing from the stage), computed once.
@@ -122,8 +142,16 @@ const _subs = new Set();
 let _current = null;
 let _lastX = Infinity, _lastZ = Infinity;
 
+// Inside the front-row ARC band? Radius within [Ri,Ro] AND bearing within a wing (|th| in
+// [gapHalf, thMax]) — the central gap (the pedestal approach) is NOT part of the zone.
+function inArc(x, z) {
+  const r = radiusOf(x, z), ath = Math.abs(bearing(x, z));
+  return r >= FRONTROW.Ri && r <= FRONTROW.Ro && ath >= FRONTROW.gapHalf && ath <= FRONTROW.thMax;
+}
+
 function zoneAt(x, z) {
   for (const zn of ZONE_DEFS) {
+    if (zn.shape === 'arc') { if (inArc(x, z)) return zn; continue; }
     const dx = x - zn.cx, dz = z - zn.cz;
     if (dx * dx + dz * dz <= zn.r * zn.r) return zn;
   }
@@ -132,8 +160,29 @@ function zoneAt(x, z) {
 
 // Zone-entry ACCESS gate — soft push to just outside a zone the player may not enter.
 const EDGE = 0.15;
+// Front-row bounce: push to the NEAREST band boundary (outer rail / inner walkway / gap edge /
+// side edge) + margin, so a no-access player is stopped from ANY approach angle (a jump only
+// changes Y, so this XZ clamp still bounces them). Same soft-bounce mechanic as the other zones.
+function arcBounce(x, z) {
+  const r = radiusOf(x, z), th = bearing(x, z), ath = Math.abs(th), sgn = th < 0 ? -1 : 1;
+  const dOuter = FRONTROW.Ro - r;                 // → push out past the rail
+  const dInner = r - FRONTROW.Ri;                 // → push in toward the stage walkway
+  const dGap   = (ath - FRONTROW.gapHalf) * r;    // → push into the central gap (pedestal aisle)
+  const dSide  = (FRONTROW.thMax - ath) * r;      // → push out the side of the wing
+  const m = Math.min(dOuter, dInner, dGap, dSide);
+  let nr = r, nth = th;
+  if (m === dOuter)      nr = FRONTROW.Ro + EDGE;
+  else if (m === dInner) nr = FRONTROW.Ri - EDGE;
+  else if (m === dGap)   nth = sgn * (FRONTROW.gapHalf - EDGE / r);
+  else                   nth = sgn * (FRONTROW.thMax + EDGE / r);
+  return { x: C.x + nr * Math.sin(nth), z: C.z + nr * Math.cos(nth) };
+}
 export function accessClamp(x, z, allow) {
   for (const zn of ZONE_DEFS) {
+    if (zn.shape === 'arc') {
+      if (inArc(x, z) && !allow(zn)) { const b = arcBounce(x, z); return { x: b.x, z: b.z, blocked: zn }; }
+      continue;
+    }
     const dx = x - zn.cx, dz = z - zn.cz;
     const d2 = dx * dx + dz * dz;
     if (d2 <= zn.r * zn.r && !allow(zn)) {
@@ -184,6 +233,7 @@ const MOCK_POP = {
   smoking:    { count: 6,  patron: 1, supporter: 2, speaker: 2 },
   backstage:  { count: 1,  patron: 0, supporter: 0, speaker: 1 }, // a co-panelist waiting
   park:       { count: 9,  patron: 4, supporter: 3, speaker: 0 }, // a busy amusement park
+  frontrow:   { count: 2,  patron: 2, supporter: 0, speaker: 0 }, // 4.21: a couple of Patrons — social proof (matches the two seeded bodies)
 };
 let _localBadge = { badge: null, speaker: false }; // the local player's marks (set by main)
 let _liveCounts = {};                               // real live remote occupants per zone (4.4)
@@ -279,6 +329,7 @@ export function buildZoneScenery(scene) {
   const bs = buildBackstage();
   const park = buildPark(ZONE_DEFS[3]);
   group.add(net.group, smk.group, bs.group, park.group);
+  group.add(buildFrontRow());            // 4.21: VIP front-row band + rail (freestanding → shows in AR)
   group.add(buildForest());              // night forest backdrop OUTSIDE both zones
   zoneAnchors.networking = net.anchors;
   zoneAnchors.smoking = smk.anchors;
@@ -287,6 +338,60 @@ export function buildZoneScenery(scene) {
   scene.add(group);
   for (const fn of _plaqueRedraws) fn(); // initial occupancy draw
   return group;
+}
+
+// ── ⭐ Front row (4.21) — the VIP band + glowing rail ──────────────────────────────────
+// Concentric with the stage (centre C). Built from parametric arc strips so the angles map
+// straight to bearings (no RingGeometry rotation guesswork). All MeshBasic + emissive-style
+// colour so it reads without scene lights → visible in AR passthrough (freestanding, diegetic).
+// A flat gold-tinted FLOOR band marks the premium strip; a low glowing RAIL wall + a bright top
+// edge sit on the OUTER boundary (the "VIP rail"). Two symmetric wings flank the pedestal gap.
+const FR_WINGS = [
+  [FRONTROW.gapHalf, FRONTROW.thMax],   // right wing (+bearing)
+  [-FRONTROW.thMax, -FRONTROW.gapHalf], // left wing (−bearing)
+];
+// Triangulated flat strip between inner/outer radius across [thA,thB], at height y.
+function arcBandGeo(Ri, Ro, thA, thB, y, segs) {
+  const pos = [], idx = [];
+  for (let i = 0; i <= segs; i++) {
+    const th = thA + (thB - thA) * (i / segs), s = Math.sin(th), c = Math.cos(th);
+    pos.push(C.x + Ri * s, y, C.z + Ri * c,  C.x + Ro * s, y, C.z + Ro * c);
+  }
+  for (let i = 0; i < segs; i++) { const a = i * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx); g.computeVertexNormals();
+  return g;
+}
+// Vertical ribbon along the arc at radius R, from y0 to y1 (the low rail wall).
+function arcWallGeo(R, thA, thB, y0, y1, segs) {
+  const pos = [], idx = [];
+  for (let i = 0; i <= segs; i++) {
+    const th = thA + (thB - thA) * (i / segs), s = Math.sin(th), c = Math.cos(th);
+    pos.push(C.x + R * s, y0, C.z + R * c,  C.x + R * s, y1, C.z + R * c);
+  }
+  for (let i = 0; i < segs; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx); g.computeVertexNormals();
+  return g;
+}
+function buildFrontRow() {
+  const g = new THREE.Group();
+  g.name = 'frontRow';
+  const gold = FRONTROW.hue;
+  const floorMat = new THREE.MeshBasicMaterial({ color: gold, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false });
+  const railMat  = new THREE.MeshBasicMaterial({ color: gold, transparent: true, opacity: 0.34, side: THREE.DoubleSide, depthWrite: false });
+  const edgeMat  = new THREE.MeshBasicMaterial({ color: 0xffd089, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false }); // bright top line
+  const SEG = 40;
+  for (const [thA, thB] of FR_WINGS) {
+    const floor = new THREE.Mesh(arcBandGeo(FRONTROW.Ri + 0.05, FRONTROW.Ro - 0.02, thA, thB, 0.03, SEG), floorMat);
+    floor.renderOrder = 1;
+    const rail = new THREE.Mesh(arcWallGeo(FRONTROW.Ro, thA, thB, 0.0, 0.42, SEG), railMat);
+    const edge = new THREE.Mesh(arcWallGeo(FRONTROW.Ro, thA, thB, 0.40, 0.46, SEG), edgeMat); // glowing cap
+    g.add(floor, rail, edge);
+  }
+  return g;
 }
 
 // NETWORKING — grand enclosed hall.

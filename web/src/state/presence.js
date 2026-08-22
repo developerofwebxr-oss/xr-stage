@@ -40,6 +40,7 @@ export function createPresence(voice, scene, getPose, staticBodies = [], { onAva
       Array.isArray(msg.h) && msg.h.length === 14 ? msg.h : null,
       Array.isArray(msg.hp) && msg.hp.length === 2 ? msg.hp : null);
     pool.setPaused(id, !!msg.afk);      // AFK pause (4.18): ⏸ badge on paused peers
+    pool.setFrontRow(id, msg.zone === 'frontrow'); // 4.21: ⭐ perk mark while a peer is in the front row
     const e = pool.byId.get(id);
     if (e) e.group.userData.pid = id;   // presence id on the group → target for talk requests
   });

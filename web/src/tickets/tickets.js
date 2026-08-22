@@ -75,8 +75,8 @@ export function splitFor(tierName, price) {
 }
 
 // Micro-purchase catalogue (credits → venue). Only these kinds are RECOGNISED; a kind maps to
-// the access flag it unlocks. frontRow is recognised by the seam but has no zone yet, so the
-// UI only OFFERS networking/smoking (the zones that exist) — no "coming soon" surfaces.
+// the access flag it unlocks. frontRow (4.21) now has its zone at the stage — Supporters are
+// offered it; Basic is bounced with no offer (tier table), Patron/speakers get it included.
 const ACCESS = {
   networking: { price: 500,  flag: 'networkingAccess' },
   smoking:    { price: 500,  flag: 'smokingAccess' },
@@ -146,7 +146,7 @@ function flagsNow() {
     networkingPriority: !!base.networkingPriority,
     networkingAccess: !!base.networkingAccess || _access.has('networking') || sp,
     smokingAccess: !!base.smokingAccess || _access.has('smoking') || sp,
-    frontRow: !!base.frontRow || _access.has('frontRow'),
+    frontRow: !!base.frontRow || _access.has('frontRow') || sp, // Patron incl. · speakers incl. (stage people) · Supporter buys · Basic no (4.21)
     sponsorSpot: !!base.sponsorSpot,
     parkAccess: !!base.parkAccess || _access.has('park') || sp, // Nostrich Park: Patron/speaker incl., else buy (4.10)
     backstageAccess: sp, // SEAM: speakers get backstage — no backstage zone built yet

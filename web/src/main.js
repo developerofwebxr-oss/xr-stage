@@ -10,7 +10,7 @@ import { tickets } from './tickets/tickets.js';
 import { createTicketUI } from './ui/ticketUI.js';
 import { createEventPrompt } from './ui/eventPrompt.js';
 import { STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
-import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP, setCigarette, tickCigarette, makeHand, poseHand, HAND_POSES, playEmote, tickEmote, EMOTES, makeLocalFresnelMaterial } from './room/avatars.js';
+import { seedPlaceholders, seedFrontRow, createPlayerBody, applyIdentity, MIN_BODY_GAP, setCigarette, tickCigarette, makeHand, poseHand, HAND_POSES, playEmote, tickEmote, EMOTES, makeLocalFresnelMaterial } from './room/avatars.js';
 import { createZoneAudio } from './audio/zoneAudio.js';
 import { identity } from './identity/identity.js';
 import { drawKeyface } from './identity/keyface.js';
@@ -141,6 +141,11 @@ function identifyAvatar(group, seedId, badge = null, speaker = false) {
 const SEED_BADGE = [null, 'supporter', 'patron'];
 const SEED_SPEAKER = [true, false, true];
 seeded.forEach((s, i) => identifyAvatar(s.group, `seed-${i}`, SEED_BADGE[i % SEED_BADGE.length], SEED_SPEAKER[i % SEED_SPEAKER.length]));
+// 4.21: a couple of Patron bodies in the front-row wings (visible social proof + the ⭐ mark).
+// Their positions feed avatar separation like the ambiance crowd.
+const frontRowSeed = seedFrontRow(scene);
+frontRowSeed.forEach((s, i) => identifyAvatar(s.group, `frontrow-${i}`, 'patron', false));
+staticBodies.push(...frontRowSeed.map((s) => s.position));
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
 
@@ -284,6 +289,16 @@ function onZoneBlocked(zn) {
   // Smoking with access but mic not yet granted → the "your mic turns ON" confirm (4.4),
   // NOT a purchase. Accepting unblocks entry; declining leaves the soft bounce in place.
   if (zn.id === 'smoking' && tickets.flags().smokingAccess && !micOk.has('smoking')) { askMicConfirm('smoking'); return; }
+  // ⭐ Front row (4.21) — per the tier table: Ghost → ticket chooser; Basic → BOUNCED with a
+  // nudge (NO purchase offer); Supporter → offered the 1,000-credit access. Patron/speakers are
+  // never bounced (they hold the flag). This differs from the generic "any tier can buy" doors.
+  if (zn.id === 'frontrow') {
+    const tier = tickets.tier();
+    if (tier === 'ghost') { hud.toast('⭐ Front row needs a ticket'); openTicketChooser(); }
+    else if (tier === 'basic') { hud.toast('⭐ Front row — Supporter or Patron only'); }
+    else { const price = tickets.accessPrice('frontRow'); hud.toast(`⭐ Front row — ${price} credits to enter`); ticketUI.openAccess({ kind: 'frontRow', price }); }
+    return;
+  }
   if (tickets.tier() === 'ghost') {
     hud.toast(`${zn.emoji} ${zn.name} needs a ticket`);
     openTicketChooser();

@@ -466,6 +466,22 @@ export function seedPlaceholders(scene) {
   });
 }
 
+// 4.21: two static Patron bodies standing in the front-row wings — visible social proof
+// (they carry the ⭐ perk mark too). Positioned in the band (stage centre (0,0,−7)), facing the
+// stage. main assigns them Patron identities + adds their positions to the separation set.
+export function seedFrontRow(scene) {
+  const cx = 0, cz = -7;                         // stage centre (matches STAGE_POS)
+  const spots = [[5.24, -2.67], [-5.24, -2.67]]; // right + left wing, r≈6.8 / bearing ≈ ±0.88
+  return spots.map(([x, z]) => {
+    const group = makeCapsule(0x6f7bd8);         // a premium violet-blue
+    group.position.set(x, 0, z);
+    group.rotation.y = Math.atan2(cx - x, cz - z); // face the stage centre
+    setFrontRowMark(group, true);                // the ⭐ perk (they're in the front row)
+    scene.add(group);
+    return { group, position: new THREE.Vector3(x, 0, z) };
+  });
+}
+
 // A ⏸ "paused / AFK" badge texture (built once, shared by all paused avatars).
 let _pauseTex = null;
 function pauseTexture() {
@@ -479,6 +495,36 @@ function pauseTexture() {
   g.fillRect(48, 42, 12, 44); g.fillRect(68, 42, 12, 44);   // the two ⏸ bars
   _pauseTex = new THREE.CanvasTexture(c); _pauseTex.colorSpace = THREE.SRGBColorSpace;
   return _pauseTex;
+}
+
+// 4.21: the ⭐ front-row perk mark — a small gold star drawn once, shared by everyone in the
+// front row. Rendered as a sprite by the name label so peers see who paid for the front row.
+let _starTex = null;
+function starTexture() {
+  if (_starTex) return _starTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  g.translate(32, 34); g.beginPath();
+  for (let i = 0; i < 10; i++) {                 // 5-point star
+    const rad = i % 2 ? 11 : 25, a = -Math.PI / 2 + i * Math.PI / 5;
+    g[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rad, Math.sin(a) * rad);
+  }
+  g.closePath();
+  g.shadowColor = '#ffb454'; g.shadowBlur = 10; g.fillStyle = '#ffd089'; g.fill();
+  g.lineWidth = 2; g.strokeStyle = '#ffa640'; g.stroke();
+  _starTex = new THREE.CanvasTexture(c); _starTex.colorSpace = THREE.SRGBColorSpace;
+  return _starTex;
+}
+// Toggle the ⭐ front-row mark above an avatar's name label. Lazy sprite, one per body; removed
+// (hidden) on leave. Used for the seeded Patrons AND every peer whose broadcast zone is frontrow.
+export function setFrontRowMark(group, on) {
+  if (!group) return;
+  if (on && !group.userData.starSprite) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: starTexture(), transparent: true, depthWrite: false }));
+    s.scale.set(0.16, 0.16, 1); s.position.set(0, HEAD_Y + 0.66, 0); s.renderOrder = 3; // just above the name plate
+    group.add(s); group.userData.starSprite = s;
+  }
+  if (group.userData.starSprite) group.userData.starSprite.visible = !!on;
 }
 
 // ── AvatarPool ──────────────────────────────────────────────────────────────────
@@ -528,6 +574,14 @@ export class AvatarPool {
       entry.group.add(s); entry.pauseBadge = s;
     }
     if (entry.pauseBadge) entry.pauseBadge.visible = !!on;
+  }
+
+  // 4.21: ⭐ front-row perk — toggle the star mark on a peer whose broadcast zone is 'frontrow'.
+  setFrontRow(id, on) {
+    const entry = this.byId.get(id);
+    if (!entry || !!entry.frontRow === !!on) return;
+    entry.frontRow = !!on;
+    setFrontRowMark(entry.group, !!on);
   }
 
   // Remove a participant who left.
