@@ -4,6 +4,7 @@ import { buildScene } from './room/scene.js';
 import { zones, buildZoneScenery, accessClamp, parkClamp, PARK, PARK_PENS } from './zones/zones.js';
 import { createFlock } from './room/flock.js';
 import { assemblePsycho } from './room/psycho.js';
+import { setPanelAnisotropy, panelTexture } from './room/panelTexture.js';
 import { createCoaster } from './ride/coaster.js';
 import { tickets } from './tickets/tickets.js';
 import { createTicketUI } from './ui/ticketUI.js';
@@ -46,6 +47,7 @@ import { stageState, setState, onStateChange } from './state/stageState.js';
 // ── Renderer ────────────────────────────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.xr.enabled = true;
+setPanelAnisotropy(renderer.capabilities.getMaxAnisotropy()); // 4.19 #5: sharp in-world text globally
 document.getElementById('app').appendChild(renderer.domElement);
 // Drawing-buffer size is driven by syncViewport() (below) off the live visual
 // viewport; the canvas's *display* size is CSS (100vw/100dvh), so we never write
@@ -62,7 +64,7 @@ buildZoneScenery(scene);
 const flock = createFlock(scene, { center: { x: PARK.cx, z: PARK.cz }, pens: PARK_PENS, count: 8 });
 // 🦩🔥 The Psycho (4.15) — one real assembled cyber-nostrich, added to the flock brain after its
 // parts load. His own pen, near the gate path so people find him; personality reserved to him.
-const PSYCHO_PEN = { x: 27, z: 12, w: 4.5, d: 4.5 };  // inside the relocated park, near the gate path (4.17)
+const PSYCHO_PEN = { x: 28, z: 15, w: 4, d: 4 };  // fully inside the fence, near the gate path (4.19: corners radius > Ri)
 let psycho = null;
 assemblePsycho().then((p) => {
   if (!p) return;
@@ -186,6 +188,26 @@ let boundaryGlow = 0;
 // AR shell-off swaps room-bounds for per-prop collision (zones.js `ar` flag); set
 // when an AR session is active so locomotion's clamp lets the player roam the real room.
 let arActive = false;
+
+// ── 4.19 #1 — the ONE movement clamp for the local player, now INCLUDING the park perimeter ──
+// This is the source of truth locomotion calls every frame (applyConstraint → constrain), plus the
+// avatar-separation re-clamp. Putting the park fence here (not a frame-loop bolt-on) means it's
+// enforced authoritatively in every mode/path — the 4.17 bolt-on was outside this path, which is why
+// the fence didn't reliably hold. `_clampPrev` tracks the last accepted position so the swept fence
+// test knows which side of the thin wall we were on (no tunnelling); park skipped in AR (shell-off).
+const _clampPrev = { x: 0, z: 0 };
+function whoNow() {
+  return { role: config.role, isNextUp: who.isNextUp, speaker: tickets.speakerPass(), backstage: config.role === 'speaker' || !!tickets.flags().backstageAccess };
+}
+function constrainLocal(x, z) {
+  const c = constrainPosition(whoNow(), x, z, arActive);
+  if (!arActive) {
+    const pc = parkClamp(_clampPrev.x, _clampPrev.z, c.x, c.z);
+    if (pc.hit) { c.x = pc.x; c.z = pc.z; c.hit = true; }
+  }
+  _clampPrev.x = c.x; _clampPrev.z = c.z;
+  return c;
+}
 let xrMenu = null; // the in-world VR/AR menu (created near the frame loop); null in flat-only load
 let _seatIdx = null; // which stage chair the local player sits in (panels, 4.5), or null
 
@@ -195,10 +217,7 @@ const { rig, update: updateLocomotion, setFreeLook, setMoveInput, jump, setSprin
     isMobile,
     // who is dynamic now (4.5): stage access + backstage follow the LIVE speaker-pass state
     // (URL ?role=speaker OR a granted co-speaker pass), so panels/backstage just work.
-    constrain: (x, z) => constrainPosition(
-      { role: config.role, isNextUp: who.isNextUp, speaker: tickets.speakerPass(), backstage: config.role === 'speaker' || !!tickets.flags().backstageAccess },
-      x, z, arActive,
-    ),
+    constrain: (x, z) => constrainLocal(x, z),   // 4.19: source-of-truth clamp INCLUDING the park perimeter
     onBoundary: () => { boundaryGlow = 1; }, // soft edge stop + glow, no snap-back
     // Pointer lock dropped on its own (e.g. Esc) → reflect it in the toggle + hide
     // the ESC hint, so the button and pointer-lock state never get out of sync.
@@ -1939,7 +1958,7 @@ const feedOffer = (() => {
   g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillStyle = '#ff5aa8'; g.font = '700 52px ui-monospace, Menlo, monospace'; g.fillText('🦩 Feed', 150, 76);
   g.fillStyle = '#f7931a'; g.font = '700 52px ui-monospace, Menlo, monospace'; g.fillText('⚡33', 300, 76);
-  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const tex = panelTexture(c);
   const m = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.39), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false }));
   m.renderOrder = 998; m.userData.feedAction = true; m.visible = false;
   scene.add(m);
@@ -2084,7 +2103,7 @@ renderer.setAnimationLoop(() => {
   // nudge can't push us into a forbidden zone.
   const push = presence.separation(rig.position, MIN_BODY_GAP);
   if (push) {
-    const c = constrainPosition(who, rig.position.x + push.x, rig.position.z + push.z);
+    const c = constrainLocal(rig.position.x + push.x, rig.position.z + push.z); // 4.19: park-aware clamp
     rig.position.set(c.x, c.y, c.z);
   }
   // Fade the boundary glow (held at full while the player pushes the edge).
@@ -2099,17 +2118,13 @@ renderer.setAnimationLoop(() => {
   // Runs BEFORE zones.update, so the HUD pill only fires when we're LEGITIMATELY inside.
   // Smoking additionally needs the mic-ON confirm (smokingMicOk); until then a ticketed
   // player is soft-bounced at its edge exactly like a no-access door.
-  // Park perimeter (4.17 #2): SOLID fence/arc — entry/exit only through the gate. Resolves the wall
-  // side from last frame's valid position (_prevPos) so the thin barrier can't be tunnelled. AR keeps
-  // the shell off (no park walls when the whole enclosure is gone).
-  if (!arActive) {
-    const pc = parkClamp(_prevPos.x, _prevPos.z, rig.position.x, rig.position.z);
-    if (pc.hit) { rig.position.x = pc.x; rig.position.z = pc.z; }
-  }
+  // Park perimeter is now enforced inside constrainLocal (the source-of-truth clamp) — see 4.19 #1;
+  // no frame-loop bolt-on.
   const gate = accessClamp(rig.position.x, rig.position.z, (zn) => !!tickets.flags()[zn.requires] && (zn.id !== 'smoking' || micOk.has('smoking')));
   if (gate.blocked) { rig.position.x = gate.x; rig.position.z = gate.z; onZoneBlocked(gate.blocked); }
   else _lastBlocked = null;
 
+  _clampPrev.x = rig.position.x; _clampPrev.z = rig.position.z; // swept-fence prev = end-of-frame position
   _prevPos.copy(rig.position);
   zones.update(rig.position.x, rig.position.z); // social-zone enter/leave seam (self-gates on movement)
 

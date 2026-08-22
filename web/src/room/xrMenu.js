@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { panelTexture } from './panelTexture.js';
 
 // room/xrMenu.js — the IN-WORLD VR/AR menu (Prompt 4.2). The headset's first real UI:
 // a 3D, laser-clickable panel opened by the X button (the standard Pause/Menu binding),
@@ -43,8 +44,7 @@ export function createXrMenu(scene, { camera, renderer, actions, state }) {
   const canvas = document.createElement('canvas');
   canvas.width = CW; canvas.height = CH;
   const g = canvas.getContext('2d');
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
+  const texture = panelTexture(canvas);   // 4.19 #5: max anisotropy + mipmaps
   const material = new THREE.MeshBasicMaterial({ map: texture }); // OPAQUE (depth-correct)
   const panel = new THREE.Mesh(new THREE.PlaneGeometry(PANEL_W, PANEL_H), material);
   panel.userData.xrMenu = true;            // raycast dispatch key (see main pickFromRaycaster)

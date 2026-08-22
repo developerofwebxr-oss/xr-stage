@@ -17,6 +17,12 @@ import { loadGLB } from './gltf.js';
 
 const HEAD_STATES = ['normal', 'open_mouth', 'rage', 'psychotic_rage'];
 
+// 4.19 #4 — each head GLB was authored at a DIFFERENT rotation (their beaks point −Z / −X / +Z / +X),
+// which is why the head "flipped backwards to sideways" on head-swap. Bake a per-head Y correction so
+// EVERY head's beak points the same way (−Z = the bird's forward). Derived from geometry (beak =
+// furthest mid-height point), then dialled against the reference renders. Define forward ONCE, here.
+const HEAD_CORR = { normal: -0.48, open_mouth: -1.58, rage: 3.09, psychotic_rage: 0.85 };
+
 // Per-part assembly spec, tuned against ~/Downloads/nostrich01 reference renders. `rot` = extra Euler
 // (XYZ, on top of the node's R_x+90). `h` = target height in metres after scaling. Bird forward = −Z.
 const SPEC = {
@@ -92,14 +98,14 @@ export async function assemblePsycho() {
   const legFitR = fit(legR, SPEC.legR, { flipRule: 'wide-up' });
   const legGrpL = legFitL.pivot; legGrpL.name = 'leg_L';
   const legGrpR = legFitR.pivot; legGrpR.name = 'leg_R'; legGrpR.scale.x *= -1;   // mirror for the right side
-  const legSpread = 0.24;
+  const legSpread = 0.16;
   legGrpL.position.set(-legSpread, 0, 0);
   legGrpR.position.set(legSpread, 0, 0);
   const hipY = legFitL.h;
 
   // Body — the mass, sits on the hips.
   const bodyFit = fit(body, SPEC.body); const bodyPivot = bodyFit.pivot; bodyPivot.name = 'body';
-  bodyPivot.position.set(0, hipY - bodyFit.h * 0.15, 0);   // slight overlap onto the hips
+  bodyPivot.position.set(0, hipY - bodyFit.h * 0.55, -bodyFit.h * 0.08); // seat the body DOWN onto the hips (4.19 #4: close the leg gap), a touch back
 
   // Neck lower — wide base seated on the body's front-top.
   const neckBFit = fit(neckB, SPEC.neckB, { flipRule: 'wide-down' }); const neckLower = neckBFit.pivot; neckLower.name = 'neck_lower';
@@ -113,7 +119,8 @@ export async function assemblePsycho() {
   const headPivot = new THREE.Group(); headPivot.name = 'head';
   let headH = 0.42;
   for (const h of HEAD_STATES) {
-    const hf = fit(heads[h], SPEC.head); hf.pivot.name = `head_${h}`; hf.pivot.visible = h === 'normal';
+    const hf = fit(heads[h], { rot: [0, HEAD_CORR[h], 0], h: SPEC.head.h }); // per-head beak → −Z (4.19 #4)
+    hf.pivot.name = `head_${h}`; hf.pivot.visible = h === 'normal';
     headPivot.add(hf.pivot); headH = hf.h;
   }
   headPivot.position.set(0, neckTFit.h * 0.85, 0.02);

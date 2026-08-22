@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { STAGE_POS, BACKSTAGE, BACKSTAGE_CENTER } from '../room/zones.js';
 import { loadGLB, fitToHeight, measure } from '../room/gltf.js';
+import { panelTexture } from '../room/panelTexture.js';
 
 // zones/zones.js — the SOCIAL zones as ENCLOSED destination buildings across the plaza behind
 // the audience, the detection + access SEAMS, a night FOREST backdrop, and live OCCUPANCY.
@@ -30,6 +31,8 @@ import { loadGLB, fitToHeight, measure } from '../room/gltf.js';
 //  • Future paid "Ostrich Farm" zone reuses ZONE_DEFS + accessClamp + this whole system.
 // ────────────────────────────────────────────────────────────────────────────────────────
 
+const PLAQUE_CLEAR = 1.4; // 4.19 #3: how far a zone plaque sits IN FRONT of its wall (plaza-side), so
+                          // it's fully readable and never half-eaten by the facade/fence/gate.
 const EMBER = 0xff6a2c;   // Smoking — warm ember
 const TEAL  = 0x27c6c6;   // Networking — cool teal
 const C = STAGE_POS;      // arc centre = stage centre (0,0,−7)
@@ -61,10 +64,12 @@ export const PARK = {
   h: 3.0, gateHalfAng: 0.075,   // fence height · gate-gap angular half-width on the front arc
   hue: 0xff5aa8,
 };
-export const PARK_PENS = [   // fenced sub-areas the flock wanders (in the reachable band, never through guests)
-  { x: 20, z: 20, w: 5, d: 5 },
-  { x: 28, z: 17, w: 5, d: 5 },
-  { x: 30, z: 10, w: 5, d: 5 },
+// Flock pens — fully INSIDE the park fence (every corner radius > Ri and bearing within the sector),
+// so the wander clamp keeps birds off/inside the perimeter (4.19 #1). Kept small + on the mid arc.
+export const PARK_PENS = [
+  { x: 23.7, z: 20.1, w: 4, d: 4 },   // bearing ~0.72
+  { x: 30.9, z: 11.5, w: 4, d: 4 },   // bearing ~1.02
+  { x: 34.0, z: 6.5, w: 4, d: 4 },    // bearing ~1.20
 ];
 const PARK_TH = (PARK.th0 + PARK.th1) / 2;      // gate bearing = front-arc centre
 const PARK_GATE = onArc(PARK.Ri, PARK_TH);      // gate world position on the front arc
@@ -322,7 +327,7 @@ function buildNetworking(zn) {
   g.add(room);
 
   g.add(placeLetters(zn, R + 0.1, th, H + 1.3));
-  g.add(placePlaque(zn, R, th + wallHalf + 0.06));
+  g.add(placePlaque(zn, R - PLAQUE_CLEAR, th + wallHalf + 0.06)); // 4.19 #3: off the facade, plaza-side
 
   return { group: g, anchors: { walls: [back, left, right], floor, ceiling, propSpawns } };
 }
@@ -368,7 +373,7 @@ function buildSmoking(zn) {
   g.add(yard);
 
   g.add(placeLetters(zn, R + 0.05, th, postH + 1.15));
-  g.add(placePlaque(zn, R, th + gateHalf + 0.12));
+  g.add(placePlaque(zn, R - PLAQUE_CLEAR, th + gateHalf + 0.12)); // 4.19 #3: off the gate, plaza-side
 
   return { group: g, anchors: { ground, perimeter: [back, leftH, rightH, frontL, frontR], propSpawns } };
 }
@@ -439,7 +444,7 @@ function buildPark(zn) {
 
   const GATE_H = (h + 1.4) * 2;                        // GLB fit height (~8.8 m)
   g.add(placeLetters(zn, Ri + 0.1, thc, GATE_H + 0.9)); // letters clear ABOVE the gate GLB
-  g.add(placePlaque(zn, Ri, thc + PARK.gateHalfAng + 0.10)); // plaque just beside the gate gap
+  g.add(placePlaque(zn, Ri - PLAQUE_CLEAR, thc + PARK.gateHalfAng + 0.12)); // 4.19 #3: off the fence, beside the gate, plaza-side
 
   // Entrance GLB — the sole gate (scaled ×2), seated on the ground in the front-arc gap, facing the
   // plaza. Graceful absence: the fence gap just stays open.
@@ -542,6 +547,9 @@ function scatterTrees() {
       if (dNet < 0.13 && rad < NET.R + 1) continue;         // networking approach
       if (dSmk < 0.13 && rad < SMK.R + 1) continue;         // smoking approach
       if (rad < 40 && Math.abs(a) < 0.5) continue;          // central plaza / audience corridor
+      // EXCLUDE the whole Nostrich Park sector + a margin (4.19 #2) — no trees inside the park or
+      // clipping its fence; survives a re-seed. (Selective decorative trees can be placed by hand later.)
+      if (rad > PARK.Ri - 3 && rad < PARK.Ro + 2 && a > PARK.th0 - 0.12 && a < PARK.th1 + 0.12) continue;
       const pos = onArc(rad, a);
       const prox = Math.max(0, 1 - dSmk / 0.55);            // ember rim near Smoking
       const tint = cool.clone().lerp(ember, prox).multiplyScalar(0.72 + h3 * 0.55);
@@ -576,8 +584,7 @@ function makeLettersPlane(text, color, worldH) {
   g.fillText(text, w / 2, h / 2);
   g.shadowBlur = 0; g.fillStyle = '#fff6ec'; g.globalAlpha = 0.9;
   g.fillText(text, w / 2, h / 2); g.globalAlpha = 1;
-  const tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+  const tex = panelTexture(cv);   // 4.19 #5: max anisotropy + mipmaps
   const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry((w / h) * worldH, worldH),
     new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }),
@@ -611,9 +618,10 @@ function occLine(occ) {
 }
 function makePlaquePanel(zn, worldW, worldH) {
   const CW = 640, CH = Math.round(CW * (worldH / worldW));
-  const cv = document.createElement('canvas'); cv.width = CW; cv.height = CH;
-  const ctx = cv.getContext('2d');
-  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+  const SS = 1.6;   // 4.19 #5: supersample the backing canvas → 1024 px wide (~1.6× px/m) for crisp text
+  const cv = document.createElement('canvas'); cv.width = Math.round(CW * SS); cv.height = Math.round(CH * SS);
+  const ctx = cv.getContext('2d'); ctx.scale(SS, SS);   // draw in logical CW/CH coords at SS resolution
+  const tex = panelTexture(cv);   // max anisotropy + mipmaps
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(worldW, worldH), new THREE.MeshBasicMaterial({ map: tex }));
   const hex = `#${new THREE.Color(zn.hue).getHexString()}`;
   function redraw(occ) {

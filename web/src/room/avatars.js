@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { drawKeyface } from '../identity/keyface.js';
+import { panelTexture } from './panelTexture.js';
 
 // room/avatars.js — the bodies in the room: yours, everyone else's, and ambiance.
 //
@@ -292,8 +293,7 @@ export function applyIdentity(group, identity) {
 // pill). Re-used per group so re-identifying just swaps the texture.
 function setNameLabel(group, name, badge = null, speaker = false) {
   const canvas = nameCanvas(name, badge, speaker);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
+  const tex = panelTexture(canvas);   // 4.19 #5: sharp name labels at distance
   let sprite = group.userData.nameSprite;
   if (!sprite) {
     sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));

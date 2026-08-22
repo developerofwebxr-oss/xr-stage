@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { panelTexture } from './panelTexture.js';
 import { drawKeyface } from '../identity/keyface.js';
 
 // room/commentBoard.js — two large in-world screens flanking the stage, so comments
@@ -224,7 +225,7 @@ function makeLiveChip() {
   g.fillStyle = '#f7931a'; g.beginPath(); g.arc(70, 48, 14, 0, Math.PI * 2); g.fill();
   g.fillStyle = '#eceef5'; g.font = '700 40px ui-monospace, Menlo, monospace';
   g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText('LIVE', 100, 50);
-  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  const tex = panelTexture(cv);
   const chip = new THREE.Mesh(
     new THREE.PlaneGeometry(0.9, 0.34),
     new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }),
@@ -291,7 +292,7 @@ function makeScreen(title, bg, accent) {
   group.add(frame);
 
   // Title plate at the top of the screen.
-  const titleTex = new THREE.CanvasTexture(titleCanvas(title));
+  const titleTex = panelTexture(titleCanvas(title));
   titleTex.colorSpace = THREE.SRGBColorSpace;
   const titleMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(1.9, 0.42),
@@ -310,7 +311,7 @@ function makeScreen(title, bg, accent) {
 
 // ── One comment card: keyface + name + wrapped text + ⚡ zapped total ──────────────
 function makeCard(comment, { rank } = {}) {
-  const tex = new THREE.CanvasTexture(cardCanvas(comment, rank));
+  const tex = panelTexture(cardCanvas(comment, rank));
   tex.colorSpace = THREE.SRGBColorSpace;
   const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(CARD_W, CARD_H),

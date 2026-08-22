@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { loadGLB, fitToHeight, measure } from '../room/gltf.js';
+import { panelTexture } from '../room/panelTexture.js';
 import { STAGE_POS, SCREEN } from '../room/zones.js';
 
 // ride/coaster.js — the Nostrich Coaster (4.10 · re-profiled + frame-stabilised 4.12).
@@ -169,7 +170,7 @@ export function createCoaster(scene, { nCarts = 4, onDepart, onReturn } = {}) {
   pillar.position.set(postX, 0.8, postZ); group.add(pillar);
   const postCanvas = document.createElement('canvas'); postCanvas.width = 384; postCanvas.height = 256;
   const pg = postCanvas.getContext('2d');
-  const postTex = new THREE.CanvasTexture(postCanvas); postTex.colorSpace = THREE.SRGBColorSpace;
+  const postTex = panelTexture(postCanvas);
   const postLabel = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 0.77), new THREE.MeshBasicMaterial({ map: postTex, transparent: true }));
   postLabel.position.set(postX, 1.85, postZ); postLabel.rotation.y = Math.PI;   // face the plaza (−z)
   postLabel.userData.rideButton = true; group.add(postLabel);

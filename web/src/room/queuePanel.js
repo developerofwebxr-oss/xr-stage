@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { drawKeyface } from '../identity/keyface.js';
+import { panelTexture } from './panelTexture.js';
 import { QUESTIONER_POS, MIC_PLATFORM_TOP } from './zones.js';
 
 // room/queuePanel.js — the in-world "take the mic" queue as a TABLE on the far-left board
@@ -42,8 +43,7 @@ export function createQueuePanel(scene, { queue }) {
 
   function rebuild() {
     material.map?.dispose();
-    const tex = new THREE.CanvasTexture(tableCanvas(queue.list().slice(0, SHOW_N)));
-    tex.colorSpace = THREE.SRGBColorSpace;
+    const tex = panelTexture(tableCanvas(queue.list().slice(0, SHOW_N)));  // 4.19 #5: sharp at distance
     material.map = tex;
     material.needsUpdate = true;
   }
