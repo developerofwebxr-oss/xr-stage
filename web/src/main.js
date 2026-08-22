@@ -10,7 +10,7 @@ import { tickets } from './tickets/tickets.js';
 import { createTicketUI } from './ui/ticketUI.js';
 import { createEventPrompt } from './ui/eventPrompt.js';
 import { STAGE_POS, STAGE_RADIUS, STAGE_TOP_Y, QUESTIONER_POS, constrainPosition, boundaryFor } from './room/zones.js';
-import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP, setCigarette, tickCigarette, makeHand, playEmote, tickEmote, EMOTES, makeLocalFresnelMaterial } from './room/avatars.js';
+import { seedPlaceholders, createPlayerBody, applyIdentity, MIN_BODY_GAP, setCigarette, tickCigarette, makeHand, poseHand, HAND_POSES, playEmote, tickEmote, EMOTES, makeLocalFresnelMaterial } from './room/avatars.js';
 import { createZoneAudio } from './audio/zoneAudio.js';
 import { identity } from './identity/identity.js';
 import { drawKeyface } from './identity/keyface.js';
@@ -752,7 +752,7 @@ const presence = createPresence(voice, scene, () => {
   if (renderer.xr.isPresenting) {
     camera.getWorldPosition(_headWorld);
     _headEuler.setFromQuaternion(camera.getWorldQuaternion(_headQuat), 'YXZ');
-    return { x: _headWorld.x, y: rig.position.y, z: _headWorld.z, yaw: _headEuler.y, zone, seatIdx, afk: paused, hands: localHands() };
+    return { x: _headWorld.x, y: rig.position.y, z: _headWorld.z, yaw: _headEuler.y, zone, seatIdx, afk: paused, hands: localHands(), handPoses: localHandPoses() };
   }
   return { x: rig.position.x, y: rig.position.y, z: rig.position.z, yaw: rig.rotation.y, zone, seatIdx, afk: paused };
 }, staticBodies, {
@@ -1056,17 +1056,16 @@ const xrControllers = []; // for the VR board-scroll (frame loop reads the right
     );
     ray.visible = false;
     controller.add(ray);
-    // Tracked-hand proxy (4.8): a mitt parented to the controller → auto-follows its pose.
-    // Shown only in immersive while embodied (toggled in updateLocalHands). Peers see it via
-    // the broadcast hand transforms; this is the local first-person view of your own hands.
-    const mitt = makeHand(who.role === 'speaker' ? 0xf7931a : 0x4cc2ff);
-    mitt.visible = false;
-    controller.add(mitt);
-    controller.userData.mitt = mitt;
+    // Tracked-hand proxy (4.20): a constructed hand (palm+fingers+thumb) parented to the
+    // controller → auto-follows its pose; posed each frame from the controller's buttons
+    // (updateLocalHands). Shown only in immersive while embodied. Peers see the same shape
+    // + pose via the broadcast transforms + pose byte; this is your first-person view of it.
+    setLocalHand(controller, i === 0 ? 'left' : 'right');   // tentative; corrected on 'connected'
     controller.addEventListener('connected', (e) => {
       ray.visible = e.data?.targetRayMode !== 'screen';
       controller.userData.handedness = e.data?.handedness;   // for the VR scroll
       controller.userData.inputSource = e.data;
+      if (e.data?.handedness === 'left' || e.data?.handedness === 'right') setLocalHand(controller, e.data.handedness);
       updateArMenuBtn();                                     // a real controller → hide the phone-AR ☰
     });
     controller.addEventListener('disconnected', () => { ray.visible = false; controller.userData.inputSource = null; updateArMenuBtn(); });
@@ -1104,13 +1103,59 @@ function localHands() {
   }
   return any ? out : null;
 }
-// Show/hide the local mitts each frame (immersive + embodied + a real controller pointer).
-function updateLocalHands() {
+// Pose byte per hand (4.20), same slot order as localHands(): low 2 bits = pose enum,
+// bit 2 = handedness (right). Read off userData.pose set by updateLocalHands each frame.
+function localHandPoses() {
+  const out = [];
+  for (let i = 0; i < 2; i++) {
+    const c = xrControllers[i];
+    const pose = c?.userData.pose | 0;
+    const right = c?.userData.handSign === -1;   // sign −1 = right hand
+    out.push((pose & 3) | (right ? 4 : 0));
+  }
+  return out;
+}
+
+// (Re)build the local hand proxy on a controller with the right handedness (left/right
+// differ by thumb side). Shared geometry/material via makeHand; disposes the old group.
+function setLocalHand(controller, handedness) {
+  const old = controller.userData.mitt;
+  if (old) controller.remove(old);
+  const h = makeHand(LOCAL_BODY_COLOR, handedness);
+  h.visible = false;
+  controller.add(h);
+  controller.userData.mitt = h;
+  controller.userData.handSign = handedness === 'left' ? 1 : -1;
+}
+
+// Pose from what the controller already reports — no new input. grip = closed hand;
+// thumbs-up is the grip-with-thumb-off-the-buttons case; trigger = point; else idle.
+// THUMBS-UP BINDING (4.20): grip held AND no thumb-rest button touched (thumbstick /
+// A|X / B|Y capacitive-touch all false) ⇒ the thumb is lifted ⇒ 👍. Grip with any of
+// those touched ⇒ a full fist. Chosen over motion/tilt heuristics as the most reliable
+// on Quest (capacitive touch on those three is well-supported).
+function readHandPose(src) {
+  const b = src?.gamepad?.buttons;
+  if (!b) return HAND_POSES.idle;
+  const on = (n) => !!b[n] && (b[n].pressed || b[n].value > 0.6);
+  const touched = (n) => !!b[n] && !!b[n].touched;
+  if (on(1)) return (touched(3) || touched(4) || touched(5)) ? HAND_POSES.fist : HAND_POSES.thumbsup;
+  if (on(0)) return HAND_POSES.point;
+  return HAND_POSES.idle;
+}
+
+// Each frame: show/hide the local hands (immersive + embodied + a real controller pointer)
+// and drive each one's pose (finger curl + thumb) from its controller's buttons, smoothed.
+function updateLocalHands(dt) {
   const on = renderer.xr.isPresenting && embodied();
   for (const c of xrControllers) {
     const m = c.userData.mitt; if (!m) continue;
     const src = c.userData.inputSource;
-    m.visible = on && !!src && src.targetRayMode !== 'screen';
+    const live = on && !!src && src.targetRayMode !== 'screen';
+    m.visible = live;
+    const pose = live ? readHandPose(src) : HAND_POSES.idle;
+    c.userData.pose = pose;
+    poseHand(m, pose, dt);
   }
 }
 
@@ -2095,7 +2140,7 @@ renderer.setAnimationLoop(() => {
   followBody();               // #5: pin the local body under the head in immersive modes
   updateSeat();               // panels: hold the seated drop / stand on walk-off (before broadcast)
   updateRide();               // coaster: pin the local rider to their seat (before broadcast)
-  updateLocalHands();         // 4.8: show/hide local hand mitts (immersive + embodied)
+  updateLocalHands(dt);       // 4.20: show/hide + pose the local hands (immersive + embodied)
   tickEmote(localBody, dt);   // 4.8: advance the local player's own emote (peers tick via the pool)
   presence.update(dt);
   // Nudge the local rig out of the deepest overlap with any body (live or static),

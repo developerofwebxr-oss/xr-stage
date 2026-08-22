@@ -118,15 +118,93 @@ function makeCapsule(color, { withHead = true } = {}) {
   return group;
 }
 
-// ── Tracked hands (4.8) ──────────────────────────────────────────────────────────
-// Cheap mitts mirrored at the controllers' poses — no finger articulation v1. Shared
-// geometry; one material per body colour (both hands share it). Encoding: two transforms
-// (position 3 + quaternion 4) each, RELATIVE TO THE BODY ROOT → 14 floats on the heartbeat.
-const _handGeo = new THREE.CapsuleGeometry(0.05, 0.07, 4, 8);
-export function makeHand(colorHex) {
-  return new THREE.Mesh(_handGeo, new THREE.MeshStandardMaterial({
-    color: colorHex, emissive: colorHex, emissiveIntensity: BODY_EMISSIVE_INTENSITY, roughness: 0.7, metalness: 0.05,
-  }));
+// ── Tracked hands v2 (4.20) — readable hand shapes + poses ─────────────────────────
+// A constructed hand (NOT a mitt, NOT a skeleton): a palm box + a "fingers" unit of 4
+// capsules on ONE curl pivot + ONE opposable thumb capsule on ONE fold pivot. Exactly
+// TWO animated joints per hand (fingers curl, thumb fold); a static "pointer" index
+// capsule is shown (visibility swap, not a joint) for the point pose so it reads as 👆.
+// Left/right differ only by the thumb/index side (`sign`), so no negative scaling.
+// Wrist sits at the group origin (= controller pose); fingers reach forward along -Z,
+// palm faces down (-Y) — matching the controller's aim/grip. Geometry + material are
+// SHARED across every hand of a colour (both of yours, and each peer's pair).
+const _palmGeo = new THREE.BoxGeometry(0.072, 0.028, 0.078);
+const _fingerGeo = new THREE.CapsuleGeometry(0.0105, 0.042, 3, 6); // one finger, reused ×4 + pointer
+const _thumbGeo = new THREE.CapsuleGeometry(0.0125, 0.03, 3, 6);
+const _handMatCache = new Map();
+function handMaterial(colorHex) {
+  let m = _handMatCache.get(colorHex);
+  if (!m) {
+    m = new THREE.MeshStandardMaterial({ color: colorHex, emissive: colorHex, emissiveIntensity: BODY_EMISSIVE_INTENSITY, roughness: 0.7, metalness: 0.05 });
+    _handMatCache.set(colorHex, m);
+  }
+  return m;
+}
+
+// Pose enum (also the broadcast value's low 2 bits; bit 2 carries handedness).
+export const HAND_POSES = { idle: 0, point: 1, fist: 2, thumbsup: 3 };
+// Target joint angles per pose: curl = fingers-curl amount, fold = thumb fold-from-up.
+const HAND_POSE_TABLE = [
+  { curl: 0.50, fold: 0.70 }, // idle — fingers slightly curled, thumb relaxed
+  { curl: 1.70, fold: 1.45 }, // point — fist + extended pointer index (visibility swap)
+  { curl: 1.70, fold: 1.55 }, // fist — everything closed, thumb tucked across
+  { curl: 1.70, fold: 0.00 }, // thumbs-up — fist, thumb straight UP (+Y)
+];
+
+// Build one hand. handedness: 'left' | 'right' (default right). Returns a Group whose
+// userData.hand holds the two pivots + pointer + smoothing state, for poseHand().
+export function makeHand(colorHex, handedness = 'right') {
+  const mat = handMaterial(colorHex);
+  const g = new THREE.Group();
+  const sign = handedness === 'left' ? 1 : -1; // thumb/index on +X for left, -X for right
+
+  const palm = new THREE.Mesh(_palmGeo, mat);
+  palm.position.set(0, 0, -0.039);
+  g.add(palm);
+
+  // Fingers unit: 4 capsules on one curl pivot at the knuckle line (front of the palm).
+  const fingers = new THREE.Group();
+  fingers.position.set(0, 0.002, -0.078);
+  const xs = [-0.027, -0.009, 0.009, 0.027];
+  for (const x of xs) {
+    const f = new THREE.Mesh(_fingerGeo, mat);
+    f.rotation.x = -Math.PI / 2;      // capsule (+Y) → lies along -Z
+    f.position.set(x, 0, -0.032);     // base at the pivot, extends forward
+    fingers.add(f);
+  }
+  g.add(fingers);
+
+  // Thumb: one capsule on a fold pivot at the palm's radial side. Base orientation
+  // points +Y (up) with a slight outward splay; the pivot's X rotation folds it forward.
+  const thumb = new THREE.Group();
+  thumb.position.set(sign * 0.03, 0.004, -0.022);
+  const thumbMesh = new THREE.Mesh(_thumbGeo, mat);
+  thumbMesh.position.set(0, 0.026, 0);  // base at pivot, tip up
+  thumbMesh.rotation.z = sign * 0.30;   // splay outward (constant, not animated)
+  thumb.add(thumbMesh);
+  g.add(thumb);
+
+  // Pointer index — static extended capsule shown ONLY for the point pose (not a joint).
+  const pointer = new THREE.Mesh(_fingerGeo, mat);
+  pointer.scale.z = 1.4;                // a touch longer, reads as a clear index
+  pointer.rotation.x = -Math.PI / 2;
+  pointer.position.set(sign * 0.027, 0.006, -0.104);
+  pointer.visible = false;
+  g.add(pointer);
+
+  g.userData.hand = { fingers, thumb, pointer, sign, cur: { curl: 0.5, fold: 0.7 } };
+  return g;
+}
+
+// Drive a hand toward a pose, smoothing over ~100ms. Two joints + the pointer swap.
+export function poseHand(g, poseIdx, dt) {
+  const h = g?.userData?.hand; if (!h) return;
+  const tgt = HAND_POSE_TABLE[poseIdx] || HAND_POSE_TABLE[0];
+  const k = 1 - Math.exp(-dt / 0.1); // ~100ms time-constant, frame-rate independent
+  h.cur.curl += (tgt.curl - h.cur.curl) * k;
+  h.cur.fold += (tgt.fold - h.cur.fold) * k;
+  h.fingers.rotation.x = -h.cur.curl;  // negative curls fingertips down into the palm
+  h.thumb.rotation.x = -h.cur.fold;    // negative folds the thumb forward from straight-up
+  h.pointer.visible = poseIdx === HAND_POSES.point;
 }
 
 // ── Emotes (4.8) — short procedural transforms in the avatar's abstract language ──
@@ -413,8 +491,8 @@ export class AvatarPool {
     this.onSpawn = onSpawn || null; // (id, group) when a remote avatar first appears
   }
 
-  // Create-or-update a remote avatar's target position + yaw (+ optional hand transforms).
-  upsert(id, position, yaw = 0, hands = null) {
+  // Create-or-update a remote avatar's target position + yaw (+ optional hand transforms + poses).
+  upsert(id, position, yaw = 0, hands = null, poses = null) {
     let entry = this.byId.get(id);
     const isNew = !entry;
     if (isNew) {
@@ -423,12 +501,12 @@ export class AvatarPool {
       const hex = new THREE.Color().setHSL(hue / 360, 0.6, 0.6).getHex();
       const group = makeCapsule(hex);
       this.scene.add(group);
-      entry = { group, hex, target: new THREE.Vector3(), targetYaw: yaw, hands: null, handTargets: null };
+      entry = { group, hex, target: new THREE.Vector3(), targetYaw: yaw, hands: null, handTargets: null, handPose: [0, 0], handSign: [-1, -1] };
       this.byId.set(id, entry);
     }
     entry.target.set(position[0], position[1], position[2]);
     entry.targetYaw = yaw;
-    this._setHands(entry, hands, isNew);
+    this._setHands(entry, hands, poses, isNew);
     // Snap a freshly-spawned avatar straight to its pose so it doesn't glide in
     // from the origin on its first frame, then let the caller attach its identity.
     if (isNew) {
@@ -468,14 +546,25 @@ export class AvatarPool {
   // Attach/refresh/hide a peer's two hand proxies from a 14-float sample (or hide on null —
   // headless/no-data peers never get default T-pose hands). Hands are children of the group,
   // so they inherit its position + yaw; their LOCAL transform is the body-relative hand pose.
-  _setHands(entry, hands, isNew) {
+  // poses (4.20): [byteL, byteR] — low 2 bits = pose (idle/point/fist/thumbsup), bit 2 =
+  // handedness (right). Absent for pre-4.20 peers → idle + slot-guessed handedness.
+  _setHands(entry, hands, poses, isNew) {
     if (hands && hands.length === 14) {
       if (!entry.hands) {
-        entry.hands = [makeHand(entry.hex), makeHand(entry.hex)];
+        entry.hands = [null, null];
         entry.handTargets = [{ p: new THREE.Vector3(), q: new THREE.Quaternion() }, { p: new THREE.Vector3(), q: new THREE.Quaternion() }];
-        for (const m of entry.hands) entry.group.add(m);
       }
       for (let i = 0; i < 2; i++) {
+        const byte = Array.isArray(poses) ? (poses[i] | 0) : -1;
+        entry.handPose[i] = byte >= 0 ? (byte & 3) : HAND_POSES.idle;
+        // Right = bit 2 set; unknown → slot 0 left, slot 1 right. sign: +1 left, -1 right.
+        const sign = byte >= 0 ? ((byte & 4) ? -1 : 1) : (i === 0 ? 1 : -1);
+        if (!entry.hands[i] || entry.handSign[i] !== sign) {
+          if (entry.hands[i]) entry.group.remove(entry.hands[i]);
+          entry.hands[i] = makeHand(entry.hex, sign === 1 ? 'left' : 'right');
+          entry.handSign[i] = sign;
+          entry.group.add(entry.hands[i]);
+        }
         const o = i * 7;
         entry.handTargets[i].p.set(hands[o], hands[o + 1], hands[o + 2]);
         entry.handTargets[i].q.set(hands[o + 3], hands[o + 4], hands[o + 5], hands[o + 6]);
@@ -483,7 +572,7 @@ export class AvatarPool {
         if (isNew) { entry.hands[i].position.copy(entry.handTargets[i].p); entry.hands[i].quaternion.copy(entry.handTargets[i].q); } // snap on first sight
       }
     } else if (entry.hands) {
-      for (const m of entry.hands) m.visible = false;   // flat/mobile / dropped hands → no hands
+      for (const m of entry.hands) if (m) m.visible = false;   // flat/mobile / dropped hands → no hands
       entry.handTargets = null;
     }
   }
@@ -500,9 +589,11 @@ export class AvatarPool {
       group.rotation.y += d * t;
       if (entry.hands && entry.handTargets) {
         for (let i = 0; i < 2; i++) {
-          if (!entry.hands[i].visible) continue;
-          entry.hands[i].position.lerp(entry.handTargets[i].p, t);
-          entry.hands[i].quaternion.slerp(entry.handTargets[i].q, t);
+          const hnd = entry.hands[i];
+          if (!hnd || !hnd.visible) continue;
+          hnd.position.lerp(entry.handTargets[i].p, t);
+          hnd.quaternion.slerp(entry.handTargets[i].q, t);
+          poseHand(hnd, entry.handPose[i], dt);   // 4.20: smooth the finger/thumb pose
         }
       }
       tickEmote(group, dt);   // advance any active emote (no-op when idle)
